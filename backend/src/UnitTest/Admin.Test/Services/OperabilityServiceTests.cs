@@ -80,7 +80,11 @@ public class OperabilityServiceTests
         var now = DateTime.UtcNow;
         context.McpAccessKeys.Add(new McpAccessKey
         {
-            Id = 1, Name = "reporting", KeyPrefix = "prefix", KeyHash = "hash", CreatedAt = now
+            Id = 1,
+            Name = "reporting",
+            KeyPrefix = "prefix",
+            KeyHash = "hash",
+            CreatedAt = now
         });
         context.AuditLogs.AddRange(
             new AuditLog { EventId = Guid.NewGuid(), Action = "mcp.query.executed", Target = "a", Result = "success", DurationMs = 10, AccessKeyId = 1, CreatedAt = now },

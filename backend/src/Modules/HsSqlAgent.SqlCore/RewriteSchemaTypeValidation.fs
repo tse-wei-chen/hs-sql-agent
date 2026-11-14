@@ -3,6 +3,7 @@ namespace HsSqlAgent.SqlCore.Rewrite
 open System
 open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Core.Pipeline
+open HsSqlAgent.SqlCore.Catalog
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.Typestate
@@ -24,7 +25,10 @@ module internal RewriteSchemaTypeValidation =
 
     type private Catalog =
         { Dialect: SqlAgentToolType
-          Tables: Map<string, (string * SqlSchemaValueKind) list> }
+          // Mutation targets are proven only against physical tables.
+          Tables: Map<string, (string * SqlSchemaValueKind) list>
+          ReadRelations: Map<string, (string * SqlSchemaValueKind) list>
+          ProvenInsertColumnOrder: bool }
 
     let private keyPart dialect (part: IdentifierPart) =
         match dialect with
@@ -42,10 +46,14 @@ module internal RewriteSchemaTypeValidation =
             value.ToUpperInvariant()
         | _ -> value
 
+    let private qualifiedKey parts =
+        parts |> List.map (fun (part: string) ->
+            part.Replace("\\", "\\\\").Replace(".", "\\.")) |> String.concat "."
+
     let private keyIdentifier dialect identifier =
         Identifier.parts identifier
         |> List.map (keyPart dialect)
-        |> String.concat "."
+        |> qualifiedKey
 
     let private fail span message =
         let diagnosticSpan =
@@ -73,15 +81,16 @@ module internal RewriteSchemaTypeValidation =
                      catalogPart dialect column.Name, column.Kind)
                  |> Seq.toList))
             |> Map.ofSeq
-        { Dialect = dialect; Tables = tables }
+        { Dialect = dialect; Tables = tables; ReadRelations = tables
+          ProvenInsertColumnOrder = false }
 
     let private sourceKey catalog name alias =
         let full = keyIdentifier catalog.Dialect name
         let tail = Identifier.parts name |> List.last |> keyPart catalog.Dialect
         match alias with
-        | Some part -> [ keyPart catalog.Dialect part ]
-        | None when full = tail -> [ full ]
-        | None -> [ full; tail ]
+        | Some part -> [ qualifiedKey [keyPart catalog.Dialect part] ]
+        | None when full = qualifiedKey [tail] -> [ full ]
+        | None -> [ full; qualifiedKey [tail] ]
 
     let private columnsSource qualifiers columns =
         let names = columns |> List.map fst
@@ -100,8 +109,15 @@ module internal RewriteSchemaTypeValidation =
             |> List.map (fun (name, kind) -> name, Some kind)
         columnsSource (sourceKey catalog name alias) columns
 
+    let private readableNamedSource catalog name alias =
+        let columns =
+            Map.tryFind (keyIdentifier catalog.Dialect name) catalog.ReadRelations
+            |> Option.defaultValue []
+            |> List.map (fun (name, kind) -> name, Some kind)
+        columnsSource (sourceKey catalog name alias) columns
+
     let private sourceAlias catalog alias columns =
-        columnsSource [ keyPart catalog.Dialect alias ] columns
+        columnsSource [ qualifiedKey [keyPart catalog.Dialect alias] ] columns
 
     let private cteSource catalog name alias ctes =
         columnsSource (sourceKey catalog name alias)
@@ -123,10 +139,25 @@ module internal RewriteSchemaTypeValidation =
           Sources = sources
           Unqualified = sources |> List.collect sourceOutput }
 
+    // Local lexical provenance for type *family* evidence. The name binder
+    // already rejects absent/ambiguous SQL columns before this validation
+    // stage. Keeping the cases separate here prevents a shadowing untyped
+    // column from inheriting the type of an outer typed column.
+    //
+    // These cases never become compiler typestate, authorization or an
+    // exact SQL primitive type; their sole consumer projects ProvenKind to
+    // the existing optional family result.
+    type private ScopedFamilyEvidence =
+        | MissingName
+        | KnownNameUnknownFamily of scopeDepth: int
+        | AmbiguousName of scopeDepth: int
+        | ProvenKind of scopeDepth: int * kind: SqlSchemaValueKind
+
     let private kindInScope scope qualifier column =
         let mutable current = Some scope
+        let mutable depth = 0
+        let mutable result = MissingName
         let mutable doneWalking = false
-        let mutable result = None
         while current.IsSome && not doneWalking do
             RewriteResourceBudget.checkpoint ()
             let active = Option.get current
@@ -140,6 +171,10 @@ module internal RewriteSchemaTypeValidation =
                         source.Qualifiers |> List.exists (fun name ->
                             RewriteResourceBudget.checkpoint ()
                             name = value))
+            // All hits must be counted, even when the source only proves a
+            // column name and its declared type family is Unknown. Unknown
+            // never means the name was absent and never authorizes walking
+            // outward to a coincidentally typed column.
             let hits =
                 match qualifier with
                 | None ->
@@ -153,20 +188,34 @@ module internal RewriteSchemaTypeValidation =
                         RewriteResourceBudget.checkpoint ()
                         Map.tryFind column source.Kinds |> Option.map typeKnown)
             match hits with
-            | [ found ] ->
-                result <- found
+            // A repeated qualifier invalidates type provenance regardless
+            // of how many candidate relations contain this particular field.
+            // Name validation already rejects this first; keep a second
+            // closed evidence fence if family inference is reused later.
+            | _ when qualifier.IsSome && sources.Length > 1 ->
+                result <- AmbiguousName depth
+                doneWalking <- true
+            | [ Some kind ] ->
+                result <- ProvenKind(depth,kind)
+                doneWalking <- true
+            | [ None ] ->
+                result <- KnownNameUnknownFamily depth
+                doneWalking <- true
+            | _ :: _ ->
+                result <- AmbiguousName depth
                 doneWalking <- true
             | [] ->
                 match active.Parent with
                 | Some parent when qualifier.IsNone || sources.IsEmpty ->
                     current <- Some parent
-                | _ -> doneWalking <- true
-            | _ ->
-                // Name binding rejects ambiguity; no speculative type proof.
-                doneWalking <- true
+                    depth <- depth + 1
+                | _ ->
+                    // A qualifier resolved in this scope cannot borrow a
+                    // column from a different scope when its field is absent.
+                    doneWalking <- true
         result
 
-    let private columnKind catalog scope identifier =
+    let private columnEvidence catalog scope identifier =
         let parts = Identifier.parts identifier
         let column = parts |> List.last |> keyPart catalog.Dialect
         let qualifier =
@@ -179,17 +228,17 @@ module internal RewriteSchemaTypeValidation =
                 |> Some
         kindInScope scope qualifier column
 
+    let private columnKind catalog scope identifier =
+        match columnEvidence catalog scope identifier with
+        | ProvenKind(_,kind) -> Some kind
+        | KnownNameUnknownFamily _
+        | AmbiguousName _
+        | MissingName -> None
+
+    // The type validator consumes ONLY the family projection. The separate
+    // exact Function type proof is never manufactured from a family-only fact.
     let private literalKind scalar =
-        match scalar with
-        | ScalarValue.Null -> None
-        | ScalarValue.Boolean _ -> Some SqlSchemaValueKind.Boolean
-        | ScalarValue.Integer _ | ScalarValue.Decimal _ | ScalarValue.Floating _ ->
-            Some SqlSchemaValueKind.Numeric
-        | ScalarValue.Text _ -> Some SqlSchemaValueKind.Text
-        | ScalarValue.Date _ | ScalarValue.Time _ | ScalarValue.LocalDateTime _
-        | ScalarValue.OffsetDateTime _ | ScalarValue.Duration _ ->
-            Some SqlSchemaValueKind.Temporal
-        | ScalarValue.Bytes _ -> Some SqlSchemaValueKind.Binary
+        RewriteScalarTypeEvidence.literalFamily scalar
 
     let private requireKind span expected actual operation =
         match actual with
@@ -199,6 +248,14 @@ module internal RewriteSchemaTypeValidation =
                 ", but the schema proves " + string value + ".")
         | _ -> ()
 
+    /// Diagnostic provenance must stay on the failing value rather than
+    /// the enclosing DML statement. Unknown AST spans use the statement as
+    /// a conservative fallback, never fabricate character offsets.
+    let private expressionSpanOr fallback value =
+        let precise = Expr.span value
+        if Span.isKnown precise && precise.Length > 0 then precise
+        else fallback
+
     let private compatible span left right operation =
         match left, right with
         | Some a, Some b when a <> b ->
@@ -206,6 +263,76 @@ module internal RewriteSchemaTypeValidation =
                 operation + " has incompatible proven SQL type families: " +
                 string a + " and " + string b + ". Use an explicit CAST if intended.")
         | _ -> ()
+
+    // Diagnostic annotations describe only validated, *proven* type-family
+    // origins; a missing, ambiguous or unknown type remains silent here and
+    // is never converted into a fabricated mismatch. Do not include SQL
+    // literal contents, catalog values or runtime query results in messages.
+    let private columnOriginAt offset catalog scope identifier =
+        match columnEvidence catalog scope identifier with
+        | ProvenKind(depth,kind) ->
+            Some(sprintf "proven column '%s' (%A, scope depth %d)"
+                (Identifier.text identifier) kind (depth + offset))
+        | _ -> None
+
+    let private columnOrigin catalog scope identifier =
+        columnOriginAt 0 catalog scope identifier
+
+    let private expressionOrigin catalog scope expression =
+        match Expr.unspan expression with
+        | Column identifier | BoundColumn(identifier, ColumnBinding.LocalRowSource) ->
+            columnOrigin catalog scope identifier
+        | BoundColumn(identifier, ColumnBinding.OuterRowSource) ->
+            match scope.Parent with
+            | Some parent ->
+                // The binder has already established this correlation.
+                // Count the transition from the expression's local scope
+                // before traversing any further outer lexical scopes.
+                columnOriginAt 1 catalog parent identifier
+            | None -> None
+        | Literal scalar ->
+            literalKind scalar
+            |> Option.map (fun family -> sprintf "proven literal (%A family)" family)
+        | _ -> None
+
+    let private evidenceSuffix items =
+        let proven = items |> List.choose id
+        if List.isEmpty proven then ""
+        else " Evidence: " + String.concat "; " proven + "."
+
+    let private requireKindWith span expected actual operation origins =
+        match actual with
+        | Some value when value <> expected ->
+            fail span (
+                operation + " requires " + string expected +
+                ", but the schema proves " + string value + "." +
+                evidenceSuffix origins)
+        | _ -> ()
+
+    let private compatibleWith span left right operation origins =
+        match left,right with
+        | Some a,Some b when a <> b ->
+            fail span (
+                operation + " has incompatible proven SQL type families: " +
+                string a + " and " + string b +
+                ". Use an explicit CAST if intended." + evidenceSuffix origins)
+        | _ -> ()
+
+    let private knownKindMismatch expected actual =
+        match actual with
+        | Some family when family <> expected -> true
+        | _ -> false
+
+    let private knownFamilyMismatch left right =
+        match left,right with
+        | Some a,Some b when a <> b -> true
+        | _ -> false
+
+    let private targetOrigin (name: string) kind =
+        kind
+        |> Option.map (fun family ->
+            sprintf "proven assignment target '%s' (%A family)"
+                name family)
 
     let private bothNumeric left right =
         match left, right with
@@ -307,7 +434,7 @@ module internal RewriteSchemaTypeValidation =
     type private TypedScalarFrame =
         | EnterTyped of Span * Expr
         | FinishTypedUnary of Span * UnaryOperator
-        | FinishTypedBinary of Span * BinaryOperator
+        | FinishTypedBinary of Span * BinaryOperator * Expr * Expr
 
     type private TypedQueryFrame =
         | ResumeTypedCte of Map<string, (string * SqlSchemaValueKind option) list> * Scope option * Query * Cte
@@ -442,7 +569,7 @@ module internal RewriteSchemaTypeValidation =
                     pending.Add(FinishTypedUnary(currentSpan, op))
                     enter Span.unknown operand
                 | EnterTyped(currentSpan, Binary(op, left, right)) ->
-                    pending.Add(FinishTypedBinary(currentSpan, op))
+                    pending.Add(FinishTypedBinary(currentSpan, op, left, right))
                     enter Span.unknown right
                     enter Span.unknown left
                 | EnterTyped(currentSpan, terminal) ->
@@ -456,25 +583,36 @@ module internal RewriteSchemaTypeValidation =
                     | UnaryOperator.Negate | UnaryOperator.Positive ->
                         requireKind currentSpan SqlSchemaValueKind.Numeric result "Unary arithmetic"
                         results.Add(result)
-                | FinishTypedBinary(currentSpan, op) ->
+                | FinishTypedBinary(currentSpan, op, left, right) ->
                     let rightKind = pop ()
                     let leftKind = pop ()
                     let result =
                         match op with
                         | BinaryOperator.Add | BinaryOperator.Subtract
                         | BinaryOperator.Multiply | BinaryOperator.Divide | BinaryOperator.Modulo ->
-                            requireKind currentSpan SqlSchemaValueKind.Numeric leftKind "Arithmetic"
-                            requireKind currentSpan SqlSchemaValueKind.Numeric rightKind "Arithmetic"
+                            if knownKindMismatch SqlSchemaValueKind.Numeric leftKind then
+                                requireKindWith currentSpan SqlSchemaValueKind.Numeric leftKind
+                                    "Arithmetic" [ expressionOrigin catalog scope left ]
+                            if knownKindMismatch SqlSchemaValueKind.Numeric rightKind then
+                                requireKindWith currentSpan SqlSchemaValueKind.Numeric rightKind
+                                    "Arithmetic" [ expressionOrigin catalog scope right ]
                             bothNumeric leftKind rightKind
                         | BinaryOperator.Equal | BinaryOperator.NotEqual
                         | BinaryOperator.GreaterThan | BinaryOperator.LessThan
                         | BinaryOperator.GreaterThanOrEqual | BinaryOperator.LessThanOrEqual
                         | BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom ->
-                            compatible currentSpan leftKind rightKind "Comparison"
+                            if knownFamilyMismatch leftKind rightKind then
+                                compatibleWith currentSpan leftKind rightKind "Comparison"
+                                    [ expressionOrigin catalog scope left
+                                      expressionOrigin catalog scope right ]
                             Some SqlSchemaValueKind.Boolean
                         | BinaryOperator.And | BinaryOperator.Or ->
-                            requireKind currentSpan SqlSchemaValueKind.Boolean leftKind "Boolean operator"
-                            requireKind currentSpan SqlSchemaValueKind.Boolean rightKind "Boolean operator"
+                            if knownKindMismatch SqlSchemaValueKind.Boolean leftKind then
+                                requireKindWith currentSpan SqlSchemaValueKind.Boolean leftKind
+                                    "Boolean operator" [ expressionOrigin catalog scope left ]
+                            if knownKindMismatch SqlSchemaValueKind.Boolean rightKind then
+                                requireKindWith currentSpan SqlSchemaValueKind.Boolean rightKind
+                                    "Boolean operator" [ expressionOrigin catalog scope right ]
                             Some SqlSchemaValueKind.Boolean
                         | BinaryOperator.Concat -> None
                     results.Add(result)
@@ -484,7 +622,7 @@ module internal RewriteSchemaTypeValidation =
 
         and tableSource catalog ctes parent table =
             match table with
-            | NamedTable(name, alias) -> namedSource catalog name alias
+            | NamedTable(name, alias) -> readableNamedSource catalog name alias
             | CteTable(name, alias) -> cteSource catalog name alias ctes
             | DerivedTable(query, alias) ->
                 queryTypes catalog ctes None query
@@ -813,25 +951,39 @@ module internal RewriteSchemaTypeValidation =
             | QueryStatement query -> queryTypes catalog ctes None query |> ignore
             | InsertStatement insert ->
                 let target = namedSource catalog insert.Target None
+                // In a strict Virtual Catalog, DDL proved the physical
+                // column order. Generic runtime snapshots provide only a
+                // set of columns and must not gain implicit type evidence.
+                let layout =
+                    RewriteInsertTargetLayout.select
+                        (insert.Columns |> List.map (keyPart catalog.Dialect))
+                        target.Columns catalog.ProvenInsertColumnOrder
+                let targetColumns =
+                    match layout with
+                    | ProvenTargets columns -> columns
+                    | UnprovenImplicitOrder -> []
                 let columnTypes =
-                    insert.Columns
-                    |> List.map (fun item ->
-                        Map.tryFind (keyPart catalog.Dialect item) target.Kinds
-                        |> Option.bind typeKnown)
+                    targetColumns
+                    |> List.map (fun name ->
+                        Map.tryFind name target.Kinds |> Option.bind typeKnown)
                 match insert.Input with
                 | Values rows ->
                     rows |> NonEmpty.iter (fun row ->
                         let values = NonEmpty.toList row
                         values |> List.iter (inspect root)
+                        // Shape validation precedes this type check.
                         if values.Length = columnTypes.Length then
-                            List.zip columnTypes values
-                            |> List.iter (fun (targetKind, value) ->
-                                compatible document.Span targetKind
-                                    (expression catalog ctes root Span.unknown value) "INSERT assignment"))
+                            List.zip targetColumns (List.zip columnTypes values)
+                            |> List.iter (fun (targetName, (targetKind, value)) ->
+                                let valueKind = expression catalog ctes root Span.unknown value
+                                if knownFamilyMismatch targetKind valueKind then
+                                    compatibleWith (expressionSpanOr document.Span value)
+                                        targetKind valueKind "INSERT assignment"
+                                        [ targetOrigin targetName targetKind
+                                          expressionOrigin catalog root value ]))
                 | QuerySource query ->
                     let projections = queryTypes catalog ctes None query |> List.map snd
-                    // Implicit target-column order is not proven by the portable snapshot.
-                    if not insert.Columns.IsEmpty && projections.Length = columnTypes.Length then
+                    if not targetColumns.IsEmpty && projections.Length = columnTypes.Length then
                         List.zip columnTypes projections
                         |> List.iter (fun (targetKind, projectedKind) ->
                             compatible document.Span targetKind projectedKind "INSERT SELECT assignment")
@@ -839,22 +991,53 @@ module internal RewriteSchemaTypeValidation =
                 insert.Returning |> List.iter (fun item ->
                     inspect (makeScope None [ target ]) item.Expression)
             | UpdateStatement update ->
+                let mutable visibleCtes = ctes
+                for cte in update.Ctes do
+                    let output = queryTypes catalog visibleCtes None cte.Query
+                    let names =
+                        if cte.ColumnAliases.IsEmpty then output |> List.map fst
+                        else cte.ColumnAliases |> List.map (fun alias -> Some(keyPart catalog.Dialect alias))
+                    if names.Length <> output.Length || (names |> List.exists Option.isNone) then
+                        invalidOp "Statement-level UPDATE CTE requires a proven output column layout."
+                    let typed =
+                        List.zip names (output |> List.map snd)
+                        |> List.choose (fun (name, kind) -> name |> Option.map (fun value -> value, kind))
+                    visibleCtes <- Map.add (keyPart catalog.Dialect cte.Name) typed visibleCtes
                 let target = namedSource catalog update.Target update.TargetAlias
-                let others = update.From |> List.map (tableSource catalog ctes None)
+                let others = update.From |> List.map (tableSource catalog visibleCtes None)
                 let scope = makeScope None (target :: others)
                 let targetScope = makeScope None [ target ]
                 update.Assignments |> List.iter (fun item ->
-                    compatible document.Span
-                        (columnKind catalog targetScope item.Target)
-                        (expression catalog ctes scope Span.unknown item.Value)
-                        "UPDATE assignment")
-                update.Where |> Option.iter (inspect scope)
+                    let targetKind = columnKind catalog targetScope item.Target
+                    let valueKind = expression catalog visibleCtes scope Span.unknown item.Value
+                    if knownFamilyMismatch targetKind valueKind then
+                        compatibleWith (expressionSpanOr document.Span item.Value)
+                            targetKind valueKind "UPDATE assignment"
+                            [ targetOrigin (Identifier.text item.Target) targetKind
+                              expressionOrigin catalog scope item.Value ])
+                update.Where |> Option.iter (fun value ->
+                    expression catalog visibleCtes scope Span.unknown value |> ignore)
                 update.Returning |> List.iter (fun item -> inspect targetScope item.Expression)
             | DeleteStatement delete ->
+                // Sequential CTE lexical visibility is the same strict typed
+                // projection rule used by statement-level WITH UPDATE.
+                let mutable visibleCtes = ctes
+                for cte in delete.Ctes do
+                    let output = queryTypes catalog visibleCtes None cte.Query
+                    let names =
+                        if cte.ColumnAliases.IsEmpty then output |> List.map fst
+                        else cte.ColumnAliases |> List.map (fun alias -> Some(keyPart catalog.Dialect alias))
+                    if names.Length <> output.Length || (names |> List.exists Option.isNone) then
+                        invalidOp "Statement-level DELETE CTE requires a proven output column layout."
+                    let typed =
+                        List.zip names (output |> List.map snd)
+                        |> List.choose (fun (name, kind) -> name |> Option.map (fun value -> value, kind))
+                    visibleCtes <- Map.add (keyPart catalog.Dialect cte.Name) typed visibleCtes
                 let target = namedSource catalog delete.Target delete.TargetAlias
                 let scope =
-                    makeScope None (target :: (delete.Using |> List.map (tableSource catalog ctes None)))
-                delete.Where |> Option.iter (inspect scope)
+                    makeScope None (target :: (delete.Using |> List.map (tableSource catalog visibleCtes None)))
+                delete.Where |> Option.iter (fun value ->
+                    expression catalog visibleCtes scope Span.unknown value |> ignore)
                 delete.Returning |> List.iter (fun item -> inspect (makeScope None [ target ]) item.Expression)
             | MergeStatement _ -> () // Name binding already rejects MERGE in strict snapshot mode.
 
@@ -865,3 +1048,50 @@ module internal RewriteSchemaTypeValidation =
         let catalog = catalog dialect snapshot
         (createValidation ()) catalog (Bound.value bound)
         bound
+
+    /// Type-family checking remains an independent stage which runs only
+    /// after strict names were proven. The shared projection contains original
+    /// DDL type tags, not proof of any kind or execution authority.
+    let verifyVirtualPrepared dialect (state: SqlCatalogState)
+                              (projection: RewriteVirtualCatalogProjection.Projection)
+                              (bound: BoundSql) =
+        if not state.IsClosedWorld
+           || (state.Tables |> Seq.exists (fun t -> t.Knowledge <> SqlCatalogKnowledge.Known)) then
+            invalidArg "state" "Typed catalog binding requires a complete known closed-world catalog."
+        let typeKind (name: string) =
+            match name.ToUpperInvariant() with
+            | "BOOLEAN" | "BIT" -> SqlSchemaValueKind.Boolean
+            | "SMALLINT" | "INTEGER" | "INT" | "BIGINT"
+            | "NUMBER" | "FLOAT" | "REAL" | "NUMERIC" -> SqlSchemaValueKind.Numeric
+            | "TEXT" | "CHAR" | "VARCHAR" | "VARCHAR2"
+            | "NVARCHAR" | "NVARCHAR2" | "NCHAR" -> SqlSchemaValueKind.Text
+            | "DATE" | "TIMESTAMP" | "DATETIME" | "DATETIME2" ->
+                SqlSchemaValueKind.Temporal
+            | value when [ "CHAR("; "VARCHAR("; "NCHAR("; "NVARCHAR("; "VARCHAR2("; "NVARCHAR2(" ]
+                         |> List.exists (fun prefix -> value.StartsWith(prefix, StringComparison.Ordinal)) ->
+                SqlSchemaValueKind.Text
+            | _ -> SqlSchemaValueKind.Unknown
+        let typed relations =
+            relations
+            |> List.map (fun (relation: RewriteVirtualCatalogProjection.Relation) ->
+                RewriteResourceBudget.checkpoint ()
+                relation.Key,
+                (relation.Names |> List.mapi (fun index name ->
+                    RewriteResourceBudget.checkpoint ()
+                    name, typeKind relation.Columns.[index].TypeName)))
+            |> Map.ofList
+        // The output of NameValidation was checked for collisions already.
+        // Physical assignment targets remain distinct from readable Views.
+        let physical = typed projection.Physical
+        let readable =
+            Map.fold (fun result name columns -> Map.add name columns result)
+                physical (typed projection.ReadableViews)
+        let virtualCatalog : Catalog =
+            { Dialect = dialect; Tables = physical; ReadRelations = readable
+              ProvenInsertColumnOrder = true }
+        (createValidation ()) virtualCatalog (Bound.value bound)
+        bound
+
+    let verifyVirtual dialect (state: SqlCatalogState) (bound: BoundSql) =
+        let projection = RewriteVirtualCatalogProjection.prepare dialect state bound
+        verifyVirtualPrepared dialect state projection bound

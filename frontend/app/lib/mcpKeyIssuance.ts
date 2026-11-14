@@ -20,6 +20,8 @@ export interface McpToolSelectionDescriptor {
 export type McpAccessPostureLevel =
   | "read-query"
   | "dml-enabled"
+  | "ddl-enabled"
+  | "dml-ddl-enabled"
   | "unrestricted"
   | "review";
 
@@ -57,19 +59,29 @@ export function resolveMcpAccessPosture(
   restrictTables = false,
   selectedTableCount = 0,
   unclassifiedToolCount = 0,
+  legacyUnrestricted = false,
+  ddlToolNames: Iterable<string> = [],
 ): McpAccessPosture {
   const dataScope = restrictTables
     ? `${selectedTableCount} table${selectedTableCount === 1 ? "" : "s"}`
     : "All tables";
 
   if (allowedTools.length === 0) {
-    return {
-      level: "unrestricted",
-      title: "Unrestricted tool access",
-      description:
-        "All built-in and published tools for this database are allowed, including DML.",
-      dataScope,
-    };
+    return legacyUnrestricted
+      ? {
+          level: "unrestricted",
+          title: "Legacy unrestricted tool access",
+          description:
+            "Existing unrestricted key: general built-in and published tools, including DML, are allowed. DDL requires an explicit execute_ddl_sql grant and separate approval; a blank allowlist never grants DDL.",
+          dataScope,
+        }
+      : {
+          level: "review",
+          title: "Select allowed tools",
+          description:
+            "Select at least one tool. Empty selections cannot create unrestricted MCP keys.",
+          dataScope,
+        };
   }
 
   if (unclassifiedToolCount > 0) {
@@ -88,11 +100,36 @@ export function resolveMcpAccessPosture(
     dmlTools.has(name.toLocaleLowerCase()),
   );
 
+  const ddlTools = new Set(
+    Array.from(ddlToolNames, (name) => name.toLocaleLowerCase()),
+  );
+  const ddlEnabled = allowedTools.some((name) =>
+    ddlTools.has(name.toLocaleLowerCase()),
+  );
+
+  if (ddlEnabled && dmlEnabled) {
+    return {
+      level: "dml-ddl-enabled",
+      title: "DML & DDL enabled",
+      description: `${allowedTools.length} tools selected. DML commits and DDL execution have separate approval flows. DDL additionally requires Host enablement and live schema verification.`,
+      dataScope,
+    };
+  }
+
+  if (ddlEnabled) {
+    return {
+      level: "ddl-enabled",
+      title: "DDL enabled",
+      description: `${allowedTools.length} tools selected. DDL execution requires separate DDL approval, Host enablement, and live schema verification; a key grant alone does not authorize changes.`,
+      dataScope,
+    };
+  }
+
   if (dmlEnabled) {
     return {
       level: "dml-enabled",
       title: "DML enabled",
-      description: `${allowedTools.length} tools selected. DML still requires the configured human approval flow.`,
+      description: `${allowedTools.length} tools selected. DML commits still require the configured approval flow.`,
       dataScope,
     };
   }
@@ -100,7 +137,7 @@ export function resolveMcpAccessPosture(
   return {
     level: "read-query",
     title: "Read/query only",
-    description: `${allowedTools.length} non-DML tools selected.`,
+    description: `${allowedTools.length} read/query tools selected.`,
     dataScope,
   };
 }
@@ -147,17 +184,23 @@ export function serializeTableWhitelist(
   return selectedTables.join(",");
 }
 
-export function formatAllowedToolsLabel(selectedTools: string[]): string {
+export function formatAllowedToolsLabel(
+  selectedTools: string[],
+  legacyUnrestricted = false,
+): string {
   return selectedTools.length === 0
-    ? "Global (no restriction)"
+    ? legacyUnrestricted
+      ? "Legacy unrestricted (existing key)"
+      : "Select at least one tool"
     : `${selectedTools.length} tools selected`;
 }
 
 export function allowedToolsRequireElicitation(
   allowedTools: string[],
   dmlToolNames: Iterable<string> = [],
+  legacyUnrestricted = false,
 ): boolean {
-  if (allowedTools.length === 0) return true;
+  if (allowedTools.length === 0) return legacyUnrestricted;
   const dmlTools = new Set(
     Array.from(dmlToolNames, (name) => name.toLocaleLowerCase()),
   );

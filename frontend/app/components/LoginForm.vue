@@ -7,8 +7,10 @@ import { Input } from "@/components/ui/input";
 import PasswordInput from "@/components/PasswordInput.vue";
 import FormField from "@/components/FormField.vue";
 import { toast } from "vue-sonner"
-import { checkFirstRun, getOidcStatus, signIn } from "~/api/auth";
-import { persistAuthSession } from "@/lib/auth-session";
+import { checkFirstRun, getOidcStatus } from "~/api/auth";
+import { useAuthStore } from "@/stores/auth";
+
+const auth = useAuthStore();
 
 const props = defineProps<{
   class?: HTMLAttributes["class"];
@@ -33,19 +35,9 @@ onMounted(async () => {
 const submit = async (values: any) => {
   submitting.value = true;
   try {
-    const response = await signIn(
-      values.email.trim(),
-      values.password,
-    );
-
-    if (response?.accessToken && response?.refreshToken) {
-      persistAuthSession(response);
-      return await navigateTo("/home");
-    }
-    if (response?.requiresMfa && response?.mfaToken) {
-      sessionStorage.setItem("mfaToken", response.mfaToken);
-      return await navigateTo("/mfa");
-    }
+    const outcome = await auth.login(values.email, values.password);
+    if (outcome === "authenticated") return await navigateTo("/home");
+    if (outcome === "mfa") return await navigateTo("/mfa");
 
     toast.error("Login failed. Please try again.");
   } catch (error: any) {

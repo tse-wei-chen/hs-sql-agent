@@ -1,7 +1,7 @@
 import xior from "xior";
 import { refreshToken, signOut } from "./auth";
 import { toast } from "vue-sonner";
-import { clearAuthSession, persistAuthSession } from "@/lib/auth-session";
+import { clearAuthSession, persistAuthSession, readAuthSession } from "@/lib/auth-session";
 
 let refreshPromise: Promise<any> | null = null;
 
@@ -32,8 +32,9 @@ export const xiorInstanceToken = xior.create({
 });
 
 xiorInstanceToken.interceptors.request.use((config) => {
-  config.headers["Authorization"] =
-    `Bearer ${localStorage.getItem("accessToken")}`;
+  const token = readAuthSession().accessToken;
+  if (token) config.headers["Authorization"] = `Bearer ${token}`;
+  else delete config.headers["Authorization"];
   return config;
 });
 
@@ -78,8 +79,9 @@ export const xiorInstanceRefreshToken = xior.create({
 });
 
 xiorInstanceRefreshToken.interceptors.request.use((config) => {
-  config.headers["Authorization"] =
-    `Bearer ${localStorage.getItem("refreshToken")}`;
+  const token = readAuthSession().refreshToken;
+  if (token) config.headers["Authorization"] = `Bearer ${token}`;
+  else delete config.headers["Authorization"];
   return config;
 });
 

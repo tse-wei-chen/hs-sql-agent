@@ -6,7 +6,11 @@ namespace Admin.Service.Services;
 
 public class RateLimitingRuntimeState(IConfiguration configuration) : IRateLimitingRuntimeState
 {
+#if NET9_0_OR_GREATER
     private readonly Lock _sync = new();
+#else
+    private readonly object _sync = new();
+#endif
     private RateLimitingSettings _current = new()
     {
         PermitLimit = ParseInt(configuration["RateLimiting:PermitLimit"], 0),

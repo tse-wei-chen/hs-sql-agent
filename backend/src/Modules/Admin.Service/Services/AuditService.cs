@@ -154,7 +154,8 @@ public class AuditService(
             query = query.Where(x =>
                 (x.Target != null && x.Target.Contains(filter.Keyword)) ||
                 (x.Detail != null && x.Detail.Contains(filter.Keyword)) ||
-                (x.ActorId != null && x.ActorId.Contains(filter.Keyword)));
+                (x.ActorId != null && x.ActorId.Contains(filter.Keyword)) ||
+            (x.Definition != null && x.Definition.Contains(filter.Keyword)));
         }
         if (filter.From.HasValue)
             query = query.Where(x => x.CreatedAt >= filter.From.Value);
@@ -235,7 +236,8 @@ public class AuditService(
             query = query.Where(x =>
                 (x.Target != null && x.Target.Contains(keyword)) ||
                 (x.Detail != null && x.Detail.Contains(keyword)) ||
-                (x.ActorId != null && x.ActorId.Contains(keyword)));
+                (x.ActorId != null && x.ActorId.Contains(keyword)) ||
+                (x.Definition != null && x.Definition.Contains(keyword)));
         }
 
         var records = await query
@@ -287,14 +289,30 @@ public class AuditService(
             .Take(Math.Clamp(maxRows, 1, 100_001))
             .Select(x => new AuditLogItem
             {
-                Id = x.Id, EventId = x.EventId, ActorType = x.ActorType, ActorId = x.ActorId,
-                Action = x.Action, Target = x.Target, Detail = x.Detail, Result = x.Result,
-                IpAddress = x.IpAddress, UserAgent = x.UserAgent, RequestId = x.RequestId,
-                SessionId = x.SessionId, AccessKeyId = x.AccessKeyId, DbManagementId = x.DbManagementId,
-                DatabaseName = x.DatabaseName, ToolName = x.ToolName, Operation = x.Operation,
-                DurationMs = x.DurationMs, ReturnedRows = x.ReturnedRows, AffectedRows = x.AffectedRows,
-                ApprovalStatus = x.ApprovalStatus, ErrorCategory = x.ErrorCategory,
-                Definition = x.Definition, CreatedAt = x.CreatedAt
+                Id = x.Id,
+                EventId = x.EventId,
+                ActorType = x.ActorType,
+                ActorId = x.ActorId,
+                Action = x.Action,
+                Target = x.Target,
+                Detail = x.Detail,
+                Result = x.Result,
+                IpAddress = x.IpAddress,
+                UserAgent = x.UserAgent,
+                RequestId = x.RequestId,
+                SessionId = x.SessionId,
+                AccessKeyId = x.AccessKeyId,
+                DbManagementId = x.DbManagementId,
+                DatabaseName = x.DatabaseName,
+                ToolName = x.ToolName,
+                Operation = x.Operation,
+                DurationMs = x.DurationMs,
+                ReturnedRows = x.ReturnedRows,
+                AffectedRows = x.AffectedRows,
+                ApprovalStatus = x.ApprovalStatus,
+                ErrorCategory = x.ErrorCategory,
+                Definition = x.Definition,
+                CreatedAt = x.CreatedAt
             }).ToListAsync(cancellationToken);
     }
 
@@ -304,7 +322,8 @@ public class AuditService(
         if (!string.IsNullOrWhiteSpace(filter.Keyword)) query = query.Where(x =>
             (x.Target != null && x.Target.Contains(filter.Keyword)) ||
             (x.Detail != null && x.Detail.Contains(filter.Keyword)) ||
-            (x.ActorId != null && x.ActorId.Contains(filter.Keyword)));
+            (x.ActorId != null && x.ActorId.Contains(filter.Keyword)) ||
+                (x.Definition != null && x.Definition.Contains(filter.Keyword)));
         if (filter.From.HasValue) query = query.Where(x => x.CreatedAt >= filter.From.Value);
         if (filter.To.HasValue) query = query.Where(x => x.CreatedAt <= filter.To.Value);
         if (!string.IsNullOrWhiteSpace(filter.Result)) query = query.Where(x => x.Result == filter.Result);

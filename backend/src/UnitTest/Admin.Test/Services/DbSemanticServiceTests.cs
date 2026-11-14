@@ -23,8 +23,11 @@ public class DbSemanticServiceTests : IAsyncLifetime
         await _context.Database.EnsureCreatedAsync();
         _context.DbManagement.Add(new DbManagement
         {
-            Id = 1, Name = "analytics", SqlProvider = "Sqlite",
-            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
+            Id = 1,
+            Name = "analytics",
+            SqlProvider = "Sqlite",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
         });
         await _context.SaveChangesAsync();
         _service = new DbSemanticService(_context);
@@ -42,21 +45,35 @@ public class DbSemanticServiceTests : IAsyncLifetime
         var cancellationToken = TestContext.Current.CancellationToken;
         await _service.UpsertSemanticAsync(new DbSemanticRequest
         {
-            DbManagementId = 1, SchemaName = "main", TableName = "orders",
-            DisplayName = "Orders", Synonyms = ["sales", " Sales ", "purchases"]
+            DbManagementId = 1,
+            SchemaName = "main",
+            TableName = "orders",
+            DisplayName = "Orders",
+            Synonyms = ["sales", " Sales ", "purchases"]
         }, cancellationToken);
         await _service.UpsertRelationshipAsync(new DbSemanticRelationshipModel
         {
-            DbManagementId = 1, Name = "orders_customer",
-            SourceSchema = "main", SourceTable = "orders", SourceColumn = "customer_id",
-            TargetSchema = "main", TargetTable = "customers", TargetColumn = "id",
-            Cardinality = "many-to-one", Direction = "source-to-target"
+            DbManagementId = 1,
+            Name = "orders_customer",
+            SourceSchema = "main",
+            SourceTable = "orders",
+            SourceColumn = "customer_id",
+            TargetSchema = "main",
+            TargetTable = "customers",
+            TargetColumn = "id",
+            Cardinality = "many-to-one",
+            Direction = "source-to-target"
         }, cancellationToken);
         await _service.UpsertMetricAsync(new DbSemanticMetricModel
         {
-            DbManagementId = 1, SchemaName = "main", TableName = "orders",
-            Name = "gross_revenue", Formula = "orders.amount",
-            Aggregation = "sum", Grain = "order", Synonyms = ["revenue", "sales amount"]
+            DbManagementId = 1,
+            SchemaName = "main",
+            TableName = "orders",
+            Name = "gross_revenue",
+            Formula = "orders.amount",
+            Aggregation = "sum",
+            Grain = "order",
+            Synonyms = ["revenue", "sales amount"]
         }, cancellationToken);
 
         var model = await _service.GetSemanticModelAsync(1, cancellationToken);
@@ -75,10 +92,14 @@ public class DbSemanticServiceTests : IAsyncLifetime
     {
         var model = new DbSemanticRelationshipModel
         {
-            DbManagementId = 1, Name = "invalid_relationship",
-            SourceTable = "orders", SourceColumn = "customer_id",
-            TargetTable = "customers", TargetColumn = "id",
-            Cardinality = cardinality, Direction = direction
+            DbManagementId = 1,
+            Name = "invalid_relationship",
+            SourceTable = "orders",
+            SourceColumn = "customer_id",
+            TargetTable = "customers",
+            TargetColumn = "id",
+            Cardinality = cardinality,
+            Direction = direction
         };
 
         await Assert.ThrowsAsync<ArgumentException>(() =>

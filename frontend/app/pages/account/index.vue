@@ -26,9 +26,10 @@ import {
   revokeSession,
   type AuthSession,
 } from "@/api/auth";
-import { clearAuthSession } from "@/lib/auth-session";
+import { useAuthStore } from "@/stores/auth";
 
 definePageMeta({ layout: "default" });
+const auth = useAuthStore();
 
 const sessions = ref<AuthSession[]>([]);
 const loading = ref(false);
@@ -45,12 +46,8 @@ const mfaSetupQrCode = ref("");
 const mfaCode = ref("");
 const recoveryCodes = ref<string[]>([]);
 
-const tokenRequiresMfaEnrollment = () => {
-  try {
-    const payload = JSON.parse(atob((localStorage.getItem("accessToken")?.split(".")[1] || "").replace(/-/g, "+").replace(/_/g, "/")));
-    return payload?.mfa_enrollment_required === "true";
-  } catch { return false; }
-};
+const tokenRequiresMfaEnrollment = () =>
+  auth.claims?.mfa_enrollment_required === "true";
 
 const formatDate = (value: string) => new Date(value).toLocaleString();
 
@@ -97,13 +94,13 @@ const confirmMfa = async () => {
 const turnOffMfa = async () => {
   try {
     await disableMfa(mfaCode.value);
-    clearAuthSession();
+    auth.clear();
     await navigateTo("/login");
   } catch (error: any) { toast.error(error?.response?.data || "Failed to disable MFA."); }
 };
 
 const finishMfaSetup = async () => {
-  clearAuthSession();
+  auth.clear();
   await navigateTo("/login");
 };
 
@@ -111,7 +108,7 @@ const saveProfile = async () => {
   try {
     await updateAccount(username.value, email.value);
     toast.success("Account updated. Please sign in again.");
-    clearAuthSession();
+    auth.clear();
     await navigateTo("/login");
   } catch (error: any) {
     toast.error(error?.response?.data || "Failed to update account.");
@@ -122,7 +119,7 @@ const savePassword = async () => {
   try {
     await changePassword(currentPassword.value, newPassword.value);
     toast.success("Password changed. Please sign in again.");
-    clearAuthSession();
+    auth.clear();
     await navigateTo("/login");
   } catch (error: any) {
     toast.error(error?.response?.data || "Failed to change password.");
@@ -133,7 +130,7 @@ const revoke = async (session: AuthSession) => {
   if (!confirm(session.isCurrent ? "Sign out this device now?" : "Sign out this session?")) return;
   await revokeSession(session.id);
   if (session.isCurrent) {
-    clearAuthSession();
+    auth.clear();
     await navigateTo("/login");
     return;
   }

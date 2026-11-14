@@ -161,7 +161,7 @@ module internal RewriteSourceValidation =
     let private verifySourceRegexQuery regexProof query =
         verifyRegexWalk regexProof (WalkQuery query)
 
-    let verifyRegexDocument regexProof document =
+    let private verifyRegexDocumentWhenRejected regexProof document =
         match document.Statement with
         | QueryStatement query -> verifySourceRegexQuery regexProof query
         | InsertStatement insert ->
@@ -171,11 +171,13 @@ module internal RewriteSourceValidation =
             | DefaultValues -> ()
             insert.Returning |> List.iter (fun item -> verifySourceRegexExpr regexProof item.Expression)
         | UpdateStatement update ->
+            update.Ctes |> List.iter (fun cte -> verifySourceRegexQuery regexProof cte.Query)
             update.AssignmentItems |> NonEmpty.iter (fun assignment -> verifySourceRegexExpr regexProof assignment.Value)
             update.From |> List.iter (verifySourceRegexSource regexProof)
             update.Where |> Option.iter (verifySourceRegexExpr regexProof)
             update.Returning |> List.iter (fun item -> verifySourceRegexExpr regexProof item.Expression)
         | DeleteStatement delete ->
+            delete.Ctes |> List.iter (fun cte -> verifySourceRegexQuery regexProof cte.Query)
             delete.Using |> List.iter (verifySourceRegexSource regexProof)
             delete.Where |> Option.iter (verifySourceRegexExpr regexProof)
             delete.Returning |> List.iter (fun item -> verifySourceRegexExpr regexProof item.Expression)
@@ -190,6 +192,16 @@ module internal RewriteSourceValidation =
             merge.NotMatched
             |> Option.iter (fun mergeInsert ->
                 mergeInsert.InsertValues |> NonEmpty.iter (verifySourceRegexExpr regexProof))
+
+    /// When the source capability has already been statically proven, the
+    /// only action of the Regex walk (raising on RawRegexCall) is a no-op.
+    /// A rejecting proof still traverses the closed AST in its original
+    /// first-error order, including nested query and DML expression shapes.
+    /// Do not merge this capability guard with raw-dialect semantic checks.
+    let verifyRegexDocument regexProof document =
+        match regexProof with
+        | ProvenCapability -> ()
+        | RejectedCapability _ -> verifyRegexDocumentWhenRejected regexProof document
 
     let private validateRawSourceFunction source expression =
         match Expr.unspan expression with
@@ -287,11 +299,13 @@ module internal RewriteSourceValidation =
             | DefaultValues -> ()
             insert.Returning |> List.iter (fun item -> validateRawSourceExpr source orderingProofs mySqlPipes item.Expression)
         | UpdateStatement update ->
+            update.Ctes |> List.iter (fun cte -> validateRawSourceQuery source orderingProofs mySqlPipes cte.Query)
             update.AssignmentItems |> NonEmpty.iter (fun item -> validateRawSourceExpr source orderingProofs mySqlPipes item.Value)
             update.From |> List.iter (validateRawSourceTable source orderingProofs mySqlPipes)
             update.Where |> Option.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
             update.Returning |> List.iter (fun item -> validateRawSourceExpr source orderingProofs mySqlPipes item.Expression)
         | DeleteStatement delete ->
+            delete.Ctes |> List.iter (fun cte -> validateRawSourceQuery source orderingProofs mySqlPipes cte.Query)
             delete.Using |> List.iter (validateRawSourceTable source orderingProofs mySqlPipes)
             delete.Where |> Option.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
             delete.Returning |> List.iter (fun item -> validateRawSourceExpr source orderingProofs mySqlPipes item.Expression)

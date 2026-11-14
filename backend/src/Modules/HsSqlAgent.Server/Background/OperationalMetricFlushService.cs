@@ -27,9 +27,13 @@ public class OperationalMetricFlushService(
             foreach (var item in snapshots)
                 context.RateLimitMetrics.Add(new RateLimitMetric
                 {
-                    BucketStart = item.BucketStart, Layer = item.Layer, AccessKeyId = item.AccessKeyId,
-                    DbManagementId = item.DbManagementId, ToolName = item.ToolName,
-                    AttemptCount = item.AttemptCount, RejectedCount = item.RejectedCount
+                    BucketStart = item.BucketStart,
+                    Layer = item.Layer,
+                    AccessKeyId = item.AccessKeyId,
+                    DbManagementId = item.DbManagementId,
+                    ToolName = item.ToolName,
+                    AttemptCount = item.AttemptCount,
+                    RejectedCount = item.RejectedCount
                 });
             await context.SaveChangesAsync(cancellationToken);
         }

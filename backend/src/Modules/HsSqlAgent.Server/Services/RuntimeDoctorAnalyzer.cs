@@ -2,6 +2,7 @@ using System.Text;
 using Common.Services;
 using HsSqlAgent.Server.Models;
 using Microsoft.Extensions.Configuration;
+using StackExchange.Redis;
 
 namespace HsSqlAgent.Server.Services;
 
@@ -322,13 +323,44 @@ internal static class RuntimeDoctorAnalyzer
             var failureMode = configuration[$"{section}:FailureMode"] ?? "FailClosed";
             if (!failureMode.Equals("FailClosed", StringComparison.OrdinalIgnoreCase))
             {
-                checks.Add(Warning(
-                    $"coordination.{section.ToLowerInvariant()}-failure-mode",
-                    "Coordination",
-                    $"{section} failure mode",
-                    $"{section} uses Redis with failure mode '{failureMode}'.",
-                    "Use FailClosed when shared coordination is a security or concurrency boundary."));
+                var id = $"coordination.{section.ToLowerInvariant()}-failure-mode";
+                var title = $"{section} failure mode";
+                var detail = $"{section} uses Redis with failure mode '{failureMode}'.";
+                var action = "Use FailClosed when shared coordination is a security or concurrency boundary.";
+                // Redis SQL admission cannot promise MaxConcurrentSql while
+                // falling open; this is an invalid security configuration,
+                // not an optional performance warning.
+                checks.Add(section == "SqlConcurrency"
+                    ? Error(id, "Coordination", title, detail, action)
+                    : Warning(id, "Coordination", title, detail, action));
             }
+        }
+
+        // Standalone Redis Lua leases are not a consensus fencing system.
+        // Avoid labeling Sentinel / multi-endpoint failover as safe HA SQL
+        // coordination; the topology is part of the security boundary.
+        var sqlCoordination = providers.First(provider => provider.Section == "SqlConcurrency");
+        if (IsRedis(sqlCoordination.Provider)
+            && !string.IsNullOrWhiteSpace(sqlCoordination.ConnectionString))
+        {
+            var unsupported = false;
+            try
+            {
+                var redis = ConfigurationOptions.Parse(sqlCoordination.ConnectionString);
+                unsupported = !string.IsNullOrWhiteSpace(redis.ServiceName)
+                    || redis.EndPoints.Count != 1;
+            }
+            catch (Exception exception) when (exception is ArgumentException or FormatException)
+            {
+                unsupported = true;
+            }
+            if (unsupported)
+                checks.Add(Error(
+                    "coordination.sqlconcurrency-topology",
+                    "Coordination",
+                    "Redis SQL lease topology",
+                    "Redis Sentinel, Cluster or multi-endpoint failover cannot provide a proven exclusive SQL lease with this limiter.",
+                    "Use one authoritative standalone Redis primary or a separate quorum-fenced coordination service; do not advertise failover-safe MaxConcurrentSql."));
         }
     }
 

@@ -131,7 +131,14 @@ module internal RewriteFacadeAdapter =
           FirebirdTimeZoneType =
             SqlFirebirdTimeZoneTypeCapabilityRules.CastSourceValidationError(source, sourceProfile)
             |> sourceCapabilityProof
-          FirebirdExtendedDecimal = CapabilityProof.ProvenCapability
+          FirebirdExtendedDecimal =
+            if source <> SqlAgentToolType.Firebird
+               || SqlFirebirdTimeZoneTypeCapabilityRules.SupportsTargetProfile(sourceProfile) then
+                CapabilityProof.ProvenCapability
+            else
+                sourceCapabilityProof (
+                    "SQL capability 'numeric.decimal_extended' requires an explicit Firebird source "
+                    + "capability profile with ServerVersion 4.0 or newer.")
           StandaloneTime = CapabilityProof.ProvenCapability
           FilterPredicate = filterPredicateProofs source "source" sourceCapabilityProof }
 
@@ -313,7 +320,10 @@ module internal RewriteFacadeAdapter =
           OracleQuotedString =
             grammar.SupportsLexicalFeature(SqlSourceLexicalFeatures.OracleQuotedString)
           HashPrefixedIdentifier =
-            grammar.SupportsLexicalFeature(SqlSourceLexicalFeatures.HashPrefixedIdentifier) }
+            grammar.SupportsLexicalFeature(SqlSourceLexicalFeatures.HashPrefixedIdentifier)
+          ScriptMySqlAccountSeparator = false
+          ScriptDeferUnclosedGrouping = false
+          PostgresExactNumeric = source = SqlAgentToolType.Postgres }
 
     let private sourceSemantics source (sourceProfile: SqlProviderCapabilityProfile | null) : RewriteParser.SourceSemantics =
         { EnforceDialectSyntax = true
@@ -339,6 +349,48 @@ module internal RewriteFacadeAdapter =
           Joins = sourceJoinProofs source sourceProfile
           Expressions = sourceExpressionProofs source sourceProfile
           Dml = sourceDmlProofs source sourceProfile
+          SqlServerWithMutationCte =
+            SqlSqlServerWithMutationCteCapabilityRules.SourceValidationError(source, sourceProfile)
+            |> sourceCapabilityProof
+          MySqlOrdinaryCte =
+            SqlMySqlOrdinaryCteCapabilityRules.SourceValidationError(source, sourceProfile)
+            |> sourceCapabilityProof
+          MySqlWithUpdateCte =
+            (if source = SqlAgentToolType.MySQL
+                && not (isNull sourceProfile)
+                && not (isNull (nonNull sourceProfile).ServerVersion)
+                && (nonNull (nonNull sourceProfile).ServerVersion).CompareTo(Version(8, 0)) < 0 then
+                ("SQL capability 'mysql.with_update' requires MySQL source ServerVersion 8.0+; declared version is "
+                + string (nonNull sourceProfile).ServerVersion + "." : string | null)
+             else null)
+            |> sourceCapabilityProof
+          SqliteWithUpdateCte =
+            (if source = SqlAgentToolType.Sqlite
+                && not (isNull sourceProfile)
+                && not (isNull (nonNull sourceProfile).ServerVersion)
+                && (nonNull (nonNull sourceProfile).ServerVersion).CompareTo(Version(3, 8, 3)) < 0 then
+                ("SQL capability 'sqlite.with_update' requires SQLite source ServerVersion 3.8.3+; declared version is "
+                + string (nonNull sourceProfile).ServerVersion + "." : string | null)
+             else null)
+            |> sourceCapabilityProof
+          MySqlWithDeleteCte =
+            (if source = SqlAgentToolType.MySQL
+                && not (isNull sourceProfile)
+                && not (isNull (nonNull sourceProfile).ServerVersion)
+                && (nonNull (nonNull sourceProfile).ServerVersion).CompareTo(Version(8, 0)) < 0 then
+                ("SQL capability 'mysql.with_delete' requires MySQL source ServerVersion 8.0+; declared version is "
+                + string (nonNull sourceProfile).ServerVersion + "." : string | null)
+             else null)
+            |> sourceCapabilityProof
+          SqliteWithDeleteCte =
+            (if source = SqlAgentToolType.Sqlite
+                && not (isNull sourceProfile)
+                && not (isNull (nonNull sourceProfile).ServerVersion)
+                && (nonNull (nonNull sourceProfile).ServerVersion).CompareTo(Version(3, 8, 3)) < 0 then
+                ("SQL capability 'sqlite.with_delete' requires SQLite source ServerVersion 3.8.3+; declared version is "
+                + string (nonNull sourceProfile).ServerVersion + "." : string | null)
+             else null)
+            |> sourceCapabilityProof
           OnConflict = sourceOnConflictProof source sourceProfile
           Ordering = sourceOrderingProofs source
           FetchPercent =
@@ -347,13 +399,44 @@ module internal RewriteFacadeAdapter =
           FetchWithTies =
             SqlFetchWithTiesCapabilityRules.SourceValidationError(source, sourceProfile)
             |> sourceCapabilityProof
+          ApplyJoin =
+            SqlApplyJoinCapabilityRules.SourceValidationError(source, sourceProfile)
+            |> sourceCapabilityProof
           LateralDerivedTable =
             SqlLateralDerivedTableCapabilityRules.SourceValidationError(source, sourceProfile)
             |> sourceCapabilityProof
           RecursiveCte =
             SqlRecursiveCteCapabilityRules.SourceValidationError(source, sourceProfile)
             |> sourceCapabilityProof
+          SetAll =
+            SqlSetAllCapabilityRules.SourceValidationError("INTERSECT", source, sourceProfile)
+            |> sourceCapabilityProof
+          OracleExceptSyntax =
+            SqlOracleExceptSourceCapabilityRules.SourceValidationError(source, sourceProfile)
+            |> sourceCapabilityProof
           Lexical = sourceLexicalSemantics source sourceProfile }
+
+    /// Reuse the same source-profile lexical contract for script segmentation.
+    /// A permissive second lexer could otherwise reinterpret semicolons inside
+    /// provider-specific string literals as statement boundaries.
+    let tokenizeSourceValidated sql source (sourceProfile: SqlProviderCapabilityProfile | null) =
+        sourceDialect source |> ignore
+        RewriteLexer.tokenizeWith (sourceLexicalSemantics source sourceProfile) sql
+
+    /// The script frontend can recognize MySQL 'user'@'host' as an opaque
+    /// DCL account spelling; raw SQL compilation remains strictly unchanged.
+    let tokenizeScriptValidated sql source (sourceProfile: SqlProviderCapabilityProfile | null) =
+        sourceDialect source |> ignore
+        let lexical = sourceLexicalSemantics source sourceProfile
+        if source = SqlAgentToolType.MySQL then
+            RewriteLexer.tokenizeWith { lexical with ScriptMySqlAccountSeparator = true } sql
+        elif source = SqlAgentToolType.MsSqlServer then
+            // GO is a client-side physical batch delimiter. A malformed prior
+            // batch must not invalidate lexical scanning of later batches.
+            // Query/Mutation statements are still lexed strictly in emit.
+            RewriteLexer.tokenizeWith { lexical with ScriptDeferUnclosedGrouping = true } sql
+        else
+            RewriteLexer.tokenizeWith lexical sql
 
     let parseSourceValidated sql source (sourceProfile: SqlProviderCapabilityProfile | null) =
         RewriteParser.parseForWith
@@ -431,6 +514,9 @@ module internal RewriteFacadeAdapter =
                         semantics.MySqlPipes
                         sourceProfile
                         targetProfile
+                        null
+                        null
+                        null
                         bound)
             let canonicalDocument = Canonical.value canonical
             RewriteResourceBudget.withStage "Inspection" SqlDiagnosticStage.SemanticValidation (fun () ->
@@ -501,11 +587,13 @@ module internal RewriteFacadeAdapter =
         | values when values.Count = 0 -> None
         | values -> Some(values |> Seq.toList)
 
-    let private queryPolicy queryMaxRows =
+    let private queryPolicy (policy: SqlExecutionPlanPolicy) =
         let queryRows =
-            if queryMaxRows <= 0 then RowCap.Unlimited
-            else RowCap.MaxRows(PositiveRowCount.create queryMaxRows)
-        { RewritePolicy.safeDefaults with QueryRows = queryRows }
+            if policy.QueryMaxRows <= 0 then RowCap.Unlimited
+            else RowCap.MaxRows(PositiveRowCount.create policy.QueryMaxRows)
+        { RewritePolicy.safeDefaults with
+            QueryRows = queryRows
+            NativeFunctionPolicy = policy.NativeFunctionPolicy }
 
     let private mutationSafety requireWhere allowFullTable =
         if not requireWhere && allowFullTable then MutationSafety.AllowAllRows
@@ -642,7 +730,7 @@ module internal RewriteFacadeAdapter =
             (targetNullOrdering target)
             (targetDmlProofs source target targetProfile resultRowAssurance)
 
-    let private compileOptions source semantics target sourceProfile targetProfile conflictTargetAssurance resultRowAssurance policy allowed schemaSnapshot =
+    let private compileOptions source semantics target sourceProfile targetProfile conflictTargetAssurance resultRowAssurance policy allowed schemaSnapshot liveKeyAssurance sqlServerLiveProof =
         RewritePipeline.createOptions
             (verifiedSource source semantics sourceProfile)
             (verifiedTarget source target targetProfile resultRowAssurance)
@@ -650,6 +738,8 @@ module internal RewriteFacadeAdapter =
             policy
             allowed
             schemaSnapshot
+            liveKeyAssurance
+            sqlServerLiveProof
 
 
     // Consume the same canonical digest host verifiers obtain from the snapshot.
@@ -728,7 +818,7 @@ module internal RewriteFacadeAdapter =
                 fingerprint
         CompiledSqlCommand.Create(rendered.Sql, parameterValues, kind, fingerprint, target, rendered.ReturnsRows, evidence)
 
-    let private compile source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) (resultRowAssurance: DmlResultRowAssurance | null) policyVersion policy allowed schemaSnapshot sql =
+    let private compile source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) (resultRowAssurance: DmlResultRowAssurance | null) policyVersion policy allowed schemaSnapshot liveKeyAssurance sqlServerLiveProof sql =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
         let evidenceContext =
             compileEvidenceContext
@@ -755,7 +845,9 @@ module internal RewriteFacadeAdapter =
                         resultRowAssurance
                         policy
                         allowed
-                        schemaSnapshot)
+                        schemaSnapshot
+                        liveKeyAssurance
+                        sqlServerLiveProof)
                     sql
             buildTranslatedCommand evidenceContext target policyVersion schemaSnapshot parsed rendered
         with ex ->
@@ -766,7 +858,7 @@ module internal RewriteFacadeAdapter =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentNullException.ThrowIfNull(executionPolicy)
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
-        let command = compile source target sourceProfile targetProfile null null validationContext.PolicyVersion (queryPolicy executionPolicy.QueryMaxRows) (allowedTables validationContext.AllowedTables) validationContext.SchemaSnapshot sql
+        let command = compile source target sourceProfile targetProfile null null validationContext.PolicyVersion (queryPolicy executionPolicy) (allowedTables validationContext.AllowedTables) validationContext.SchemaSnapshot null null sql
         if command.Kind <> SqlStatementKind.Query then
             let error = ArgumentException("CompileQuery requires a SELECT statement.", "sql")
             attachReclassifiedEvidence
@@ -782,14 +874,14 @@ module internal RewriteFacadeAdapter =
         ArgumentNullException.ThrowIfNull(executionPolicy)
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
-        let queryExecutionPolicy = queryPolicy executionPolicy.QueryMaxRows
+        let queryExecutionPolicy = queryPolicy executionPolicy
         let allowed = allowedTables validationContext.AllowedTables
         let evidenceContext =
             compileEvidenceContext source target sourceProfile targetProfile null null validationContext.PolicyVersion queryExecutionPolicy allowed validationContext.SchemaSnapshot
         try
             let parsed, facts, rendered =
                 runWithQueryFacts
-                    (compileOptions source (sourceSemantics source sourceProfile) target sourceProfile targetProfile null null queryExecutionPolicy allowed validationContext.SchemaSnapshot)
+                    (compileOptions source (sourceSemantics source sourceProfile) target sourceProfile targetProfile null null queryExecutionPolicy allowed validationContext.SchemaSnapshot null null)
                     sql
             let command =
                 buildTranslatedCommand evidenceContext target validationContext.PolicyVersion validationContext.SchemaSnapshot parsed rendered
@@ -804,12 +896,22 @@ module internal RewriteFacadeAdapter =
             | _ -> ()
             reraise()
 
+    let private liveKeyPolicyVersion (context: SqlPlanValidationContext) =
+        let version =
+            match context.SqliteUpdateFromKeyAssurance with
+            | null -> context.PolicyVersion
+            | assurance -> context.PolicyVersion + "|live-sqlite-pk=" + assurance.ProofIdentity
+        match context.SqlServerCteUniqueKeyAssurance with
+        | null -> version
+        | assurance when isNull assurance.TargetKeyColumn -> version
+        | assurance -> version + "|live-sqlserver-cte-exact-integer=" + assurance.ProofIdentity
+
     let compileDmlValidated sql source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (validationContext: SqlPlanValidationContext) (policy: DmlCompilationPolicy | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
         let command =
             try
-                compile source target sourceProfile targetProfile conflictTargetAssurance validationContext.DmlResultRowAssurance validationContext.PolicyVersion (dmlPolicy policy) (allowedTables validationContext.AllowedTables) validationContext.SchemaSnapshot sql
+                compile source target sourceProfile targetProfile conflictTargetAssurance validationContext.DmlResultRowAssurance (liveKeyPolicyVersion validationContext) (dmlPolicy policy) (allowedTables validationContext.AllowedTables) validationContext.SchemaSnapshot validationContext.SqliteUpdateFromKeyAssurance validationContext.SqlServerCteUniqueKeyAssurance sql
             with
             | :? InvalidOperationException as ex when unknownQualifierError ex.Message ->
                 raise (compilationExceptionFrom ex)
@@ -850,7 +952,7 @@ module internal RewriteFacadeAdapter =
         | :? InvalidOperationException as ex when compilationErrorMessage ex.Message ->
             raise (compilationExceptionFrom ex)
 
-    let private compileParsed (parsed: ParsedStatement) target (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) (resultRowAssurance: DmlResultRowAssurance | null) policyVersion policy allowed schemaSnapshot =
+    let private compileParsed (parsed: ParsedStatement) target (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) (resultRowAssurance: DmlResultRowAssurance | null) policyVersion policy allowed schemaSnapshot liveKeyAssurance sqlServerLiveProof =
         let source = parsed.SourceDialect
         let evidenceContext =
             compileEvidenceContext
@@ -891,7 +993,9 @@ module internal RewriteFacadeAdapter =
                             resultRowAssurance
                             policy
                             allowed
-                            schemaSnapshot)
+                            schemaSnapshot
+                            liveKeyAssurance
+                            sqlServerLiveProof)
                         rewritten
                 let kind = legacyKind parsed.Statement
                 let parameterValues =
@@ -936,9 +1040,11 @@ module internal RewriteFacadeAdapter =
                 null
                 null
                 validationContext.PolicyVersion
-                (queryPolicy executionPolicy.QueryMaxRows)
+                (queryPolicy executionPolicy)
                 (allowedTables validationContext.AllowedTables)
                 validationContext.SchemaSnapshot
+                null
+                null
         if command.Kind <> SqlStatementKind.Query then
             let error = ArgumentException("CompileQuery requires a SELECT statement.", "parsed")
             attachReclassifiedEvidence
@@ -961,10 +1067,12 @@ module internal RewriteFacadeAdapter =
                     targetProfile
                     conflictTargetAssurance
                     validationContext.DmlResultRowAssurance
-                    validationContext.PolicyVersion
+                    (liveKeyPolicyVersion validationContext)
                     (dmlPolicy policy)
                     (allowedTables validationContext.AllowedTables)
                     validationContext.SchemaSnapshot
+                    validationContext.SqliteUpdateFromKeyAssurance
+                    validationContext.SqlServerCteUniqueKeyAssurance
             with
             | :? InvalidOperationException as ex when unknownQualifierError ex.Message ->
                 raise (compilationExceptionFrom ex)

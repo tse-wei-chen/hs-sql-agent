@@ -1,4 +1,5 @@
 namespace Common.Services;
+
 internal static class TestSecrets
 {
     public static SecretProtectionSettings Create() => new()

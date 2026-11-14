@@ -34,6 +34,115 @@ public static class HsSqlAgentRuntimeServiceExtensions
         return services;
     }
 
+    /// <summary>
+    /// Explicit PostgreSQL-only DDL opt-in. Never registered by AddHsSqlAgentRuntime
+    /// or AddHsSqlAgentMcp by default; DDL approval also needs its OWN
+    /// independently registered IDdlApprovalProvider and per-key tool grant.
+    /// </summary>
+    public static IServiceCollection AddHsSqlAgentPostgresDdl(
+        this IServiceCollection services, PostgresDdlExecutionOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(options);
+        if (!options.Enabled
+            || options.AllowedSchemas.Count == 0
+            || !(options.AllowCreateTable || options.AllowAddColumn || options.AllowCreateIndex))
+            throw new ArgumentException(
+                "PostgreSQL DDL opt-in requires Enabled=true, explicit schema allowlist and at least one operation.");
+        services.TryAddSingleton(options);
+        services.TryAddSingleton<PostgresDdlRuntime>();
+        return services;
+    }
+
+    /// <summary>
+    /// Explicit file-backed SQLite-only DDL Host. Shares only the existing
+    /// DDL approval interface and MCP tool; transactional semantics are
+    /// proven separately from PostgreSQL. Default runtime never registers it.
+    /// </summary>
+    public static IServiceCollection AddHsSqlAgentSqliteDdl(
+        this IServiceCollection services, SqliteDdlExecutionOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(options);
+        if (!options.Enabled
+            || !(options.AllowCreateTable || options.AllowAddColumn || options.AllowCreateIndex))
+            throw new ArgumentException("SQLite DDL requires Enabled=true and an explicit operation allowlist.");
+        services.TryAddSingleton(options);
+        services.TryAddSingleton<SqliteDdlRuntime>();
+        return services;
+    }
+
+    /// <summary>
+    /// Explicit SQL Server 2022 CREATE TABLE-only Host opt-in. No automatic
+    /// registration, and no implicit inheritance from Query or DML grants.
+    /// </summary>
+    public static IServiceCollection AddHsSqlAgentSqlServerDdl(
+        this IServiceCollection services, SqlServerDdlExecutionOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(options);
+        if (!options.Enabled || !options.AllowCreateTable || options.AllowedSchemas.Count == 0)
+            throw new ArgumentException(
+                "SQL Server DDL requires Enabled=true, an explicit CREATE TABLE operation and a schema allowlist.");
+        services.TryAddSingleton(options);
+        services.TryAddSingleton<SqlServerDdlRuntime>();
+        return services;
+    }
+
+    /// <summary>
+    /// Explicit Firebird 5 CREATE TABLE-only Host. A real physical GUID allowlist,
+    /// independent human approval and per-key execute_ddl_sql grant are mandatory.
+    /// </summary>
+    public static IServiceCollection AddHsSqlAgentFirebirdDdl(
+        this IServiceCollection services, FirebirdDdlExecutionOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(options);
+        if (!options.Enabled || !options.AllowCreateTable
+            || options.AllowedDatabaseGuids.Count == 0)
+            throw new ArgumentException(
+                "Firebird DDL requires Enabled=true, CREATE TABLE opt-in and physical GUID allowlist.");
+        services.TryAddSingleton(options);
+        services.TryAddSingleton<FirebirdDdlRuntime>();
+        return services;
+    }
+
+    /// <summary>
+    /// MySQL 8.4 InnoDB CREATE TABLE implicit-commit Host. Requires explicit
+    /// selected database allowlist, independent DDL approval and per-key grant.
+    /// </summary>
+    public static IServiceCollection AddHsSqlAgentMySqlDdl(
+        this IServiceCollection services, MySqlDdlExecutionOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(options);
+        if (!options.Enabled || !options.AllowCreateTable
+            || options.AllowedDatabases.Count == 0)
+            throw new ArgumentException(
+                "MySQL DDL requires Enabled=true, CREATE TABLE opt-in and database allowlist.");
+        services.TryAddSingleton(options);
+        services.TryAddSingleton<MySqlDdlRuntime>();
+        return services;
+    }
+
+    /// <summary>
+    /// Explicit Oracle 26ai implicit-commit CREATE TABLE Host. Does not register
+    /// under ordinary runtime/MCP and never inherits DML authorization.
+    /// </summary>
+    public static IServiceCollection AddHsSqlAgentOracleDdl(
+        this IServiceCollection services, OracleDdlExecutionOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(options);
+        if (!options.Enabled || !options.AllowCreateTable
+            || options.AllowedPdbNames.Count == 0 || options.AllowedSchemas.Count == 0)
+            throw new ArgumentException(
+                "Oracle DDL requires Enabled, CREATE TABLE, PDB and schema allowlists.");
+        services.TryAddSingleton(options);
+        services.TryAddSingleton<OracleDdlRuntime>();
+        return services;
+    }
+
     public static HsSqlAgentRegistrationBuilder AddHsSqlAgentRuntime(
         this HsSqlAgentRegistrationBuilder builder,
         Action<HsSqlAgentRuntimeOptions>? configure = null)

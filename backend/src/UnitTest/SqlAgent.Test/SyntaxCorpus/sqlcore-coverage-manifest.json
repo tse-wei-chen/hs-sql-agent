@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "description": "3.1 observed compiler regression corpus inventory. Not an official grammar denominator, Host execution claim, or cross-provider parity claim.",
+  "suites": [
+    {
+      "id": "six-provider-cte-query",
+      "file": "sql-generated-compatibility-floor.json",
+      "statementFamily": "DQL",
+      "requiresVersionProfile": false,
+      "nativeOnly": true,
+      "expectedByProvider": {
+        "Postgres": 432,
+        "MySQL": 900,
+        "MsSqlServer": 528,
+        "Sqlite": 825,
+        "Oracle": 900,
+        "Firebird": 900
+      }
+    },
+    {
+      "id": "six-provider-dml",
+      "file": "sql-generated-dml-compatibility-floor.json",
+      "statementFamily": "DML",
+      "requiresVersionProfile": false,
+      "nativeOnly": true,
+      "expectedByProvider": {
+        "Postgres": 7,
+        "MySQL": 7,
+        "MsSqlServer": 7,
+        "Sqlite": 7,
+        "Oracle": 7,
+        "Firebird": 7
+      }
+    },
+    {
+      "id": "recursive-cte",
+      "file": "sql-generated-recursive-compatibility-floor.json",
+      "statementFamily": "DQL",
+      "requiresVersionProfile": true,
+      "nativeOnly": true,
+      "expectedByProvider": {
+        "Postgres": 32,
+        "MySQL": 32,
+        "MsSqlServer": 0,
+        "Sqlite": 32,
+        "Oracle": 0,
+        "Firebird": 32
+      }
+    },
+    {
+      "id": "profile-sensitive-query",
+      "file": "sql-generated-profile-sensitive-compatibility-floor.json",
+      "statementFamily": "DQL",
+      "requiresVersionProfile": true,
+      "nativeOnly": true,
+      "expectedByProvider": {
+        "Postgres": 0,
+        "MySQL": 48,
+        "MsSqlServer": 36,
+        "Sqlite": 0,
+        "Oracle": 0,
+        "Firebird": 0
+      }
+    },
+    {
+      "id": "oracle-native-query",
+      "file": "sql-generated-oracle-native-compatibility-floor.json",
+      "statementFamily": "DQL",
+      "requiresVersionProfile": true,
+      "nativeOnly": true,
+      "expectedByProvider": {
+        "Postgres": 0,
+        "MySQL": 0,
+        "MsSqlServer": 0,
+        "Sqlite": 0,
+        "Oracle": 72,
+        "Firebird": 0
+      }
+    },
+    {
+      "id": "postgres-native-query",
+      "file": "sql-generated-postgres-native-compatibility-floor.json",
+      "statementFamily": "DQL",
+      "requiresVersionProfile": true,
+      "nativeOnly": true,
+      "expectedByProvider": {
+        "Postgres": 72,
+        "MySQL": 0,
+        "MsSqlServer": 0,
+        "Sqlite": 0,
+        "Oracle": 0,
+        "Firebird": 0
+      }
+    }
+  ]
+}

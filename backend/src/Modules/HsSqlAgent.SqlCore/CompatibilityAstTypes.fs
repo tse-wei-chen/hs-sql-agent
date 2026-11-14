@@ -141,6 +141,14 @@ type FilterExpr(expression: SqlExpr, predicate: SqlExpr, span: SourceSpan) =
 type WindowFrameUnitKind =
     | Rows = 0
     | Range = 1
+    | Groups = 2
+
+type WindowFrameExclusionKind =
+    | Unspecified = 0
+    | CurrentRow = 1
+    | Group = 2
+    | Ties = 3
+    | NoOthers = 4
 
 type WindowFrameBoundKindCore =
     | UnboundedPreceding = 0
@@ -156,11 +164,20 @@ type WindowFrameBoundCore(kind: WindowFrameBoundKindCore, offset: Nullable<int>,
     member _.Offset = offset
 
 [<Sealed>]
-type WindowFrame(unitKind: WindowFrameUnitKind, startBound: WindowFrameBoundCore, endBound: WindowFrameBoundCore | null, span: SourceSpan) =
+type WindowFrame(unitKind: WindowFrameUnitKind, startBound: WindowFrameBoundCore, endBound: WindowFrameBoundCore | null, exclusion: WindowFrameExclusionKind, span: SourceSpan) =
     inherit SqlNode(span)
+    // Retain the original public CLR constructor for NuGet binary callers.
+    new(unitKind, startBound, endBound, span) =
+        WindowFrame(unitKind, startBound, endBound, WindowFrameExclusionKind.Unspecified, span)
     member _.Unit = unitKind
     member _.Start = startBound
     member _.End = endBound
+    member _.Exclusion = exclusion
+
+type WindowNullTreatmentKind =
+    | Unspecified = 0
+    | IgnoreNulls = 1
+    | RespectNulls = 2
 
 [<Sealed>]
 type WindowSpec(partitionBy: ImmutableArray<SqlExpr>, orderBy: ImmutableArray<OrderByItem>, frame: WindowFrame | null, span: SourceSpan) =
@@ -168,6 +185,7 @@ type WindowSpec(partitionBy: ImmutableArray<SqlExpr>, orderBy: ImmutableArray<Or
     member _.PartitionBy = partitionBy
     member _.OrderBy = orderBy
     member _.Frame = frame
+    member val NullTreatment = WindowNullTreatmentKind.Unspecified with get, set
 
 [<Sealed>]
 type WindowedExpr(expression: SqlExpr, window: WindowSpec, span: SourceSpan) =
@@ -356,6 +374,8 @@ type UpdateStatement(target: NamedTableSource, assignments: ImmutableArray<Assig
     /// Full PostgreSQL FROM table-expression surface. When non-empty this is the
     /// source-of-truth collection; From remains the legacy named-source view.
     member val FromSources = ImmutableArray<TableSource>.Empty with get, set
+    /// Top-level read-only CTE lexical scope. Empty for ordinary UPDATE.
+    member val Ctes = ImmutableArray<CteDefinition>.Empty with get, set
     member val Returning = ImmutableArray<DmlReturningItem>.Empty with get, set
 
 [<Sealed>]
@@ -367,6 +387,8 @@ type DeleteStatement(target: NamedTableSource, predicate: SqlExpr | null, span: 
     /// Full PostgreSQL USING table-expression surface. When non-empty this is the
     /// source-of-truth collection; Using remains the legacy named-source view.
     member val UsingSources = ImmutableArray<TableSource>.Empty with get, set
+    /// Top-level read-only CTE lexical scope. Empty for ordinary DELETE.
+    member val Ctes = ImmutableArray<CteDefinition>.Empty with get, set
     member val Returning = ImmutableArray<DmlReturningItem>.Empty with get, set
 
 [<AbstractClass>]

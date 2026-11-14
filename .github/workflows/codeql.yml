@@ -72,11 +72,13 @@ jobs:
       if: matrix.language == 'csharp'
       run: corepack enable pnpm
 
-    - name: Setup .NET 10 SDK
+    - name: Setup .NET SDKs
       if: matrix.language == 'csharp'
       uses: actions/setup-dotnet@v4
       with:
-        dotnet-version: '10.0.x'
+        dotnet-version: |
+          8.0.x
+          10.0.x
 
     # Initializes the CodeQL tools for scanning.
     - name: Initialize CodeQL

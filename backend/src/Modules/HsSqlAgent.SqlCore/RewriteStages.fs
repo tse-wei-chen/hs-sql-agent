@@ -3,6 +3,7 @@ namespace HsSqlAgent.SqlCore.Rewrite
 open System
 open System.Collections.Generic
 open HsSqlAgent.SqlCore.Core.Compilation
+open HsSqlAgent.SqlCore.Core.Pipeline
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.SqlTranslation.DateFormats
@@ -204,6 +205,27 @@ module internal RewriteStages =
         | AggregateSelect of selectBody: Select
         | AggregateSelectAfterCtes of selectionBody: Select
 
+    // One source/target proof owner for native GROUPS frames and EXCLUDE.
+    // An absent profile uses the current-supported-release baseline;
+    // explicitly older engines cannot mint either plan.
+    let private peerFrameVersionError capability side provider (profile: SqlProviderCapabilityProfile | null) =
+        let minimum =
+            match provider with
+            | SqlAgentToolType.Postgres -> Some(Version(11, 0))
+            | SqlAgentToolType.Sqlite -> Some(Version(3, 28))
+            | _ -> None
+        match minimum with
+        | None ->
+            Some("SQL capability '" + capability + "' has no proven " + side
+                 + " semantics for provider " + string provider + ".")
+        | Some required ->
+            match profileVersion profile with
+            | Some declared when declared.CompareTo(required) < 0 ->
+                Some("SQL capability '" + capability + "' requires " + side
+                     + " ServerVersion " + string required
+                     + "+; declared version is " + string declared + ".")
+            | _ -> None
+
     let private validateAggregateWalk enforceSource source sourceProfile target targetProfile root =
         let pending = ResizeArray<AggregateFrame>()
         let inline push frame = pending.Add frame
@@ -251,6 +273,67 @@ module internal RewriteStages =
                     push (AggregateExpr value)
                 | RawRegexCall(arguments, _) -> pushExprs arguments
                 | Windowed(value, window) ->
+                    if window.NullTreatment <> WindowNullTreatment.DefaultNullTreatment then
+                        let functionName =
+                            match Expr.unspan value with
+                            | FunctionCall call
+                                when not call.IsDistinct
+                                     && call.AggregateOrderBy.IsEmpty
+                                     && not (FunctionName.requiresNativeIdentifierSemantics call.Name)
+                                     && (let name = FunctionName.value call.Name
+                                         String.Equals(name, "LAG", StringComparison.OrdinalIgnoreCase)
+                                         || String.Equals(name, "LEAD", StringComparison.OrdinalIgnoreCase)
+                                         || String.Equals(name, "FIRST_VALUE", StringComparison.OrdinalIgnoreCase)
+                                         || String.Equals(name, "LAST_VALUE", StringComparison.OrdinalIgnoreCase)) ->
+                                FunctionName.value call.Name
+                            | _ -> raise (SqlCompilationException(
+                                        "SQL capability 'window.null_treatment' permits LAG/LEAD/FIRST_VALUE/LAST_VALUE only."))
+                        // SQL Server CU4 repaired LAG/LEAD IGNORE NULLS specifically.
+                        // FIRST/LAST retain the SQL Server 2022 RTM version gate.
+                        // Structured CLR windows use the same source/target capability proof.
+                        let offsetFunction =
+                            String.Equals(functionName, "LAG", StringComparison.OrdinalIgnoreCase)
+                            || String.Equals(functionName, "LEAD", StringComparison.OrdinalIgnoreCase)
+                        let frameFunction = not offsetFunction
+                        // Oracle and SQL Server differ in default NULL ordering,
+                        // which can change the first/last selected frame value.
+                        // No cross-provider equivalence proof is available yet.
+                        if frameFunction && source <> target then
+                            raise (SqlCompilationException(
+                                "SQL capability 'window.null_treatment.first_last' requires the same source and target provider until cross-provider frame/NULL-order equivalence is proven."))
+                        let validateTreatment provider profile side =
+                            if offsetFunction && window.NullTreatment = WindowNullTreatment.IgnoreNulls then
+                                SqlWindowNullTreatmentCapabilityRules.IgnoreNullsValidationError(provider, profile, side)
+                            else
+                                SqlWindowNullTreatmentCapabilityRules.ValidationError(provider, profile, side)
+                        match validateTreatment source sourceProfile "source" with
+                        | null -> ()
+                        | message -> raise (SqlCompilationException(message))
+                        match validateTreatment target targetProfile "target" with
+                        | null -> ()
+                        | message -> raise (SqlCompilationException(message))
+                    match window.Frame with
+                    | Some frame ->
+                        let prove capability =
+                            if enforceSource then
+                                match peerFrameVersionError capability "source" source sourceProfile with
+                                | Some message -> raise (SqlCompilationException(message))
+                                | None -> ()
+                            match peerFrameVersionError capability "target" target targetProfile with
+                            | Some message -> raise (SqlCompilationException(message))
+                            | None -> ()
+                        // A CLR/structured statement cannot bypass the source grammar
+                        // simply by selecting a target which supports numeric RANGE.
+                        // Structured CLR statements must satisfy this source
+                        // grammar rule even when legacy lexical enforcement is off.
+                        if source = SqlAgentToolType.MsSqlServer
+                           && frame.Unit = WindowFrameUnit.Range
+                           && frame.HasNumericOffset then
+                            raise (SqlCompilationException(
+                                "SQL capability 'window.range_offset' is not valid for SQL Server source RANGE frames."))
+                        if frame.Unit = WindowFrameUnit.Groups then prove "window.groups"
+                        if frame.Exclusion.IsSome then prove "window.exclude"
+                    | None -> ()
                     pushOrders window.OrderBy
                     pushExprs window.PartitionBy
                     push (AggregateExpr value)
@@ -285,6 +368,17 @@ module internal RewriteStages =
                 | NamedTable _ | CteTable _ -> ()
                 | DerivedTable(query, _) -> push (AggregateQuery query)
                 | LateralDerivedTable(query, _) ->
+                    // Oracle, MySQL and PostgreSQL share a typed lateral
+                    // shape, but provider-specific correlation, cardinality
+                    // and row-source visibility do not imply translation.
+                    if source <> target
+                       && (source = SqlAgentToolType.MySQL
+                           || target = SqlAgentToolType.MySQL
+                           || source = SqlAgentToolType.Oracle
+                           || target = SqlAgentToolType.Oracle) then
+                        raise (SqlCompilationException(
+                            "SQL capability 'select.lateral_derived' is native-only for Oracle/MySQL; cross-provider LATERAL lowering remains fail-closed. Source provider "
+                            + string source + ", target provider " + string target + "."))
                     if enforceSource then
                         match SqlLateralDerivedTableCapabilityRules.SourceValidationError(source, sourceProfile) with
                         | null -> ()
@@ -294,6 +388,41 @@ module internal RewriteStages =
                     | message -> raise (SqlCompilationException(message))
                     push (AggregateQuery query)
             | AggregateSelect select ->
+                // Ordinary WITH is a native MySQL 8.0.1+ grammar capability.
+                // Check both sides here as well as at parsing so a parsed
+                // statement cannot bypass version proof through a CLR adapter.
+                if not select.Ctes.IsEmpty
+                   && target = SqlAgentToolType.MySQL
+                   && not (select.Ctes |> List.exists (fun cte -> cte.RecursiveScope)) then
+                    if enforceSource then
+                        match SqlMySqlOrdinaryCteCapabilityRules.SourceValidationError(source, sourceProfile) with
+                        | null -> ()
+                        | message -> raise (SqlCompilationException(message))
+                    match SqlMySqlOrdinaryCteCapabilityRules.TargetValidationError(target, targetProfile) with
+                    | null -> ()
+                    | message -> raise (SqlCompilationException(message))
+                if select.Joins |> List.exists (function ApplyJoin _ -> true | _ -> false) then
+                    if select.From.IsNone then
+                        raise (SqlCompilationException(
+                            "SQL capability 'select.apply_join' requires a preceding FROM source."))
+                    if source <> target then
+                        raise (SqlCompilationException(
+                            "SQL capability 'select.apply_join' is native-only; cross-provider APPLY semantics are not proven. Source provider "
+                            + string source + ", target provider " + string target + "."))
+                    if enforceSource then
+                        match SqlApplyJoinCapabilityRules.SourceValidationError(source, sourceProfile) with
+                        | null -> ()
+                        | message -> raise (SqlCompilationException(message))
+                    match SqlApplyJoinCapabilityRules.TargetValidationError(target, targetProfile) with
+                    | null -> ()
+                    | message -> raise (SqlCompilationException(message))
+                    for join in select.Joins do
+                        match join with
+                        | ApplyJoin(_, DerivedTable _) -> ()
+                        | ApplyJoin _ ->
+                            raise (SqlCompilationException(
+                                "SQL capability 'select.apply_join' accepts only a derived SELECT as the APPLY source."))
+                        | _ -> ()
                 if select.Ctes |> List.exists (fun cte -> cte.RecursiveScope) then
                     if enforceSource then
                         match SqlRecursiveCteCapabilityRules.SourceValidationError(source, sourceProfile) with
@@ -389,7 +518,841 @@ module internal RewriteStages =
                 "SQL capability 'dml.returning.expression' is native-only for SQLite and remains fail-closed cross-provider because RETURNING row-source visibility and expression semantics are provider-bound. Source provider "
                 + string source + ", target provider " + string target + "."))
 
-    let private validateAggregateDocument enforceSource source sourceProfile target targetProfile document =
+    /// SQLite's UPDATE FROM arbitrarily chooses one joined source row
+    /// when a target matches multiple. This is an at-most-one-row proof,
+    /// independent of live table data and never inferred from WHERE equality.
+    /// Each earlier read-only CTE may contribute a singleton relational
+    /// source only if its closed SELECT cannot multiply input rows.
+    let private sqliteUpdateFromSingletonCte (update: Update) =
+        // Match SQLite Binder's identifier canonicalization. SQLite CTE
+        // binding is case-insensitive even for quoted identifiers.
+        let key (name: IdentifierPart) = name.Value.ToUpperInvariant()
+        let singleton = System.Collections.Generic.HashSet<string>(StringComparer.Ordinal)
+        let seen = System.Collections.Generic.HashSet<string>(StringComparer.Ordinal)
+        let mutable uniqueNames = true
+        let isSingletonCteSource (source: TableSource) =
+            match source with
+            | CteTable(identifier, _) ->
+                match Identifier.parts identifier with
+                | [ name ] -> singleton.Contains(key name)
+                | _ -> false
+            | _ -> false
+
+        for cte in update.Ctes do
+            RewriteResourceBudget.checkpoint ()
+            let name = key cte.Name
+            if not (seen.Add name) then uniqueNames <- false
+            let query = cte.Query
+            if not cte.RecursiveScope
+               && query.SetOperations.IsEmpty
+               && query.Head.Ctes.IsEmpty
+               && query.Head.Joins.IsEmpty
+               && (query.Head.From.IsNone
+                   || Option.exists isSingletonCteSource query.Head.From) then
+                singleton.Add name |> ignore
+            else
+                // Never reuse an earlier singleton proof when a later CTE
+                // with the same canonical name has unproven cardinality.
+                singleton.Remove name |> ignore
+
+        // One syntactically bound CTE source at most. Physical tables,
+        // derived relations, duplicate names, extra FROM sources and
+        // unproven chains fail closed.
+        uniqueNames
+        && (match update.From with
+            | [ source ] -> isSingletonCteSource source
+            | _ -> false)
+
+    /// A closed, provider-local cardinality proof for native SQL Server
+    /// CTE-prefixed joined UPDATE/DELETE. A CTE rooted in SELECT without
+    /// FROM has at most one row; a SELECT over exactly one earlier proven
+    /// singleton CTE cannot increase row count. No physical table, derived
+    /// relation, JOIN, grouping, or set branch can acquire this proof by
+    /// being named as a CTE. Proof consumes bound CteTable nodes, not raw
+    /// names, so column aliases and quoted references follow Binder scope.
+    let private sqlServerSingletonCteSource (ctes: Cte list) (sources: TableSource list) =
+        let singleton = System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        let seen = System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        let mutable uniqueNames = true
+        let isProvenSource source =
+            match source with
+            | CteTable(identifier, _) ->
+                match Identifier.parts identifier with
+                | [ name ] -> singleton.Contains name.Value
+                | _ -> false
+            | NamedTable _ | DerivedTable _ | LateralDerivedTable _ -> false
+
+        for cte in ctes do
+            RewriteResourceBudget.checkpoint ()
+            if not (seen.Add cte.Name.Value) then uniqueNames <- false
+            let query = cte.Query
+            if not cte.RecursiveScope
+               && query.SetOperations.IsEmpty
+               && query.Head.Ctes.IsEmpty
+               && query.Head.Joins.IsEmpty
+               && query.Head.GroupBy.IsEmpty
+               && query.Head.Having.IsNone
+               && not query.FetchWithTies
+               && (query.Head.From.IsNone
+                   || Option.exists isProvenSource query.Head.From) then
+                singleton.Add cte.Name.Value |> ignore
+            else
+                singleton.Remove cte.Name.Value |> ignore
+
+        uniqueNames
+        && (match sources with
+            | [ source ] -> isProvenSource source
+            | _ -> false)
+
+    /// A live physical unique source INT and live target INT prove one source
+    /// row per target only for this closed, nonmultiplying CTE path. A caller
+    /// catalog alone is never evidence; the DB-minted object is rechecked in
+    /// the host's actual transaction before the approved write.
+    let private sqlServerLiveIntCteProofCore
+        (proof: SqlServerCteUniqueKeyAssurance)
+        (sourceProfile: SqlProviderCapabilityProfile | null)
+        (targetProfile: SqlProviderCapabilityProfile | null)
+        (snapshot: SqlSchemaSnapshot | null)
+        (ctes: Cte list) (target: Identifier) (targetAlias: IdentifierPart option)
+        (sources: TableSource list) (predicate: Expr option) =
+
+        let same (left: string) (right: string) =
+            StringComparer.Ordinal.Equals(left, right)
+        let versioned (profile: SqlProviderCapabilityProfile | null) =
+            not (isNull profile)
+            && (nonNull profile).Provider = SqlAgentToolType.MsSqlServer
+            && not (isNull (nonNull profile).ServerVersion)
+            && (nonNull (nonNull profile).ServerVersion).CompareTo(Version(9, 0)) >= 0
+        let qualified (identifier: Identifier) (physical: string) =
+            match Identifier.parts identifier, physical.Split('.') with
+            | [schema; table], [|expectedSchema; expectedTable|] ->
+                same schema.Value expectedSchema && same table.Value expectedTable
+            | _ -> false
+        let isColumn field qualifier column =
+            match Expr.unspan field with
+            | Column identifier
+            | BoundColumn(identifier, ColumnBinding.LocalRowSource) ->
+                match Identifier.parts identifier with
+                | [owner; memberName] ->
+                    same owner.Value qualifier && same memberName.Value column
+                | _ -> false
+            | _ -> false
+        let isTargetKey field (physical: string) column =
+            match Expr.unspan field, physical.Split('.') with
+            | Column identifier, [|schema; table|]
+            | BoundColumn(identifier, ColumnBinding.LocalRowSource), [|schema; table|] ->
+                match Identifier.parts identifier with
+                | [s; t; k] ->
+                    same s.Value schema && same t.Value table && same k.Value column
+                | _ -> false
+            | _ -> false
+        let simpleColumn field inputName inputQualifier =
+            match Expr.unspan field with
+            | Column identifier
+            | BoundColumn(identifier, ColumnBinding.LocalRowSource) ->
+                match Identifier.parts identifier with
+                | [column] -> same column.Value inputName
+                | [owner; column] ->
+                    same owner.Value inputQualifier && same column.Value inputName
+                | _ -> false
+            | _ -> false
+        // A derived SELECT without FROM, predicates, set branches or
+        // aggregates and with one literal item is exactly one row.
+        // CROSS preserves cardinality, and INNER/LEFT with a literal
+        // equality cannot multiply any physical-source row. Only these
+        // closed syntactic cases are eligible for the live INT-key path;
+        // a physical join needs its own separate catalog proof.
+        let singletonDerived (query: Query) =
+            let head = query.Head
+            query.SetOperations.IsEmpty
+            && query.OrderBy.IsEmpty
+            && query.Limit.IsNone && query.Offset.IsNone
+            && query.FetchPercent.IsNone && not query.FetchWithTies
+            && head.Ctes.IsEmpty && head.From.IsNone
+            && head.Joins.IsEmpty && head.Where.IsNone
+            && head.GroupBy.IsEmpty && head.Having.IsNone
+            && head.DistinctMode = SelectDistinct.AllRows
+            && (match head.Projection with
+                | [{ Expression = expr; Alias = Some _ }] ->
+                    match Expr.unspan expr with
+                    | Literal _ -> true
+                    | _ -> false
+                | _ -> false)
+        let singletonJoin = function
+            | CrossJoin(DerivedTable(query, _)) ->
+                singletonDerived query
+            | OnJoin((OnJoinKind.Inner | OnJoinKind.Left),
+                     DerivedTable(query, _), predicate) ->
+                singletonDerived query
+                && (match Expr.unspan predicate with
+                    | Binary(BinaryOperator.Equal, left, right) ->
+                        match Expr.unspan left, Expr.unspan right with
+                        | Literal _, Literal _ -> true
+                        | _ -> false
+                    | _ -> false)
+            | _ -> false
+        let provenPhysicalSelfJoin (head: Select) join =
+            match head.From, join with
+            | Some(NamedTable(physical, Some leftAlias)),
+              OnJoin((OnJoinKind.Inner | OnJoinKind.Left),
+                     NamedTable(otherPhysical, Some rightAlias), predicate)
+                when qualified physical proof.SourceTable
+                     && qualified otherPhysical proof.SourceTable
+                     && not (same leftAlias.Value rightAlias.Value) ->
+                let keys = proof.SourceKeyColumns |> Seq.toArray
+                let seen = Array.create keys.Length false
+                let pending = ResizeArray<Expr>()
+                pending.Add predicate
+                let mutable duplicate = false
+                while pending.Count > 0 && not duplicate do
+                    RewriteResourceBudget.checkpoint ()
+                    let last = pending.Count - 1
+                    let node = pending.[last]
+                    pending.RemoveAt(last)
+                    match Expr.unspan node with
+                    | Binary(BinaryOperator.And, left, right) ->
+                        pending.Add right
+                        pending.Add left
+                    | Binary(BinaryOperator.Equal, left, right) ->
+                        for i = 0 to keys.Length - 1 do
+                            let key = keys.[i]
+                            if (isColumn left leftAlias.Value key
+                                && isColumn right rightAlias.Value key)
+                               || (isColumn right leftAlias.Value key
+                                   && isColumn left rightAlias.Value key) then
+                                if seen.[i] then duplicate <- true
+                                else seen.[i] <- true
+                    | _ -> ()
+                not duplicate && (seen |> Array.forall id)
+            | _ -> false
+        let provenDistinctPhysicalJoin (head: Select) join =
+            // The source keeps its own ordered unique key; every equality
+            // also targets one component of a *different*, independently
+            // attested unique index. The secondary proof is inseparable
+            // from the transaction-bound primary token.
+            match head.From, join with
+            | Some(NamedTable(physical, Some leftAlias)),
+              OnJoin((OnJoinKind.Inner | OnJoinKind.Left),
+                     NamedTable(joinedPhysical, Some rightAlias), predicate)
+                when not (isNull proof.JoinedSourceTable)
+                     && qualified physical proof.SourceTable
+                     && qualified joinedPhysical (nonNull proof.JoinedSourceTable)
+                     && not (same leftAlias.Value rightAlias.Value)
+                     && proof.JoinedSourceKeyColumns.Count = proof.SourceKeyColumns.Count ->
+                let primary = proof.SourceKeyColumns |> Seq.toArray
+                let secondary = proof.JoinedSourceKeyColumns |> Seq.toArray
+                let seen = Array.create primary.Length false
+                let pending = ResizeArray<Expr>()
+                pending.Add predicate
+                let mutable duplicate = false
+                while pending.Count > 0 && not duplicate do
+                    RewriteResourceBudget.checkpoint ()
+                    let last = pending.Count - 1
+                    let node = pending.[last]
+                    pending.RemoveAt(last)
+                    match Expr.unspan node with
+                    | Binary(BinaryOperator.And, left, right) ->
+                        pending.Add left
+                        pending.Add right
+                    | Binary(BinaryOperator.Equal, left, right) ->
+                        for i = 0 to primary.Length - 1 do
+                            if (isColumn left leftAlias.Value primary.[i]
+                                && isColumn right rightAlias.Value secondary.[i])
+                               || (isColumn right leftAlias.Value primary.[i]
+                                   && isColumn left rightAlias.Value secondary.[i]) then
+                                if seen.[i] then duplicate <- true
+                                else seen.[i] <- true
+                    | _ -> ()
+                not duplicate && (seen |> Array.forall id)
+            | _ -> false
+        // A correlated EXISTS/NOT EXISTS is a Boolean filter, never a
+        // row source. In this first executable subset, it can read only
+        // the SAME physically attested table and must correlate by every
+        // key ordinal using direct ordinary AND-connected equality.
+        // Any extra subquery predicate is a direct inner column/literal
+        // equality, never a computed expression or volatile source.
+        let provenCorrelatedExists (outerAlias: string) (query: Query) =
+            let outerKey field name =
+                match Expr.unspan field with
+                | Column identifier
+                | BoundColumn(identifier, ColumnBinding.OuterRowSource) ->
+                    match Identifier.parts identifier with
+                    | [owner; column] ->
+                        same owner.Value outerAlias && same column.Value name
+                    | _ -> false
+                | _ -> false
+            let inner = query.Head
+            match inner.From with
+            | Some(NamedTable(physical, Some innerAlias))
+                when qualified physical proof.SourceTable
+                     && not (same outerAlias innerAlias.Value)
+                     && query.SetOperations.IsEmpty
+                     && query.OrderBy.IsEmpty
+                     && query.Limit.IsNone && query.Offset.IsNone
+                     && query.FetchPercent.IsNone && not query.FetchWithTies
+                     && inner.Ctes.IsEmpty && inner.Joins.IsEmpty
+                     && inner.GroupBy.IsEmpty && inner.Having.IsNone
+                     && inner.DistinctMode = SelectDistinct.AllRows
+                     && (match inner.Projection with
+                         | [{ Expression = projected }] ->
+                             match Expr.unspan projected with
+                             | Literal _ -> true
+                             | _ -> false
+                         | _ -> false) ->
+                let keys = proof.SourceKeyColumns |> Seq.toArray
+                let proven = Array.create keys.Length false
+                let pending = ResizeArray<Expr>()
+                inner.Where |> Option.iter pending.Add
+                let mutable valid = inner.Where.IsSome
+                let mutable work = 256
+                while valid && pending.Count > 0 do
+                    RewriteResourceBudget.checkpoint ()
+                    work <- work - 1
+                    if work < 0 then valid <- false
+                    else
+                        let at = pending.Count - 1
+                        let node = pending.[at]
+                        pending.RemoveAt(at)
+                        match Expr.unspan node with
+                        | Binary(BinaryOperator.And, l, r) ->
+                            pending.Add l
+                            pending.Add r
+                        | Binary(BinaryOperator.Equal, l, r) ->
+                            let mutable matched = false
+                            for i = 0 to keys.Length - 1 do
+                                if (isColumn l innerAlias.Value keys.[i]
+                                    && outerKey r keys.[i])
+                                   || (isColumn r innerAlias.Value keys.[i]
+                                       && outerKey l keys.[i]) then
+                                    if proven.[i] then valid <- false
+                                    else proven.[i] <- true
+                                    matched <- true
+                            if not matched then
+                                match Expr.unspan l, Expr.unspan r with
+                                | (Literal _, (Column _ | BoundColumn _))
+                                | ((Column _ | BoundColumn _), Literal _) ->
+                                    let field =
+                                        match Expr.unspan l with
+                                        | Literal _ -> r
+                                        | _ -> l
+                                    match Expr.unspan field with
+                                    | Column id
+                                    | BoundColumn(id, ColumnBinding.LocalRowSource) ->
+                                        match Identifier.parts id with
+                                        | [a; _] when same a.Value innerAlias.Value -> ()
+                                        | _ -> valid <- false
+                                    | _ -> valid <- false
+                                | _ -> valid <- false
+                        | _ -> valid <- false
+                valid && (proven |> Array.forall id)
+            | _ -> false
+        let validCteFilter index (head: Select) =
+            match head.Where with
+            | None -> true
+            | Some expression ->
+                let rootAlias =
+                    match head.From with
+                    | Some(NamedTable(name, Some alias))
+                        when index = 0 && qualified name proof.SourceTable ->
+                            Some alias.Value
+                    | _ -> None
+                match Expr.unspan expression, rootAlias with
+                | Exists(query, _), Some alias ->
+                    provenCorrelatedExists alias query
+                | Unary(UnaryOperator.Not, nested), Some alias ->
+                    match Expr.unspan nested with
+                    | Exists(query, _) -> provenCorrelatedExists alias query
+                    | _ ->
+                        // Ordinary NOT on a query-free predicate was already
+                        // supported; don't accidentally regress its grammar.
+                        not (RewriteAstTraversal.exists true (function
+                            | Exists _ | InSubquery _ | ScalarSubquery _ -> true
+                            | _ -> false) expression)
+                | _ ->
+                    // Do not let nested subqueries hide in OR, CASE or a
+                    // derived value and borrow a source-key proof.
+                    not (RewriteAstTraversal.exists true (function
+                        | Exists _ | InSubquery _ | ScalarSubquery _ -> true
+                        | _ -> false) expression)
+        // G11: the live-proof gate retains its OWN exact physical-key
+        // reconstruction, independent of generic mutation cardinality
+        // and Host metadata discovery. A single non-lateral derived table
+        // may only rename direct columns of the attested physical source.
+        // The complete key tuple must retain the original index ordinal;
+        // never mint authority from display aliases or the Virtual Catalog.
+        // This is the execution-admission proof, independent of the
+        // static mutation cardinality and Host physical index discovery.
+        // Every layer preserves the *ordered* attested key columns, with
+        // direct references only and no alias/input ambiguity.
+        // One exact, order-preserving mapping for both derived and CTE
+        // projections. A declared CTE alias list is an explicit rename,
+        // not independent evidence of physical UNIQUE-key identity.
+        let projectDerivedKeys (keys: string list) qualifier (items: SelectItem list)
+                               (aliases: IdentifierPart list) =
+            if (not aliases.IsEmpty && aliases.Length <> items.Length)
+               || items.Length < keys.Length || items.Length > 32 then None
+            else
+                let columns =
+                    items
+                    |> List.mapi (fun index item ->
+                        let input =
+                            match Expr.unspan item.Expression with
+                            | Column identifier
+                            | BoundColumn(identifier, ColumnBinding.LocalRowSource) ->
+                                match Identifier.parts identifier with
+                                | [column] -> Some column.Value
+                                | [owner; column] when same owner.Value qualifier ->
+                                    Some column.Value
+                                | _ -> None
+                            | _ -> None
+                        input |> Option.map (fun name ->
+                            let output =
+                                if aliases.IsEmpty then
+                                    defaultArg (item.Alias |> Option.map (fun a -> a.Value)) name
+                                else aliases.[index].Value
+                            name, output))
+                if columns |> List.exists Option.isNone then None
+                else
+                    let mapping = columns |> List.choose id
+                    let inputs = mapping |> List.map fst
+                    let outputs = mapping |> List.map snd
+                    if (inputs |> List.distinct |> List.length) <> mapping.Length
+                       || (outputs |> List.distinct |> List.length) <> mapping.Length then None
+                    else
+                        let selected =
+                            keys
+                            |> List.map (fun key ->
+                                mapping
+                                |> List.mapi (fun ordinal (name, output) ->
+                                    if same name key then Some(ordinal, output) else None)
+                                |> List.choose id)
+                        if selected |> List.exists (fun matches -> matches.Length <> 1) then None
+                        else
+                            let ordered = selected |> List.collect id
+                            if ordered |> List.pairwise
+                               |> List.forall (fun ((before, _), (after, _)) -> before < after) then
+                                Some(ordered |> List.map snd)
+                            else None
+        let rec derivedKeyChain depth (derived: Query) =
+            let head = derived.Head
+            if depth > 3 || not derived.SetOperations.IsEmpty
+               || not derived.OrderBy.IsEmpty
+               || derived.Limit.IsSome || derived.Offset.IsSome
+               || derived.FetchPercent.IsSome || derived.FetchWithTies
+               || not head.Ctes.IsEmpty || not head.Joins.IsEmpty
+               || head.Where.IsSome || not head.GroupBy.IsEmpty
+               || head.Having.IsSome
+               || head.DistinctMode <> SelectDistinct.AllRows then None
+            else
+                let source =
+                    match head.From with
+                    | Some(NamedTable(physical, physicalAlias))
+                        when qualified physical proof.SourceTable ->
+                        let qualifier =
+                            match physicalAlias, Identifier.parts physical with
+                            | Some alias, _ -> alias.Value
+                            | None, [_; table] -> table.Value
+                            | _ -> ""
+                        Some(proof.SourceKeyColumns |> Seq.toList, qualifier)
+                    | Some(DerivedTable(nested, nestedAlias)) when depth < 3 ->
+                        derivedKeyChain (depth + 1) nested
+                        |> Option.map (fun keys -> keys, nestedAlias.Value)
+                    | _ -> None
+                source
+                |> Option.bind (fun (keys, qualifier) ->
+                    projectDerivedKeys keys qualifier head.Projection [])
+        let provenDirectDerivedKeys (derived: Query) = derivedKeyChain 1 derived
+
+        // M06: two independently read, directly projected instances of ONE
+        // physical UNIQUE table may reconverge only through exact full-key
+        // INNER equalities. This admission proof is independent of both the
+        // static cardinality model and Host live sys.index_columns discovery.
+        let proveDiamond () =
+            let sourceKeys = proof.SourceKeyColumns |> Seq.toList
+            // Independent execution gate: both branch filters must be
+            // exactly a correlated EXISTS/NOT EXISTS over the same proven
+            // physical source and complete ordinal UNIQUE key. Non-EXISTS
+            // filters are deliberately not included in this capability.
+            let validBranchFilter (head: Select) =
+                match head.Where with
+                | None -> true
+                | Some predicate ->
+                    match head.From with
+                    | Some(NamedTable(physical, Some alias))
+                        when qualified physical proof.SourceTable ->
+                        match Expr.unspan predicate with
+                        | Exists(query, _) ->
+                            provenCorrelatedExists alias.Value query
+                        | Unary(UnaryOperator.Not, inner) ->
+                            match Expr.unspan inner with
+                            | Exists(query, _) ->
+                                provenCorrelatedExists alias.Value query
+                            | _ -> false
+                        | _ -> false
+                    | _ -> false
+            if ctes.Length <> 3 || sourceKeys.Length <> 2 then None
+            else
+                let branch (cte: Cte) =
+                    let query = cte.Query
+                    let head = query.Head
+                    if cte.RecursiveScope || not cte.ColumnAliases.IsEmpty
+                       || not query.SetOperations.IsEmpty || not query.OrderBy.IsEmpty
+                       || query.Limit.IsSome || query.Offset.IsSome
+                       || query.FetchPercent.IsSome || query.FetchWithTies
+                       || not head.Ctes.IsEmpty || not head.Joins.IsEmpty
+                       || not (validBranchFilter head)
+                       || not head.GroupBy.IsEmpty
+                       || head.Having.IsSome
+                       || head.DistinctMode <> SelectDistinct.AllRows
+                       || head.Projection.Length < sourceKeys.Length
+                       || head.Projection.Length > 32 then None
+                    else
+                        match head.From with
+                        | Some(NamedTable(physical, alias))
+                            when qualified physical proof.SourceTable ->
+                            let owner =
+                                match alias, Identifier.parts physical with
+                                | Some value, _ -> value.Value
+                                | None, [_; table] -> table.Value
+                                | _ -> ""
+                            // Reuse the closed direct projection mapper:
+                            // all payload columns must also be direct,
+                            // unambiguous and input-injective. Only the
+                            // full ordered physical key becomes authority.
+                            projectDerivedKeys sourceKeys owner head.Projection []
+                        | _ -> None
+                let left = ctes.[0]
+                let right = ctes.[1]
+                let combined = ctes.[2]
+                let query = combined.Query
+                let head = query.Head
+                match branch left, branch right with
+                | Some leftKeys, Some rightKeys
+                    when not (same left.Name.Value right.Name.Value)
+                         && not (same left.Name.Value combined.Name.Value)
+                         && not (same right.Name.Value combined.Name.Value)
+                         && not combined.RecursiveScope
+                         && combined.ColumnAliases.IsEmpty
+                         && query.SetOperations.IsEmpty && query.OrderBy.IsEmpty
+                         && query.Limit.IsNone && query.Offset.IsNone
+                         && query.FetchPercent.IsNone && not query.FetchWithTies
+                         && head.Ctes.IsEmpty && head.Where.IsNone
+                         && head.GroupBy.IsEmpty && head.Having.IsNone
+                         && head.DistinctMode = SelectDistinct.AllRows
+                         && head.Projection.Length >= sourceKeys.Length
+                         && head.Projection.Length <= 32 ->
+                    match head.From, head.Joins with
+                    | Some(CteTable(leftRef, Some leftAlias)),
+                      [OnJoin(OnJoinKind.Inner,
+                              CteTable(rightRef, Some rightAlias), joinPredicate)]
+                        when (match Identifier.parts leftRef, Identifier.parts rightRef with
+                              | [l], [r] ->
+                                  same l.Value left.Name.Value
+                                  && same r.Value right.Name.Value
+                              | _ -> false)
+                             && not (same leftAlias.Value rightAlias.Value) ->
+                        let equal index expr =
+                            match Expr.unspan expr with
+                            | Binary(BinaryOperator.Equal, l, r) ->
+                                (isColumn l leftAlias.Value leftKeys.[index]
+                                 && isColumn r rightAlias.Value rightKeys.[index])
+                                || (isColumn r leftAlias.Value leftKeys.[index]
+                                    && isColumn l rightAlias.Value rightKeys.[index])
+                            | _ -> false
+                        let completeJoin =
+                            match Expr.unspan joinPredicate with
+                            | Binary(BinaryOperator.And, first, second) ->
+                                (equal 0 first && equal 1 second)
+                                || (equal 1 first && equal 0 second)
+                            | _ -> false
+                        // The merge can carry a payload from the left
+                        // branch but may not compute, duplicate or shadow
+                        // any original physical key.
+                        if completeJoin then
+                            projectDerivedKeys leftKeys leftAlias.Value head.Projection []
+                        else None
+                    | _ -> None
+                | _ -> None
+
+        if proof.TargetKeyColumns.Count = 0
+           || proof.TargetKeyColumns.Count <> proof.SourceKeyColumns.Count
+           || proof.SourceKeyColumns.Count > 2
+           || not (versioned sourceProfile) || not (versioned targetProfile)
+           || (not (isNull snapshot)
+               && ((nonNull snapshot).Provider <> SqlAgentToolType.MsSqlServer
+                   || not (same (nonNull snapshot).Sha256 proof.SchemaSha256)))
+           || not (qualified target proof.TargetTable)
+           || targetAlias.IsSome
+           || ctes.IsEmpty || ctes.Length > 3 then false
+        else
+            match sources with
+            | [CteTable(cteIdentifier, outerAlias)]
+            | [CteTable(cteIdentifier, outerAlias); NamedTable(_, _)] ->
+                // Native two-source SQL Server DML: never borrow the CTE's
+                // physical UNIQUE proof for the distinct second relation.
+                // The independent physical index token must name and bind
+                // the exact additional FROM source before checking edges.
+                let outerSecond =
+                    match sources with
+                    | [_] -> Some None
+                    | [_; NamedTable(physical, Some alias)]
+                        when not (isNull proof.JoinedSourceTable)
+                             && qualified physical (nonNull proof.JoinedSourceTable)
+                             && not (same (nonNull proof.JoinedSourceTable) proof.SourceTable)
+                             && not (same (nonNull proof.JoinedSourceTable) proof.TargetTable)
+                             && proof.JoinedSourceKeyColumns.Count = proof.SourceKeyColumns.Count ->
+                        Some(Some alias.Value)
+                    | _ -> None
+                let sourceKeys = proof.SourceKeyColumns |> Seq.toList
+                let targetKeys = proof.TargetKeyColumns |> Seq.toArray
+                let mutable valid = true
+                let mutable lastName = ""
+                let mutable lastKeys: string list = []
+                let seen = System.Collections.Generic.HashSet<string>(StringComparer.Ordinal)
+                // One physical ordered UNIQUE tuple -> at most three single-
+                // source CTEs projecting EACH key unchanged in SAME ordinal.
+                // This is executable proof, unlike Virtual Catalog evidence.
+                for index, cte in ctes |> List.indexed do
+                    RewriteResourceBudget.checkpoint ()
+                    let query = cte.Query
+                    let head = query.Head
+                    let input =
+                        match head.From, index with
+                        | Some(NamedTable(name, alias)), 0
+                            when qualified name proof.SourceTable ->
+                            Some(sourceKeys,
+                                 match alias, Identifier.parts name with
+                                 | Some a, _ -> a.Value
+                                 | None, [_; table] -> table.Value
+                                 | _ -> "")
+                        | Some(DerivedTable(query, alias)), 0 ->
+                            provenDirectDerivedKeys query
+                            |> Option.map (fun keys -> keys, alias.Value)
+                        | Some(CteTable(name, alias)), n when n > 0 ->
+                            match Identifier.parts name with
+                            | [namePart] when same namePart.Value lastName ->
+                                Some(lastKeys, match alias with
+                                               | Some a -> a.Value
+                                               | None -> lastName)
+                            | _ -> None
+                        | _ -> None
+                    let directProjection =
+                        input |> Option.bind (fun (keys, qualifier) ->
+                            // The same strict key mapping is used by
+                            // derived sources, linear CTEs and diamonds.
+                            projectDerivedKeys keys qualifier head.Projection cte.ColumnAliases)
+                    if not valid
+                       || not (seen.Add cte.Name.Value)
+                       || cte.RecursiveScope
+                       || not query.SetOperations.IsEmpty
+                       || not query.OrderBy.IsEmpty
+                       || query.Limit.IsSome || query.Offset.IsSome
+                       || query.FetchPercent.IsSome || query.FetchWithTies
+                       || not head.Ctes.IsEmpty
+                       || head.Joins.Length > 1
+                       || not (head.Joins |> List.forall (fun join ->
+                           singletonJoin join
+                           || (index = 0 && (provenPhysicalSelfJoin head join
+                                              || provenDistinctPhysicalJoin head join))))
+                       || not head.GroupBy.IsEmpty || head.Having.IsSome
+                       || not (validCteFilter index head)
+                       || head.DistinctMode <> SelectDistinct.AllRows
+                       || directProjection.IsNone then
+                        valid <- false
+                    else
+                        lastName <- cte.Name.Value
+                        lastKeys <- directProjection.Value
+                // A strict diamond is not a linear chain, so run its
+                // independent sealed proof only when that legacy path
+                // declines. It still shares the mandatory target equality
+                // and live metadata/transaction checks below.
+                if not valid && ctes.Length = 3 then
+                    match proveDiamond () with
+                    | Some keys ->
+                        valid <- true
+                        lastName <- ctes.[2].Name.Value
+                        lastKeys <- keys
+                    | None -> ()
+                let outerNameMatches =
+                    match Identifier.parts cteIdentifier with
+                    | [name] -> same name.Value lastName
+                    | _ -> false
+                if not valid || not outerNameMatches
+                   || outerSecond.IsNone
+                   || List.length lastKeys <> targetKeys.Length then false
+                else
+                    let qualifier = match outerAlias with
+                                    | Some alias -> alias.Value
+                                    | None -> lastName
+                    let pending = ResizeArray<Expr>()
+                    predicate |> Option.iter pending.Add
+                    let proven = Array.create targetKeys.Length false
+                    let otherProven = Array.create targetKeys.Length false
+                    let mutable duplicate = false
+                    let mutable safeExtra = true
+                    let directSecondColumn field (secondQualifier: string) =
+                        match Expr.unspan field with
+                        | Column identifier
+                        | BoundColumn(identifier, ColumnBinding.LocalRowSource) ->
+                            match Identifier.parts identifier with
+                            | [owner; _] -> same owner.Value secondQualifier
+                            | _ -> false
+                        | _ -> false
+                    while pending.Count > 0 do
+                        RewriteResourceBudget.checkpoint ()
+                        let last = pending.Count - 1
+                        let node = pending.[last]
+                        pending.RemoveAt(last)
+                        match Expr.unspan node with
+                        | Binary(BinaryOperator.And, left, right) ->
+                            pending.Add right
+                            pending.Add left
+                        | Binary(BinaryOperator.Equal, left, right) ->
+                            let mutable matchedKey = false
+                            for i = 0 to targetKeys.Length - 1 do
+                                if (isTargetKey left proof.TargetTable targetKeys.[i]
+                                    && isColumn right qualifier lastKeys.[i])
+                                   || (isTargetKey right proof.TargetTable targetKeys.[i]
+                                       && isColumn left qualifier lastKeys.[i]) then
+                                    matchedKey <- true
+                                    if proven.[i] then duplicate <- true
+                                    else proven.[i] <- true
+                                match outerSecond with
+                                | Some(Some secondQualifier) ->
+                                    let secondKey = proof.JoinedSourceKeyColumns.[i]
+                                    if (isColumn left qualifier lastKeys.[i]
+                                        && isColumn right secondQualifier secondKey)
+                                       || (isColumn right qualifier lastKeys.[i]
+                                           && isColumn left secondQualifier secondKey) then
+                                        matchedKey <- true
+                                        if otherProven.[i] then duplicate <- true
+                                        else otherProven.[i] <- true
+                                | _ -> ()
+                            // M08's only auxiliary predicate is a direct
+                            // column of its independently attested second
+                            // source compared to a literal. Reject hidden
+                            // subqueries and computed/volatile expressions.
+                            match outerSecond with
+                            | Some(Some secondQualifier) when not matchedKey ->
+                                let literalFilter =
+                                    match Expr.unspan left, Expr.unspan right with
+                                    | Literal _, _ ->
+                                        directSecondColumn right secondQualifier
+                                    | _, Literal _ ->
+                                        directSecondColumn left secondQualifier
+                                    | _ -> false
+                                if not literalFilter then safeExtra <- false
+                            | _ -> ()
+                        | _ ->
+                            match outerSecond with
+                            | Some(Some _) -> safeExtra <- false
+                            | _ -> ()
+                    safeExtra && not duplicate && (proven |> Array.forall id)
+                    && (match outerSecond with
+                        | Some None -> true
+                        | Some(Some _) -> otherProven |> Array.forall id
+                        | None -> false)
+            | _ -> false
+
+    /// Public CLR mutation statements may be constructed without the native
+    let private sqlServerLiveIntCteProof
+        (proof: SqlServerCteUniqueKeyAssurance | null) sourceProfile targetProfile snapshot
+        ctes target targetAlias sources predicate =
+        match proof with
+        | null -> false
+        | proof ->
+            sqlServerLiveIntCteProofCore proof sourceProfile targetProfile snapshot
+                ctes target targetAlias sources predicate
+
+    /// Parser. Never trust an unqualified CTE name as the physical UPDATE/
+    /// DELETE write target: SQL Server permits writes through updatable CTEs,
+    /// which would bypass the verified physical table identity allowlist.
+    let private requireSqlServerPhysicalCteTarget (ctes: Cte list) target =
+        match Identifier.parts target with
+        | [ part ] when ctes |> List.exists (fun cte ->
+            StringComparer.OrdinalIgnoreCase.Equals(part.Value, cte.Name.Value)) ->
+            raise (SqlCompilationException(
+                "SQL Server CTE name is not a verified physical mutation target; CTE-target writes require separate catalog lineage proof."))
+        | _ -> ()
+
+    /// A caller-declared Catalog is NOT a runtime key assurance. Only a
+    /// separate, metadata-verified, schema-bound proof may permit this one
+    /// physical-source native SQLite UPDATE FROM shape.
+    let private sqliteLivePkUpdateFromProofCore
+            (assurance: SqliteUpdateFromKeyAssurance)
+            (snapshot: SqlSchemaSnapshot)
+            (sourceProfile: SqlProviderCapabilityProfile | null)
+            (targetProfile: SqlProviderCapabilityProfile | null)
+            (update: Update) =
+
+        let same a b = StringComparer.OrdinalIgnoreCase.Equals(a, b)
+        let versionProven (profile: SqlProviderCapabilityProfile | null) =
+            not (isNull profile)
+            && (nonNull profile).Provider = SqlAgentToolType.Sqlite
+            && not (isNull (nonNull profile).ServerVersion)
+            && (nonNull (nonNull profile).ServerVersion).CompareTo(Version(3, 33, 0)) >= 0
+
+        if snapshot.Provider <> SqlAgentToolType.Sqlite
+           || not (StringComparer.Ordinal.Equals(snapshot.Sha256, assurance.SchemaSha256))
+           || not (versionProven sourceProfile)
+           || not (versionProven targetProfile) then false
+        else
+            let exactlyOne identifier expected =
+                match Identifier.parts identifier with
+                | [part] -> same part.Value expected
+                | _ -> false
+            let keyColumn qualifier key expr =
+                match Expr.unspan expr with
+                | Column id
+                | BoundColumn(id, ColumnBinding.LocalRowSource) ->
+                    match Identifier.parts id with
+                    | [ table; column ] -> same table.Value qualifier && same column.Value key
+                    | _ -> false
+                | _ -> false
+
+            match update.TargetAlias, update.From with
+            | None, [ NamedTable(name, alias) ]
+                when exactlyOne update.Target assurance.TargetTable
+                     && exactlyOne name assurance.SourceTable
+                     && not (same assurance.TargetTable assurance.SourceTable) ->
+                let sourceQualifier =
+                    alias |> Option.map (fun x -> x.Value)
+                    |> Option.defaultValue assurance.SourceTable
+                let matchesKey left right =
+                    (keyColumn sourceQualifier assurance.SourcePrimaryKey left
+                     && keyColumn assurance.TargetTable assurance.TargetPrimaryKey right)
+                    || (keyColumn sourceQualifier assurance.SourcePrimaryKey right
+                        && keyColumn assurance.TargetTable assurance.TargetPrimaryKey left)
+                let pending = ResizeArray<Expr>()
+                update.Where |> Option.iter pending.Add
+                let mutable proven = false
+                while pending.Count > 0 && not proven do
+                    RewriteResourceBudget.checkpoint ()
+                    let at = pending.Count - 1
+                    let predicate = pending.[at]
+                    pending.RemoveAt at
+                    match Expr.unspan predicate with
+                    | Binary(BinaryOperator.And, left, right) ->
+                        pending.Add left
+                        pending.Add right
+                    | Binary(BinaryOperator.Equal, left, right) when matchesKey left right ->
+                        proven <- true
+                    | _ -> ()
+                proven
+            | _ -> false
+
+    let private sqliteLivePkUpdateFromProof
+        (assurance: SqliteUpdateFromKeyAssurance | null)
+        (snapshot: SqlSchemaSnapshot | null) sourceProfile targetProfile update =
+        match assurance with
+        | null -> false
+        | assurance ->
+            match snapshot with
+            | null -> false
+            | snapshot ->
+                sqliteLivePkUpdateFromProofCore assurance snapshot sourceProfile targetProfile update
+
+    let private validateAggregateDocument enforceSource source sourceProfile target targetProfile liveKeyAssurance sqlServerLiveProof schemaSnapshot document =
         match document.Statement with
         | QueryStatement query ->
             validateAggregateQuery enforceSource source sourceProfile target targetProfile query
@@ -407,10 +1370,83 @@ module internal RewriteStages =
                     raise (SqlCompilationException(
                         "SQL capability 'dml.insert_implicit_columns' is native-only because omitted INSERT target columns depend on provider table-column order. Source provider "
                         + string source + ", target provider " + string target + "."))
+                // A SQL Server target requires the native statement-level CTE
+                // grammar, even when the typed source came from PostgreSQL
+                // or SQLite. Source proof is owned by the parser; target
+                // proof must not be bypassed by cross-provider compilation.
+                if target = SqlAgentToolType.MsSqlServer && not query.Head.Ctes.IsEmpty then
+                    match SqlSqlServerWithMutationCteCapabilityRules.TargetValidationError(target, targetProfile) with
+                    | null -> ()
+                    | message -> raise (SqlCompilationException(message))
+                    // SQL Server can resolve an unqualified INSERT target
+                    // against a directly updatable CTE alias. A syntactic
+                    // CTE name is never an attested physical write target.
+                    match Identifier.parts insert.Target with
+                    | [ part ] when query.Head.Ctes |> List.exists (fun cte ->
+                        StringComparer.OrdinalIgnoreCase.Equals(part.Value, cte.Name.Value)) ->
+                        raise (SqlCompilationException(
+                            "SQL Server CTE name is not a verified physical INSERT target; CTE-target writes require separate catalog lineage proof."))
+                    | _ -> ()
                 validateAggregateQuery enforceSource source sourceProfile target targetProfile query
             | DefaultValues -> ()
             insert.Returning |> List.iter (fun item -> validateAggregateExpr enforceSource source sourceProfile target targetProfile item.Expression)
         | UpdateStatement update ->
+            if not update.Ctes.IsEmpty then
+                let nativePostgres =
+                    source = SqlAgentToolType.Postgres && target = SqlAgentToolType.Postgres
+                let nativeSqlite =
+                    source = SqlAgentToolType.Sqlite && target = SqlAgentToolType.Sqlite
+                let nativeMySql =
+                    source = SqlAgentToolType.MySQL && target = SqlAgentToolType.MySQL
+                let nativeSqlServer =
+                    source = SqlAgentToolType.MsSqlServer && target = SqlAgentToolType.MsSqlServer
+                if not nativePostgres && not nativeSqlite && not nativeMySql && not nativeSqlServer then
+                    raise (SqlCompilationException(
+                        "Statement-level WITH UPDATE is proven only for native PostgreSQL, SQLite, MySQL or SQL Server source and target; cross-provider lowering remains fail-closed."))
+                if nativeSqlServer then
+                    requireSqlServerPhysicalCteTarget update.Ctes update.Target
+                    if not update.From.IsEmpty
+                       && not (sqlServerSingletonCteSource update.Ctes update.From)
+                       && not (sqlServerLiveIntCteProof sqlServerLiveProof sourceProfile targetProfile schemaSnapshot update.Ctes update.Target update.TargetAlias update.From update.Where) then
+                        raise (SqlCompilationException(
+                            "SQL capability 'sqlserver.with_update.from' requires an at-most-one-row read-only CTE source for every target row; unproven joined cardinality remains fail-closed."))
+                    for side, profile in [ "source", sourceProfile; "target", targetProfile ] do
+                        let error =
+                            if side = "source" then
+                                SqlSqlServerWithMutationCteCapabilityRules.SourceValidationError(source, profile)
+                            else
+                                SqlSqlServerWithMutationCteCapabilityRules.TargetValidationError(target, profile)
+                        match error with
+                        | null -> ()
+                        | message -> raise (SqlCompilationException(message))
+                if nativeMySql then
+                    if not update.From.IsEmpty then
+                        raise (SqlCompilationException(
+                            "SQL capability 'mysql.with_update.from' is not proven for CTE-prefixed MySQL UPDATE; joined mutation cardinality remains fail-closed."))
+                    for side, profile in [ "source", sourceProfile; "target", targetProfile ] do
+                        match profileVersion profile with
+                        | Some declared when declared.CompareTo(Version(8, 0)) < 0 ->
+                            raise (SqlCompilationException(
+                                "SQL capability 'mysql.with_update' requires MySQL "
+                                + side + " ServerVersion 8.0+; declared version is "
+                                + string declared + "."))
+                        | _ -> ()
+                if nativeSqlite then
+                    if not update.From.IsEmpty
+                       && not (sqliteUpdateFromSingletonCte update)
+                       && not (sqliteLivePkUpdateFromProof liveKeyAssurance schemaSnapshot sourceProfile targetProfile update) then
+                        raise (SqlCompilationException(
+                            "SQL capability 'sqlite.with_update.from' requires a single singleton CTE, or a live-attested SQLite INTEGER primary-key match bound to the schema snapshot; unproven sources remain fail-closed."))
+                    for side, profile in [ "source", sourceProfile; "target", targetProfile ] do
+                        match profileVersion profile with
+                        | Some declared when declared.CompareTo(Version(3, 8, 3)) < 0 ->
+                            raise (SqlCompilationException(
+                                "SQL capability 'sqlite.with_update' requires SQLite "
+                                + side + " ServerVersion 3.8.3+; declared version is "
+                                + string declared + "."))
+                        | _ -> ()
+                update.Ctes |> List.iter (fun cte ->
+                    validateAggregateQuery enforceSource source sourceProfile target targetProfile cte.Query)
             requireNativeSqliteRichReturning source target update.Returning
             if not update.From.IsEmpty
                && source <> target
@@ -428,6 +1464,57 @@ module internal RewriteStages =
             update.Where |> Option.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
             update.Returning |> List.iter (fun item -> validateAggregateExpr enforceSource source sourceProfile target targetProfile item.Expression)
         | DeleteStatement delete ->
+            if not delete.Ctes.IsEmpty then
+                let nativePostgres =
+                    source = SqlAgentToolType.Postgres && target = SqlAgentToolType.Postgres
+                let nativeSqlite =
+                    source = SqlAgentToolType.Sqlite && target = SqlAgentToolType.Sqlite
+                let nativeMySql =
+                    source = SqlAgentToolType.MySQL && target = SqlAgentToolType.MySQL
+                let nativeSqlServer =
+                    source = SqlAgentToolType.MsSqlServer && target = SqlAgentToolType.MsSqlServer
+                if not nativePostgres && not nativeSqlite && not nativeMySql && not nativeSqlServer then
+                    raise (SqlCompilationException(
+                        "Statement-level WITH DELETE is proven only for native PostgreSQL, SQLite, MySQL or SQL Server source and target; cross-provider lowering remains fail-closed."))
+                if nativeSqlServer then
+                    requireSqlServerPhysicalCteTarget delete.Ctes delete.Target
+                    if not delete.Using.IsEmpty
+                       && not (sqlServerSingletonCteSource delete.Ctes delete.Using)
+                       && not (sqlServerLiveIntCteProof sqlServerLiveProof sourceProfile targetProfile schemaSnapshot delete.Ctes delete.Target delete.TargetAlias delete.Using delete.Where) then
+                        raise (SqlCompilationException(
+                            "SQL capability 'sqlserver.with_delete.from' requires an at-most-one-row read-only CTE source for every target row; unproven joined cardinality remains fail-closed."))
+                    for side, profile in [ "source", sourceProfile; "target", targetProfile ] do
+                        let error =
+                            if side = "source" then
+                                SqlSqlServerWithMutationCteCapabilityRules.SourceValidationError(source, profile)
+                            else
+                                SqlSqlServerWithMutationCteCapabilityRules.TargetValidationError(target, profile)
+                        match error with
+                        | null -> ()
+                        | message -> raise (SqlCompilationException(message))
+                if nativeMySql then
+                    if not delete.Using.IsEmpty then
+                        raise (SqlCompilationException(
+                            "SQL capability 'mysql.with_delete.using' is not proven for CTE-prefixed MySQL DELETE; only a single physical delete target is supported."))
+                    for side, profile in [ "source", sourceProfile; "target", targetProfile ] do
+                        match profileVersion profile with
+                        | Some declared when declared.CompareTo(Version(8, 0)) < 0 ->
+                            raise (SqlCompilationException(
+                                "SQL capability 'mysql.with_delete' requires MySQL "
+                                + side + " ServerVersion 8.0+; declared version is "
+                                + string declared + "."))
+                        | _ -> ()
+                if nativeSqlite then
+                    for side, profile in [ "source", sourceProfile; "target", targetProfile ] do
+                        match profileVersion profile with
+                        | Some declared when declared.CompareTo(Version(3, 8, 3)) < 0 ->
+                            raise (SqlCompilationException(
+                                "SQL capability 'sqlite.with_delete' requires SQLite "
+                                + side + " ServerVersion 3.8.3+; declared version is "
+                                + string declared + "."))
+                        | _ -> ()
+                delete.Ctes |> List.iter (fun cte ->
+                    validateAggregateQuery enforceSource source sourceProfile target targetProfile cte.Query)
             requireNativeSqliteRichReturning source target delete.Returning
             delete.Using |> List.iter (validateAggregateSource enforceSource source sourceProfile target targetProfile)
             delete.Where |> Option.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
@@ -978,6 +2065,8 @@ module internal RewriteStages =
             | UpdateStatement update ->
                 UpdateStatement
                     { update with
+                        Ctes = update.Ctes |> List.map (fun cte ->
+                            { cte with Query = normalizeQuery source target cte.Query })
                         AssignmentItems =
                             update.AssignmentItems
                             |> NonEmpty.map (fun assignment ->
@@ -988,6 +2077,8 @@ module internal RewriteStages =
             | DeleteStatement delete ->
                 DeleteStatement
                     { delete with
+                        Ctes = delete.Ctes |> List.map (fun cte ->
+                            { cte with Query = normalizeQuery source target cte.Query })
                         Using = delete.Using |> List.map (normalizeSource source target)
                         Where = delete.Where |> Option.map (normalizeExpr source target)
                         Returning = normalizeReturning source target delete.Returning }
@@ -1020,7 +2111,7 @@ module internal RewriteStages =
     let internal normalizeDocumentForInspection sourceDialect targetRuntime document =
         normalizeDocument sourceDialect targetRuntime document
 
-    let normalize enforceDialectSyntax sourceDialect targetRuntime sourceRegexProof sourceOrdering mySqlPipes sourceProfile targetProfile bound =
+    let normalize enforceDialectSyntax sourceDialect targetRuntime sourceRegexProof sourceOrdering mySqlPipes sourceProfile targetProfile liveKeyAssurance sqlServerLiveProof schemaSnapshot bound =
         Transition.normalize
             (fun document ->
                 withCompilationDiagnostic
@@ -1045,6 +2136,9 @@ module internal RewriteStages =
                             sourceProfile
                             target
                             targetProfile
+                            liveKeyAssurance
+                            sqlServerLiveProof
+                            schemaSnapshot
                             document)
 
                 if enforceDialectSyntax then
@@ -1211,12 +2305,14 @@ module internal RewriteStages =
             | DefaultValues -> ()
             validateReturning allowedTables insert.Returning
         | UpdateStatement update ->
+            update.Ctes |> List.iter (fun cte -> validateQuery allowedTables cte.Query)
             ensureTableAllowed allowedTables update.Target
             update.From |> List.iter (validateSource allowedTables)
             update.AssignmentItems |> NonEmpty.iter (fun assignment -> validateExpr allowedTables assignment.Value)
             update.Where |> Option.iter (validateExpr allowedTables)
             validateReturning allowedTables update.Returning
         | DeleteStatement delete ->
+            delete.Ctes |> List.iter (fun cte -> validateQuery allowedTables cte.Query)
             ensureTableAllowed allowedTables delete.Target
             delete.Using |> List.iter (validateSource allowedTables)
             delete.Where |> Option.iter (validateExpr allowedTables)
@@ -1543,11 +2639,6 @@ module internal RewriteStages =
         | WindowFrameBound.Following offset -> int64 (FrameOffset.value offset)
         | WindowFrameBound.UnboundedFollowing -> Int64.MaxValue
 
-    let private hasOffsetBound = function
-        | WindowFrameBound.Preceding _
-        | WindowFrameBound.Following _ -> true
-        | _ -> false
-
     let private validateWindowFrameShape (frame: WindowFrame) =
         match frame.Extent with
         | WindowFrameExtent.SingleBound WindowFrameBound.UnboundedFollowing ->
@@ -1612,20 +2703,23 @@ module internal RewriteStages =
             match window.Frame with
             | Some frame ->
                 validateWindowFrameShape frame
+                if frame.Unit = WindowFrameUnit.Groups then
+                    // GROUPS counts ORDER BY peer groups, not rows or numeric ranges.
+                    if window.OrderBy.IsEmpty then
+                        raise (SqlCompilationException(
+                            "SQL capability 'window.groups.order_by' requires an explicit ORDER BY peer key."))
+                    if provider <> SqlAgentToolType.Postgres
+                       && provider <> SqlAgentToolType.Sqlite then
+                        raise (targetCapabilityError provider "window.groups")
                 if contract.IsWindowFrameInsensitive
                    && (provider = SqlAgentToolType.MsSqlServer
                        || provider = SqlAgentToolType.Oracle) then
                     raise (targetCapabilityError provider (
                         "window.frame." + name.ToLowerInvariant()))
                 if provider = SqlAgentToolType.MsSqlServer
-                   && frame.Unit = WindowFrameUnit.Range then
-                    match frame.Extent with
-                    | WindowFrameExtent.SingleBound bound when hasOffsetBound bound ->
-                        raise (targetCapabilityError provider "window.range_offset")
-                    | WindowFrameExtent.BetweenBounds(start, finish)
-                        when hasOffsetBound start || hasOffsetBound finish ->
-                        raise (targetCapabilityError provider "window.range_offset")
-                    | _ -> ()
+                   && frame.Unit = WindowFrameUnit.Range
+                   && frame.HasNumericOffset then
+                    raise (targetCapabilityError provider "window.range_offset")
             | None -> ()
             if provider = SqlAgentToolType.MsSqlServer
                && contract.Kind = SqlCanonicalFunctionKind.Window
@@ -1962,6 +3056,7 @@ module internal RewriteStages =
             |> List.iter (fun item ->
                 validateSemanticExpr targetRuntime ProjectionClause false false item.Expression)
         | UpdateStatement update ->
+            update.Ctes |> List.iter (fun cte -> validateSemanticQuery targetRuntime cte.Query)
             update.AssignmentItems
             |> NonEmpty.iter (fun item ->
                 validateSemanticExpr targetRuntime AssignmentClause false false item.Value)
@@ -1974,6 +3069,7 @@ module internal RewriteStages =
             |> List.iter (fun item ->
                 validateSemanticExpr targetRuntime ProjectionClause false false item.Expression)
         | DeleteStatement delete ->
+            delete.Ctes |> List.iter (fun cte -> validateSemanticQuery targetRuntime cte.Query)
             delete.Using |> List.iter (validateSemanticTable targetRuntime)
             delete.Where
             |> Option.iter (fun predicate ->
@@ -1999,7 +3095,7 @@ module internal RewriteStages =
                 mergeInsert.InsertValues
                 |> NonEmpty.iter (validateSemanticExpr targetRuntime InsertValueClause false false))
 
-    let validate allowedTables targetRuntime sourceExpressions targetExpressions sourceJoins targetJoins targetOrdering sourceDml targetDml conflictProofs canonical =
+    let validate allowedTables targetRuntime targetProfile sourceExpressions targetExpressions sourceJoins targetJoins targetOrdering sourceDml targetDml conflictProofs canonical =
         let document = Canonical.value canonical
 
         let sourceCheck action =
@@ -2029,16 +3125,22 @@ module internal RewriteStages =
         targetCheck (fun () -> RewriteStructuralValidation.validateNestedCteDocument targetRuntime document)
         targetCheck (fun () -> RewriteStructuralValidation.validateNoFromDocument targetRuntime document)
         sourceCheck (fun () ->
-            RewriteCapabilityValidation.proveFilterDocument sourceCapabilityMessage sourceExpressions document)
+            RewriteCapabilityValidation.proveFilterDocument
+                sourceCapabilityMessage sourceExpressions false document)
         targetCheck (fun () ->
-            RewriteCapabilityValidation.proveFilterDocument targetCapabilityMessage targetExpressions document)
+            let provider = TargetRuntime.provider targetRuntime
+            let allowFilteredCount =
+                provider = SqlAgentToolType.MySQL
+                || provider = SqlAgentToolType.MsSqlServer
+            RewriteCapabilityValidation.proveFilterDocument
+                targetCapabilityMessage targetExpressions allowFilteredCount document)
 
         let validated =
             semanticCheck (fun () ->
                 validateSemanticDocument targetRuntime document
                 validateDocument allowedTables document)
 
-        targetCheck (fun () -> RewriteCapabilityValidation.proveTargetDocument targetRuntime targetExpressions validated |> ignore)
+        targetCheck (fun () -> RewriteCapabilityValidation.proveTargetDocument targetRuntime targetProfile targetExpressions validated |> ignore)
         sourceCheck (fun () -> RewritePlanCapabilityValidation.proveJoins sourceCapabilityMessage sourceJoins validated)
         targetCheck (fun () -> RewritePlanCapabilityValidation.proveJoins targetCapabilityMessage targetJoins validated)
         targetCheck (fun () -> RewritePlanCapabilityValidation.proveOrderingAndPaging targetRuntime targetOrdering validated)

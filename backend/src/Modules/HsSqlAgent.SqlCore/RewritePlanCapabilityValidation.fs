@@ -76,7 +76,7 @@ module internal RewritePlanCapabilityValidation =
         | DerivedTable(query, _) | LateralDerivedTable(query, _) ->
             proveJoinQuery capabilityMessage proofs query
 
-    let proveJoins capabilityMessage proofs document =
+    let private proveJoinsWhenRequired capabilityMessage proofs document =
         match document.Statement with
         | QueryStatement query -> proveJoinQuery capabilityMessage proofs query
         | InsertStatement insert ->
@@ -84,10 +84,20 @@ module internal RewritePlanCapabilityValidation =
             | QuerySource query -> proveJoinQuery capabilityMessage proofs query
             | Values _ | DefaultValues -> ()
         | UpdateStatement update ->
+            update.Ctes |> List.iter (fun cte -> proveJoinQuery capabilityMessage proofs cte.Query)
             update.From |> List.iter (proveJoinSource capabilityMessage proofs)
         | DeleteStatement delete ->
+            delete.Ctes |> List.iter (fun cte -> proveJoinQuery capabilityMessage proofs cte.Query)
             delete.Using |> List.iter (proveJoinSource capabilityMessage proofs)
         | MergeStatement _ -> ()
+
+    /// This traversal only checks Right/Full JoinKind capabilities; when
+    /// both are proven, it cannot contribute a further capability rejection.
+    /// A rejected proof retains exactly the old source-order traversal.
+    let proveJoins capabilityMessage (proofs: JoinProofs) document =
+        match proofs.RightJoin, proofs.FullJoin with
+        | ProvenCapability, ProvenCapability -> ()
+        | _ -> proveJoinsWhenRequired capabilityMessage proofs document
 
     let private requireDmlCapability capabilityMessage = function
         | ProvenCapability -> ()
@@ -599,11 +609,13 @@ module internal RewritePlanCapabilityValidation =
             | Values _ | DefaultValues -> ()
             insert.Returning |> List.iter (fun item -> proveOrderingExpr targetRuntime targetOrdering item.Expression)
         | UpdateStatement update ->
+            update.Ctes |> List.iter (fun cte -> proveOrderingQuery targetRuntime targetOrdering cte.Query)
             update.AssignmentItems |> NonEmpty.iter (fun assignment -> proveOrderingExpr targetRuntime targetOrdering assignment.Value)
             update.From |> List.iter (proveOrderingSource targetRuntime targetOrdering)
             update.Where |> Option.iter (proveOrderingExpr targetRuntime targetOrdering)
             update.Returning |> List.iter (fun item -> proveOrderingExpr targetRuntime targetOrdering item.Expression)
         | DeleteStatement delete ->
+            delete.Ctes |> List.iter (fun cte -> proveOrderingQuery targetRuntime targetOrdering cte.Query)
             delete.Using |> List.iter (proveOrderingSource targetRuntime targetOrdering)
             delete.Where |> Option.iter (proveOrderingExpr targetRuntime targetOrdering)
             delete.Returning |> List.iter (fun item -> proveOrderingExpr targetRuntime targetOrdering item.Expression)
@@ -736,12 +748,26 @@ module internal RewritePlanCapabilityValidation =
         match insert.Input with
         | DefaultValues ->
             raise (SqlCompilationException("Unsupported INSERT source for conflict handling."))
-        | QuerySource _ ->
+        | QuerySource query ->
             match targetRuntime with
             | PostgreSqlRuntime -> ()
+            | SQLiteRuntime when proofs.SourceProvider = SqlAgentToolType.Sqlite ->
+                // SourceVersion (>=3.24) and target capability proofs are
+                // validated separately. SQLite's ON after a SELECT FROM is
+                // ambiguous unless the SELECT has an explicit WHERE; never
+                // infer that predicate, and never borrow PostgreSQL's
+                // DO UPDATE cardinality assurance for this provider.
+                match conflict.Action with
+                | DoNothing when query.Head.From.IsNone || query.Head.Where.IsSome -> ()
+                | DoNothing ->
+                    raise (SqlCompilationException(
+                        "SQLite INSERT SELECT with ON CONFLICT requires a SELECT WHERE whenever FROM is present."))
+                | UpdateProposedValues _ ->
+                    raise (SqlCompilationException(
+                        "SQLite INSERT SELECT ON CONFLICT DO UPDATE has no proven source-row cardinality lowering and remains fail-closed."))
             | _ ->
                 raise (SqlCompilationException(
-                    "INSERT ... SELECT conflict handling is currently proven only for PostgreSQL targets; other targets remain fail-closed."))
+                    "INSERT ... SELECT conflict handling is proven only for PostgreSQL targets and native SQLite DO NOTHING; other targets remain fail-closed."))
         | Values _ -> ()
 
         validateConflictTargetColumns insert conflict

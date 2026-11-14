@@ -21,6 +21,7 @@ public class McpBuiltInToolContractTests
 
         Assert.Equal(
             [
+                nameof(SqlAgentTool.ExecuteDdlSql),
                 nameof(SqlAgentTool.ExecuteDmlSql),
                 nameof(SqlAgentTool.ExecuteQuerySql),
                 nameof(SqlAgentTool.GetColumns),
@@ -29,7 +30,7 @@ public class McpBuiltInToolContractTests
             ],
             annotatedMethods);
 
-        Assert.Equal(5, McpBuiltInTools.Names.Count);
+        Assert.Equal(6, McpBuiltInTools.Names.Count);
         Assert.DoesNotContain(
             "update_semantic_layer",
             McpBuiltInTools.Names.AsEnumerable());
@@ -44,10 +45,33 @@ public class McpBuiltInToolContractTests
         Assert.Contains(McpBuiltInTools.GetColumns, McpBuiltInTools.DefaultNames.AsEnumerable());
         Assert.Contains(McpBuiltInTools.ExecuteQuerySql, McpBuiltInTools.DefaultNames.AsEnumerable());
         Assert.DoesNotContain(McpBuiltInTools.ExecuteDmlSql, McpBuiltInTools.DefaultNames.AsEnumerable());
+        Assert.DoesNotContain(McpBuiltInTools.ExecuteDdlSql, McpBuiltInTools.DefaultNames.AsEnumerable());
 
         var dml = Assert.Single(McpBuiltInTools.Catalog, tool => tool.Name == McpBuiltInTools.ExecuteDmlSql);
         Assert.False(dml.DefaultSelected);
         Assert.Equal("high", dml.Risk);
+    }
+
+    [Fact]
+    public void AdminSelectableCatalog_OffersOnlyFourQueryToolsAndOptInDml()
+    {
+        Assert.Equal(
+            new[]
+            {
+                McpBuiltInTools.GetSchemas,
+                McpBuiltInTools.GetTables,
+                McpBuiltInTools.GetColumns,
+                McpBuiltInTools.ExecuteQuerySql,
+                McpBuiltInTools.ExecuteDmlSql
+            },
+            McpBuiltInTools.AdminSelectableCatalog.Select(tool => tool.Name).ToArray());
+        Assert.Equal(4, McpBuiltInTools.AdminSelectableCatalog.Count(tool => tool.DefaultSelected));
+        Assert.False(Assert.Single(McpBuiltInTools.AdminSelectableCatalog,
+            tool => tool.Name == McpBuiltInTools.ExecuteDmlSql).DefaultSelected);
+        Assert.DoesNotContain(McpBuiltInTools.AdminSelectableCatalog,
+            tool => tool.Name == McpBuiltInTools.ExecuteDdlSql);
+        Assert.Contains(McpBuiltInTools.Catalog,
+            tool => tool.Name == McpBuiltInTools.ExecuteDdlSql);
     }
 
     [Theory]

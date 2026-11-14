@@ -41,13 +41,40 @@ module internal RewriteCastTypes =
             fail ("Temporal CAST type '" + name + "' accepts at most one precision argument.")
         constructor (precision, withTimeZone)
 
-    let private decimalType (precision: int option) (scale: int option) =
+    // Explicit precision/scale is part of the provider capability contract,
+    // not just a syntactically valid closed SqlDecimal DU. Version-specific
+    // Firebird 19..38 precision is additionally gated by source/target proof.
+    let private validateDecimalBounds (provider: SqlAgentToolType)
+                                      (precision: int option) (scale: int option) =
+        match precision with
+        | None -> ()
+        | Some p ->
+            let maximum =
+                match provider with
+                | SqlAgentToolType.Postgres -> 1000
+                | SqlAgentToolType.MySQL -> 65
+                | SqlAgentToolType.MsSqlServer | SqlAgentToolType.Oracle
+                | SqlAgentToolType.Firebird -> 38
+                | SqlAgentToolType.Sqlite -> Int32.MaxValue
+                | _ -> Int32.MaxValue
+            if p > maximum then
+                fail ("DECIMAL/NUMERIC precision " + string p + " exceeds provider "
+                    + string provider + " maximum " + string maximum + ".")
+            match provider, scale with
+            | SqlAgentToolType.MySQL, Some s when s > 30 ->
+                fail ("DECIMAL/NUMERIC scale " + string s
+                    + " exceeds provider MySQL maximum 30.")
+            | _ -> ()
+
+    let private decimalType (source: SqlAgentToolType) (precision: int option) (scale: int option) =
         if scale.IsSome && precision.IsNone then
             fail "DECIMAL/NUMERIC scale requires a precision."
         if precision = Some 0 then fail "DECIMAL/NUMERIC precision must be positive."
         match precision, scale with
         | Some p, Some s when s > p -> fail "DECIMAL/NUMERIC scale cannot exceed precision."
-        | _ -> SqlDecimal(precision, scale)
+        | _ ->
+            validateDecimalBounds source precision scale
+            SqlDecimal(precision, scale)
 
     let private providerNativeType
         (source: SqlAgentToolType)
@@ -96,8 +123,8 @@ module internal RewriteCastTypes =
                 noArguments name precision scale SqlBigInteger
             | "UNSIGNED" | "UNSIGNED INTEGER" when source = SqlAgentToolType.MySQL ->
                 noArguments name precision scale SqlUnsignedBigInteger
-            | "DEC" | "DECIMAL" | "NUMERIC" -> decimalType precision scale
-            | "NUMBER" when source = SqlAgentToolType.Oracle -> decimalType precision scale
+            | "DEC" | "DECIMAL" | "NUMERIC" -> decimalType source precision scale
+            | "NUMBER" when source = SqlAgentToolType.Oracle -> decimalType source precision scale
             | "REAL" | "FLOAT4" | "BINARY_FLOAT" -> noArguments name precision scale SqlReal
             | "DOUBLE" | "DOUBLE PRECISION" | "FLOAT8" | "BINARY_DOUBLE" ->
                 noArguments name precision scale SqlDouble
@@ -183,12 +210,19 @@ module internal RewriteCastTypes =
         | _ -> name
 
     let private renderDecimal (precision: int option) (scale: int option) (target: SqlAgentToolType) (source: string) =
+        // SQLite NUMERIC affinity cannot attest DECIMAL(p,s) scale or
+        // precision, even though its type-name grammar admits those words.
+        // Keep native SQLite CASTs on their separate same-dialect path.
+        match target, precision with
+        | SqlAgentToolType.Sqlite, Some _ ->
+            fail ("Cross-provider DECIMAL CAST '" + source
+                + "' cannot preserve explicit precision/scale on SQLite NUMERIC affinity.")
+        | _ -> ()
+        validateDecimalBounds target precision scale
         match precision with
         | None ->
             match target with
             | SqlAgentToolType.Postgres -> "NUMERIC"
-            | SqlAgentToolType.MySQL -> "DECIMAL"
-            | SqlAgentToolType.Sqlite -> "NUMERIC"
             | _ ->
                 fail (
                     "Unbounded exact numeric CAST '" + source
@@ -201,7 +235,6 @@ module internal RewriteCastTypes =
                 | Some s -> "(" + string p + "," + string s + ")"
             (match target with
              | SqlAgentToolType.Oracle -> "NUMBER"
-             | SqlAgentToolType.Sqlite -> "NUMERIC"
              | _ -> "DECIMAL") + suffix
 
     let private renderString (length: int option) (target: SqlAgentToolType) (fixedWidth: bool) (source: string) =
@@ -403,6 +436,10 @@ module internal RewriteCastTypes =
             fail "Compatibility raw CAST type reached rendering before semantic normalization."
 
     let validateTarget (target: SqlAgentToolType) (castType: CastType) =
+        match CastType.semantic castType with
+        | Some(SqlDecimal(precision, scale)) ->
+            validateDecimalBounds target precision scale
+        | _ -> ()
         renderTarget target castType |> ignore
 
     let normalize (source: SqlAgentToolType) (_target: SqlAgentToolType) (castType: CastType) =

@@ -170,10 +170,12 @@ module internal CoreModel =
         | And | Or
 
     type JoinKind = Inner | Left | Right | Full | Cross
+    type ApplyKind = CrossApply | OuterApply
     type OnJoinKind = Inner | Left | Right | Full
     type NullOrdering = Default | NullsFirst | NullsLast
     type SetOperator = Union | UnionAll | Intersect | IntersectAll | Except | ExceptAll
-    type WindowFrameUnit = Rows | Range
+    type WindowFrameUnit = Rows | Range | Groups
+    type WindowFrameExclusion = ExcludeCurrentRow | ExcludeGroup | ExcludeTies | ExcludeNoOthers
 
     type FrameOffset = private FrameOffset of int
 
@@ -196,7 +198,8 @@ module internal CoreModel =
 
     type WindowFrame =
         { Unit: WindowFrameUnit
-          Extent: WindowFrameExtent }
+          Extent: WindowFrameExtent
+          Exclusion: WindowFrameExclusion option }
         member this.Start =
             match this.Extent with
             | SingleBound start | BetweenBounds(start, _) -> start
@@ -204,12 +207,114 @@ module internal CoreModel =
             match this.Extent with
             | SingleBound _ -> None
             | BetweenBounds(_, finish) -> Some finish
+        /// Typed frame shape evidence shared by source grammar and target validation.
+        member this.HasNumericOffset =
+            let isOffset = function
+                | Preceding _ | Following _ -> true
+                | _ -> false
+            match this.Extent with
+            | SingleBound bound -> isOffset bound
+            | BetweenBounds(start, finish) -> isOffset start || isOffset finish
+
+    /// First sealed semantic shape for SQL exact numerics outside CLR
+    /// Decimal. The sign is separate so folding a unary minus never changes
+    /// source lexeme validation or silently rounds the numeric magnitude.
+    /// The only construction path receives a fully lexed numeric token.
+    type ExactNumeric = private ExactNumeric of literal: string * negative: bool
+
+    module ExactNumeric =
+        let private grammar =
+            Regex(
+                @"\A(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?\z",
+                RegexOptions.CultureInvariant,
+                TimeSpan.FromMilliseconds(100.))
+
+        let create (text: string) =
+            if String.IsNullOrEmpty(text) || text.Length > 4096 || not (grammar.IsMatch(text)) then
+                invalidArg (nameof text) "Exact SQL numeric must be a bounded, lexically validated decimal."
+            ExactNumeric(text, false)
+
+        let negate (ExactNumeric(text, negative)) = ExactNumeric(text, not negative)
+
+        /// Never generate raw executable SQL from this string. The renderer
+        /// must bind the value and emit an explicit, target-proven NUMERIC CAST.
+        let bindingText (ExactNumeric(text, negative)) =
+            if negative then "-" + text else text
+        /// Provider-target DECIMAL evidence derived from the exact SQL
+        /// mathematical value, not its source spelling or CLR decimal.
+        /// Returns only a canonical plain decimal string (no exponent) and
+        /// the minimum precision/scale that can contain its nonzero digits.
+        /// The validated source token is <=4096 characters. All output
+        /// construction takes place AFTER the provider's bounds are proven.
+        let tryBoundedDecimal maxPrecision maxScale (ExactNumeric(text, negative)) =
+            if maxPrecision < 1 || maxScale < 0 then None
+            else
+                let exponentAt = text.IndexOfAny([| 'e'; 'E' |])
+                let coefficientEnd = if exponentAt < 0 then text.Length else exponentAt
+                let digits = System.Text.StringBuilder(coefficientEnd)
+                let mutable fractional = false
+                let mutable fractionalDigits = 0
+                for position = 0 to coefficientEnd - 1 do
+                    let c = text.[position]
+                    if c = '.' then fractional <- true
+                    elif c >= '0' && c <= '9' then
+                        digits.Append(c) |> ignore
+                        if fractional then fractionalDigits <- fractionalDigits + 1
+
+                let raw = digits.ToString()
+                let mutable first = 0
+                while first < raw.Length && raw.[first] = '0' do
+                    first <- first + 1
+                if first = raw.Length then Some("0", 1, 0)
+                else
+                    let mutable last = raw.Length
+                    while last > first && raw.[last - 1] = '0' do
+                        last <- last - 1
+                    let significant = raw.Substring(first, last - first)
+
+                    let mutable exponent = 0L
+                    let exponentValid =
+                        exponentAt < 0
+                        || Int64.TryParse(
+                            text.Substring(exponentAt + 1),
+                            Globalization.NumberStyles.AllowLeadingSign,
+                            Globalization.CultureInfo.InvariantCulture,
+                            &exponent)
+                    // Early bound avoids overflows when a source exponent
+                    // contains an extreme signed 64-bit integer.
+                    let exponentLimit = int64 maxPrecision + int64 maxScale + int64 text.Length
+                    if not exponentValid || exponent > exponentLimit || exponent < -exponentLimit then
+                        None
+                    else
+                        let power = exponent - int64 fractionalDigits + int64 (raw.Length - last)
+                        if power > int64 maxPrecision || power < -int64 maxScale then None
+                        else
+                            let integralDigits = max 0L (int64 significant.Length + power)
+                            let scale = max 0L (-power)
+                            let precision = max 1L (integralDigits + scale)
+                            if precision > int64 maxPrecision || scale > int64 maxScale then None
+                            else
+                                let plain =
+                                    if power >= 0L then
+                                        significant + String('0', int power)
+                                    else
+                                        let decimalPoint = int64 significant.Length + power
+                                        if decimalPoint > 0L then
+                                            significant.Substring(0, int decimalPoint)
+                                            + "."
+                                            + significant.Substring(int decimalPoint)
+                                        else
+                                            "0." + String('0', int -decimalPoint) + significant
+                                let bound = if negative then "-" + plain else plain
+                                Some(bound, int precision, int scale)
+
 
     type ScalarValue =
         | Null
         | Boolean of bool
         | Integer of int64
         | Decimal of decimal
+        | ExactNumeric of ExactNumeric
         | Floating of double
         | Text of string
         | Date of DateOnly
@@ -448,6 +553,11 @@ module internal CoreModel =
 
         let value (LikeEscape value) = value
 
+    type WindowNullTreatment =
+        | DefaultNullTreatment
+        | IgnoreNulls
+        | RespectNulls
+
     type ColumnBinding =
         | LocalRowSource
         | OuterRowSource
@@ -498,7 +608,7 @@ module internal CoreModel =
 
     and SimpleCaseBranch = { Match: Expr; Result: Expr }
     and SearchedCaseBranch = { Condition: Expr; Result: Expr }
-    and WindowSpec = { PartitionBy: Expr list; OrderBy: OrderBy list; Frame: WindowFrame option }
+    and WindowSpec = { PartitionBy: Expr list; OrderBy: OrderBy list; Frame: WindowFrame option; NullTreatment: WindowNullTreatment }
     and OrderBy = { Expression: Expr; Descending: bool; NullOrdering: NullOrdering }
     and SelectItem = { Expression: Expr; Alias: IdentifierPart option }
 
@@ -517,15 +627,18 @@ module internal CoreModel =
 
     and Join =
         | CrossJoin of TableSource
+        | ApplyJoin of ApplyKind * TableSource
         | NaturalJoin of OnJoinKind * TableSource
         | OnJoin of OnJoinKind * TableSource * Expr
         | UsingJoin of OnJoinKind * TableSource * NonEmpty<IdentifierPart>
         member this.Kind =
             match this with
-            | CrossJoin _ -> JoinKind.Cross
+            | CrossJoin _
+            | ApplyJoin(ApplyKind.CrossApply, _) -> JoinKind.Cross
             | NaturalJoin(OnJoinKind.Inner, _)
             | OnJoin(OnJoinKind.Inner, _, _)
             | UsingJoin(OnJoinKind.Inner, _, _) -> JoinKind.Inner
+            | ApplyJoin(ApplyKind.OuterApply, _)
             | NaturalJoin(OnJoinKind.Left, _)
             | OnJoin(OnJoinKind.Left, _, _)
             | UsingJoin(OnJoinKind.Left, _, _) -> JoinKind.Left
@@ -538,18 +651,21 @@ module internal CoreModel =
         member this.Source =
             match this with
             | CrossJoin source
+            | ApplyJoin(_, source)
             | NaturalJoin(_, source)
             | OnJoin(_, source, _)
             | UsingJoin(_, source, _) -> source
         member this.Predicate =
             match this with
             | CrossJoin _
+            | ApplyJoin _
             | NaturalJoin _
             | UsingJoin _ -> None
             | OnJoin(_, _, predicate) -> Some predicate
         member this.UsingColumns =
             match this with
             | UsingJoin(_, _, columns) -> Some(NonEmpty.toList columns)
+            | ApplyJoin _
             | CrossJoin _
             | NaturalJoin _
             | OnJoin _ -> None
@@ -791,7 +907,8 @@ module internal CoreModel =
             | Values _ | DefaultValues -> None
 
     type Update =
-        { Target: Identifier
+        { Ctes: Cte list
+          Target: Identifier
           TargetAlias: IdentifierPart option
           AssignmentItems: NonEmpty<Assignment>
           From: TableSource list
@@ -800,7 +917,8 @@ module internal CoreModel =
         member this.Assignments = NonEmpty.toList this.AssignmentItems
 
     type Delete =
-        { Target: Identifier
+        { Ctes: Cte list
+          Target: Identifier
           TargetAlias: IdentifierPart option
           Using: TableSource list
           Where: Expr option
@@ -855,6 +973,68 @@ module internal CoreModel =
                 | Spanned(_, inner) -> current <- inner
                 | _ -> doneWalking <- true
             current
+
+        /// One structural proof used by target validation and native lowering.
+        /// COUNT(*) has a different argument shape from COUNT(direct_column).
+        type FilteredCountArgument =
+            | AllRows
+            | DirectColumn of Expr
+            | DirectDistinctColumn of Expr
+
+        let tryFilteredCountArgument value =
+            match unspan value with
+            | FunctionCall call
+                when call.AggregateOrderBy.IsEmpty
+                     && call.AggregateOrderSyntax = NoAggregateOrder
+                     && call.AggregateSeparator.IsNone
+                     && not (FunctionName.requiresNativeIdentifierSemantics call.Name)
+                     && String.Equals(
+                         FunctionName.value call.Name, "COUNT",
+                         StringComparison.OrdinalIgnoreCase) ->
+                match call.Arguments with
+                | [ argument ] ->
+                    match unspan argument with
+                    | Wildcard None when not call.IsDistinct -> Some AllRows
+                    | Column _ | BoundColumn(_, LocalRowSource) ->
+                        if call.IsDistinct then
+                            Some(DirectDistinctColumn argument)
+                        else
+                            Some(DirectColumn argument)
+                    | _ -> None
+                | _ -> None
+            | _ -> None
+
+        // Require a bounded boolean predicate graph over direct local columns
+        // and literals. Scalar expressions, subqueries, outer references and
+        // volatile calls must never be re-evaluated by CASE lowering.
+        let isBoundedCountFilterPredicate expression =
+            let isDirectValue value =
+                match unspan value with
+                | Column _ | BoundColumn(_, LocalRowSource) | Literal _ -> true
+                | _ -> false
+            let pending = ResizeArray<Expr>()
+            pending.Add expression
+            let mutable supported = true
+            while supported && pending.Count > 0 do
+                let last = pending.Count - 1
+                let next = unspan pending.[last]
+                pending.RemoveAt(last)
+                match next with
+                | Binary(operator, left, right) ->
+                    match operator with
+                    | And | Or ->
+                        pending.Add right
+                        pending.Add left
+                    | Equal | NotEqual | GreaterThan | LessThan
+                    | GreaterThanOrEqual | LessThanOrEqual ->
+                        if not (isDirectValue left && isDirectValue right) then
+                            supported <- false
+                    | _ -> supported <- false
+                | Unary(Not, value) -> pending.Add value
+                | IsNull(value, _) ->
+                    if not (isDirectValue value) then supported <- false
+                | _ -> supported <- false
+            supported
 
         // Compare expression pairs iteratively: deep legal SQL does not
         // consume one managed call frame per AST node. A subquery remains
@@ -960,6 +1140,7 @@ module internal CoreModel =
                     push a b
                 | Windowed(a, windowA), Windowed(b, windowB) ->
                     same <- windowA.Frame = windowB.Frame
+                            && windowA.NullTreatment = windowB.NullTreatment
                             && List.length windowA.PartitionBy = List.length windowB.PartitionBy
                             && List.length windowA.OrderBy = List.length windowB.OrderBy
                     if same then

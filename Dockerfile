@@ -4,7 +4,7 @@ ENV NODE_ENV=production
 RUN corepack enable && corepack prepare pnpm@10.22.0 --activate
 
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --prod=false
 
 COPY frontend/ .
 RUN pnpm run generate
@@ -40,7 +40,7 @@ COPY backend/ ./backend/
 
 COPY --from=frontend-builder /app/frontend/dist/ ./backend/src/Modules/HsSqlAgent.Server/wwwroot/
 
-RUN dotnet publish ./backend/src/ToolBox/ToolBox.csproj -c Release -o /app/publish /p:UseAppHost=false
+RUN dotnet publish ./backend/src/ToolBox/ToolBox.csproj -c Release -f net10.0 -o /app/publish /p:UseAppHost=false
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app

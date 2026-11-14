@@ -109,12 +109,15 @@ public class DbHealthMonitorService(
     {
         using var scope = scopeFactory.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<IAdminContext>();
-        var currentDatabases = await context.DbManagement
-            .GroupJoin(
-                context.DbHealthStates,
-                db => db.Id,
-                health => health.DbManagementId,
-                (db, health) => new { db.Id, Health = health.FirstOrDefault() })
+        // The canonical GroupJoin + SelectMany/DefaultIfEmpty pattern translates
+        // to a LEFT JOIN in both EF Core 8 and 10. GroupJoin followed by
+        // FirstOrDefault on the collection is not portable to EF Core 8.
+        var currentDatabases = await (
+            from db in context.DbManagement
+            join health in context.DbHealthStates
+                on db.Id equals health.DbManagementId into matchingHealth
+            from health in matchingHealth.DefaultIfEmpty()
+            select new { db.Id, Health = health })
             .ToListAsync(cancellationToken);
         var states = currentDatabases.ToDictionary(x => x.Id, x => x.Health);
         var persisted = new List<(DbProbeResult Probe, DbHealthState State)>(results.Count);

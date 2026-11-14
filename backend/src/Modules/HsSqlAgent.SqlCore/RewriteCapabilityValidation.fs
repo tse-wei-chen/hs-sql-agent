@@ -28,6 +28,56 @@ module internal RewriteCapabilityValidation =
             | RejectedCapability rejection ->
                 raise (SqlCompilationException(targetCapabilityMessage rejection))
         match targetRuntime, value with
+        | PostgreSqlRuntime, ScalarValue.ExactNumeric _ -> ()
+        | MySqlRuntime, ScalarValue.ExactNumeric number ->
+            match ExactNumeric.tryBoundedDecimal 65 30 number with
+            | Some _ -> ()
+            | None ->
+                raise (SqlCompilationException(
+                    "SQL capability 'numeric.exact_literal' cannot preserve this value "
+                    + "as MySQL DECIMAL: maximum precision 65 and scale 30."))
+        | SqlServerRuntime _, ScalarValue.ExactNumeric number ->
+            match ExactNumeric.tryBoundedDecimal 38 38 number with
+            | Some _ -> ()
+            | None ->
+                raise (SqlCompilationException(
+                    "SQL capability 'numeric.exact_literal' cannot preserve this value "
+                    + "as SQL Server DECIMAL: maximum precision 38 and scale 38."))
+        | OracleRuntime, ScalarValue.ExactNumeric number ->
+            // Oracle NUMBER is exact up to 38 decimal digits. Never assume
+            // that an unconstrained cast can carry more or silently round.
+            // Oracle's independent NLS decimal parsing is explicitly fixed
+            // at the bound-text renderer.
+            match ExactNumeric.tryBoundedDecimal 38 38 number with
+            | Some _ -> ()
+            | None ->
+                raise (SqlCompilationException(
+                    "SQL capability 'numeric.exact_literal' cannot preserve this value "
+                    + "as Oracle NUMBER: maximum precision 38 and portable scale 38."))
+        | FirebirdRuntime, ScalarValue.ExactNumeric number ->
+            // Only integer-scale INT128 bindings are proven by the
+            // pinned ADO.NET driver. VARCHAR -> NUMERIC(p,s) was observed
+            // rounding and overflowing for scale >0 and wide integers.
+            // Do not substitute DECFLOAT(34) or implicit CLR Decimal.
+            match ExactNumeric.tryBoundedDecimal 38 0 number with
+            | None ->
+                raise (SqlCompilationException(
+                    "SQL capability 'numeric.exact_literal' cannot preserve this value "
+                    + "via the Firebird INT128 driver binding: only exact integer scale 0 "
+                    + "and maximum precision 38 are proven; fractional values remain fail-closed."))
+            | Some(_, precision, _) when precision > 18 ->
+                match proofs.FirebirdExtendedDecimal with
+                | ProvenCapability -> ()
+                | RejectedCapability _ ->
+                    raise (SqlCompilationException(
+                        "SQL capability 'numeric.decimal_extended' requires an explicit Firebird "
+                        + "ServerVersion 4.0+ target profile to prove INT128-backed NUMERIC."))
+            | Some _ -> ()
+
+        | _, ScalarValue.ExactNumeric _ ->
+            raise (SqlCompilationException(
+                "SQL capability 'numeric.exact_literal' requires a proven exact "
+                + "text-parameter DECIMAL CAST target; no lossless proof exists for this provider."))
         | FirebirdRuntime, ScalarValue.Text text when text.Length > 8191 ->
             raise (SqlCompilationException(
                 "Firebird string literal exceeds the safe UTF8 VARCHAR limit of 8191 characters."))
@@ -249,7 +299,7 @@ module internal RewriteCapabilityValidation =
             | VisitCapabilityTail query ->
                 pushOrders query.OrderBy
 
-    let private proveFilterNode capabilityMessage (expressionProofs: ExpressionProofs) node =
+    let private proveFilterNode capabilityMessage (expressionProofs: ExpressionProofs) allowFilteredCount node =
         match node with
         | Interval _ ->
             requireFilterCapability capabilityMessage expressionProofs.IntervalLiteral
@@ -262,57 +312,88 @@ module internal RewriteCapabilityValidation =
                 requireFilterCapability capabilityMessage expressionProofs.QuotedFunction
             if FunctionName.isQualified call.Name then
                 requireFilterCapability capabilityMessage expressionProofs.QualifiedFunction
-        | FilteredAggregate(_, predicate) ->
-            requireFilterCapability capabilityMessage expressionProofs.AggregateFilter
+        | FilteredAggregate(value, predicate) ->
+            let countLoweringIsProven =
+                allowFilteredCount
+                && (match Expr.tryFilteredCountArgument value with
+                    | Some _ -> Expr.isBoundedCountFilterPredicate predicate
+                    | None -> false)
+            if not countLoweringIsProven then
+                requireFilterCapability capabilityMessage expressionProofs.AggregateFilter
             // Predicate check precedes the scalar-operand traversal.
             proveFilterPredicate capabilityMessage expressionProofs.FilterPredicate predicate
         | _ -> ()
 
-    let private proveFilterGraph capabilityMessage expressionProofs frame =
+    let private proveFilterGraph capabilityMessage expressionProofs allowFilteredCount frame =
         walkCapabilityGraph
-            (proveFilterNode capabilityMessage expressionProofs)
+            (proveFilterNode capabilityMessage expressionProofs allowFilteredCount)
             (fun _ -> ()) (fun _ -> ()) (fun _ -> ())
             (fun _ -> ()) (fun _ -> ()) (fun _ -> ()) frame
 
-    let private proveFilterExpr capabilityMessage expressionProofs expression =
-        proveFilterGraph capabilityMessage expressionProofs (VisitCapabilityExpr expression)
+    let private proveFilterExpr capabilityMessage expressionProofs allowFilteredCount expression =
+        proveFilterGraph capabilityMessage expressionProofs allowFilteredCount (VisitCapabilityExpr expression)
 
-    let private proveFilterSource capabilityMessage expressionProofs source =
-        proveFilterGraph capabilityMessage expressionProofs (VisitCapabilitySource source)
+    let private proveFilterSource capabilityMessage expressionProofs allowFilteredCount source =
+        proveFilterGraph capabilityMessage expressionProofs allowFilteredCount (VisitCapabilitySource source)
 
-    let private proveFilterQuery capabilityMessage expressionProofs query =
-        proveFilterGraph capabilityMessage expressionProofs (VisitCapabilityQuery query)
+    let private proveFilterQuery capabilityMessage expressionProofs allowFilteredCount query =
+        proveFilterGraph capabilityMessage expressionProofs allowFilteredCount (VisitCapabilityQuery query)
 
-    let proveFilterDocument capabilityMessage expressionProofs document =
+    /// This pass only requires capabilities; it does not construct semantic
+    /// evidence, normalize expressions or perform policy checks. If every
+    /// capability checked by proveFilterNode/Predicate is already proven, the
+    /// visitor cannot reject anything and its full-graph walk is redundant.
+    /// Rejected proofs still use the exact original first-error walk.
+    let private allFilterCapabilitiesProven (proofs: ExpressionProofs) =
+        let accepted = function
+            | ProvenCapability -> true
+            | RejectedCapability _ -> false
+        accepted proofs.ILike
+        && accepted proofs.DistinctFrom
+        && accepted proofs.IntervalLiteral
+        && accepted proofs.AggregateFilter
+        && accepted proofs.QuotedFunction
+        && accepted proofs.QualifiedFunction
+        && accepted proofs.FilterPredicate.OuterReference
+        && accepted proofs.FilterPredicate.Subquery
+        && accepted proofs.FilterPredicate.WindowFunction
+
+    let private proveFilterDocumentWhenRequired capabilityMessage expressionProofs allowFilteredCount document =
         match document.Statement with
         | QueryStatement query ->
-            proveFilterQuery capabilityMessage expressionProofs query
+            proveFilterQuery capabilityMessage expressionProofs allowFilteredCount query
         | InsertStatement insert ->
             match insert.Input with
-            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter (proveFilterExpr capabilityMessage expressionProofs))
-            | QuerySource query -> proveFilterQuery capabilityMessage expressionProofs query
+            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter (proveFilterExpr capabilityMessage expressionProofs allowFilteredCount))
+            | QuerySource query -> proveFilterQuery capabilityMessage expressionProofs allowFilteredCount query
             | DefaultValues -> ()
-            insert.Returning |> List.iter (fun item -> proveFilterExpr capabilityMessage expressionProofs item.Expression)
+            insert.Returning |> List.iter (fun item -> proveFilterExpr capabilityMessage expressionProofs allowFilteredCount item.Expression)
         | UpdateStatement update ->
-            update.AssignmentItems |> NonEmpty.iter (fun assignment -> proveFilterExpr capabilityMessage expressionProofs assignment.Value)
-            update.From |> List.iter (proveFilterSource capabilityMessage expressionProofs)
-            update.Where |> Option.iter (proveFilterExpr capabilityMessage expressionProofs)
-            update.Returning |> List.iter (fun item -> proveFilterExpr capabilityMessage expressionProofs item.Expression)
+            update.Ctes |> List.iter (fun cte -> proveFilterQuery capabilityMessage expressionProofs allowFilteredCount cte.Query)
+            update.AssignmentItems |> NonEmpty.iter (fun assignment -> proveFilterExpr capabilityMessage expressionProofs allowFilteredCount assignment.Value)
+            update.From |> List.iter (proveFilterSource capabilityMessage expressionProofs allowFilteredCount)
+            update.Where |> Option.iter (proveFilterExpr capabilityMessage expressionProofs allowFilteredCount)
+            update.Returning |> List.iter (fun item -> proveFilterExpr capabilityMessage expressionProofs allowFilteredCount item.Expression)
         | DeleteStatement delete ->
-            delete.Using |> List.iter (proveFilterSource capabilityMessage expressionProofs)
-            delete.Where |> Option.iter (proveFilterExpr capabilityMessage expressionProofs)
-            delete.Returning |> List.iter (fun item -> proveFilterExpr capabilityMessage expressionProofs item.Expression)
+            delete.Ctes |> List.iter (fun cte -> proveFilterQuery capabilityMessage expressionProofs allowFilteredCount cte.Query)
+            delete.Using |> List.iter (proveFilterSource capabilityMessage expressionProofs allowFilteredCount)
+            delete.Where |> Option.iter (proveFilterExpr capabilityMessage expressionProofs allowFilteredCount)
+            delete.Returning |> List.iter (fun item -> proveFilterExpr capabilityMessage expressionProofs allowFilteredCount item.Expression)
         | MergeStatement merge ->
-            merge.Source.SourceValues |> NonEmpty.iter (proveFilterExpr capabilityMessage expressionProofs)
-            proveFilterExpr capabilityMessage expressionProofs merge.MatchPredicate
+            merge.Source.SourceValues |> NonEmpty.iter (proveFilterExpr capabilityMessage expressionProofs allowFilteredCount)
+            proveFilterExpr capabilityMessage expressionProofs allowFilteredCount merge.MatchPredicate
             merge.Matched
             |> Option.iter (function
                 | MergeDelete -> ()
                 | MergeUpdate assignments ->
-                    assignments |> NonEmpty.iter (fun item -> proveFilterExpr capabilityMessage expressionProofs item.Value))
+                    assignments |> NonEmpty.iter (fun item -> proveFilterExpr capabilityMessage expressionProofs allowFilteredCount item.Value))
             merge.NotMatched
             |> Option.iter (fun mergeInsert ->
-                mergeInsert.InsertValues |> NonEmpty.iter (proveFilterExpr capabilityMessage expressionProofs))
+                mergeInsert.InsertValues |> NonEmpty.iter (proveFilterExpr capabilityMessage expressionProofs allowFilteredCount))
+
+    let proveFilterDocument capabilityMessage expressionProofs allowFilteredCount document =
+        if not (allFilterCapabilitiesProven expressionProofs) then
+            proveFilterDocumentWhenRequired capabilityMessage expressionProofs allowFilteredCount document
 
     // Oracle CASE-based null-safe lowering may evaluate operands more
     // than once. Reject any unproven/volatile construct, but traverse
@@ -376,17 +457,30 @@ module internal RewriteCapabilityValidation =
             if FunctionName.isQualified call.Name then
                 requireExpressionCapability expressionProofs.QualifiedFunction
         | Cast(_, targetType) ->
+            // Validate invariant decimal bounds before optional/versioned
+            // Firebird feature proofs, so a 39-digit shape reports the
+            // actual 38-digit type limit even when the profile is absent.
+            RewriteCastTypes.validateTarget (TargetRuntime.provider targetRuntime) targetType
             match targetRuntime, CastType.semantic targetType with
+            | FirebirdRuntime, Some(SqlDecimal(Some precision, _)) when precision > 18 ->
+                // Firebird 3 and older lack extended exact-numeric types.
+                // Do not confuse syntactically modeled DECIMAL(20,4) with
+                // a target capability proven by an explicit 4.0+ profile.
+                match expressionProofs.FirebirdExtendedDecimal with
+                | ProvenCapability -> ()
+                | RejectedCapability _ ->
+                    raise (SqlCompilationException(
+                        "SQL capability 'numeric.decimal_extended' requires a Firebird target "
+                        + "ServerVersion 4.0+ profile for DECIMAL precision above 18."))
             | FirebirdRuntime, Some(SqlTime(_, true))
             | FirebirdRuntime, Some(SqlTimestamp(_, true)) ->
                 requireExpressionCapability expressionProofs.FirebirdTimeZoneType
             | _, Some _ -> ()
             | _, None ->
                 invalidOp "Compatibility raw CAST type reached target capability validation before semantic normalization."
-            RewriteCastTypes.validateTarget (TargetRuntime.provider targetRuntime) targetType
         | _ -> ()
 
-    let private proveTargetGraph targetRuntime expressionProofs root =
+    let private proveTargetGraph targetRuntime targetProfile expressionProofs root =
         let provider = TargetRuntime.provider targetRuntime
         let onQuery (node: Query) =
             if node.FetchPercent.IsSome then
@@ -413,7 +507,7 @@ module internal RewriteCapabilityValidation =
         let onSource source =
             match source with
             | LateralDerivedTable _ ->
-                match SqlLateralDerivedTableCapabilityRules.TargetValidationError(provider, null) with
+                match SqlLateralDerivedTableCapabilityRules.SyntaxEmissionValidationError(provider) with
                 | null -> ()
                 | message -> raise (SqlCompilationException(message))
             | NamedTable _ | CteTable _ | DerivedTable _ -> ()
@@ -427,15 +521,19 @@ module internal RewriteCapabilityValidation =
                 match SqlUsingJoinCapabilityRules.TargetValidationError(provider) with
                 | null -> ()
                 | message -> raise (SqlCompilationException(message))
+            | ApplyJoin _ ->
+                match SqlApplyJoinCapabilityRules.TargetSyntaxValidationError(provider) with
+                | null -> ()
+                | message -> raise (SqlCompilationException(message))
             | CrossJoin _ | OnJoin _ -> ()
         let onSet operator =
             match operator with
             | SetOperator.IntersectAll ->
-                match SqlSetAllCapabilityRules.TargetValidationError("INTERSECT", provider) with
+                match SqlSetAllCapabilityRules.TargetValidationError("INTERSECT", provider, targetProfile) with
                 | null -> ()
                 | message -> raise (SqlCompilationException(message))
             | SetOperator.ExceptAll ->
-                match SqlSetAllCapabilityRules.TargetValidationError("EXCEPT", provider) with
+                match SqlSetAllCapabilityRules.TargetValidationError("EXCEPT", provider, targetProfile) with
                 | null -> ()
                 | message -> raise (SqlCompilationException(message))
             | SetOperator.Union | SetOperator.UnionAll
@@ -444,44 +542,46 @@ module internal RewriteCapabilityValidation =
             (proveTargetNode targetRuntime expressionProofs)
             onQuery onSelect onDistinct onSource onJoin onSet root
 
-    let private proveTargetExpr targetRuntime expressionProofs expression =
-        proveTargetGraph targetRuntime expressionProofs (VisitCapabilityExpr expression)
+    let private proveTargetExpr targetRuntime targetProfile expressionProofs expression =
+        proveTargetGraph targetRuntime targetProfile expressionProofs (VisitCapabilityExpr expression)
 
-    let private proveTargetSource targetRuntime expressionProofs source =
-        proveTargetGraph targetRuntime expressionProofs (VisitCapabilitySource source)
+    let private proveTargetSource targetRuntime targetProfile expressionProofs source =
+        proveTargetGraph targetRuntime targetProfile expressionProofs (VisitCapabilitySource source)
 
-    let private proveTargetQuery targetRuntime expressionProofs query =
-        proveTargetGraph targetRuntime expressionProofs (VisitCapabilityQuery query)
+    let private proveTargetQuery targetRuntime targetProfile expressionProofs query =
+        proveTargetGraph targetRuntime targetProfile expressionProofs (VisitCapabilityQuery query)
 
-    let proveTargetDocument targetRuntime expressionProofs document =
+    let proveTargetDocument targetRuntime targetProfile expressionProofs document =
         match document.Statement with
-        | QueryStatement query -> proveTargetQuery targetRuntime expressionProofs query
+        | QueryStatement query -> proveTargetQuery targetRuntime targetProfile expressionProofs query
         | InsertStatement insert ->
             match insert.Input with
-            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter (proveTargetExpr targetRuntime expressionProofs))
-            | QuerySource query -> proveTargetQuery targetRuntime expressionProofs query
+            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter (proveTargetExpr targetRuntime targetProfile expressionProofs))
+            | QuerySource query -> proveTargetQuery targetRuntime targetProfile expressionProofs query
             | DefaultValues -> ()
-            insert.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime expressionProofs item.Expression)
+            insert.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime targetProfile expressionProofs item.Expression)
         | UpdateStatement update ->
-            update.AssignmentItems |> NonEmpty.iter (fun assignment -> proveTargetExpr targetRuntime expressionProofs assignment.Value)
-            update.From |> List.iter (proveTargetSource targetRuntime expressionProofs)
-            update.Where |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
-            update.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime expressionProofs item.Expression)
+            update.Ctes |> List.iter (fun cte -> proveTargetQuery targetRuntime targetProfile expressionProofs cte.Query)
+            update.AssignmentItems |> NonEmpty.iter (fun assignment -> proveTargetExpr targetRuntime targetProfile expressionProofs assignment.Value)
+            update.From |> List.iter (proveTargetSource targetRuntime targetProfile expressionProofs)
+            update.Where |> Option.iter (proveTargetExpr targetRuntime targetProfile expressionProofs)
+            update.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime targetProfile expressionProofs item.Expression)
         | DeleteStatement delete ->
-            delete.Using |> List.iter (proveTargetSource targetRuntime expressionProofs)
-            delete.Where |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
-            delete.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime expressionProofs item.Expression)
+            delete.Ctes |> List.iter (fun cte -> proveTargetQuery targetRuntime targetProfile expressionProofs cte.Query)
+            delete.Using |> List.iter (proveTargetSource targetRuntime targetProfile expressionProofs)
+            delete.Where |> Option.iter (proveTargetExpr targetRuntime targetProfile expressionProofs)
+            delete.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime targetProfile expressionProofs item.Expression)
         | MergeStatement merge ->
-            merge.Source.SourceValues |> NonEmpty.iter (proveTargetExpr targetRuntime expressionProofs)
-            proveTargetExpr targetRuntime expressionProofs merge.MatchPredicate
+            merge.Source.SourceValues |> NonEmpty.iter (proveTargetExpr targetRuntime targetProfile expressionProofs)
+            proveTargetExpr targetRuntime targetProfile expressionProofs merge.MatchPredicate
             merge.Matched
             |> Option.iter (function
                 | MergeDelete -> ()
                 | MergeUpdate assignments ->
-                    assignments |> NonEmpty.iter (fun item -> proveTargetExpr targetRuntime expressionProofs item.Value))
+                    assignments |> NonEmpty.iter (fun item -> proveTargetExpr targetRuntime targetProfile expressionProofs item.Value))
             merge.NotMatched
             |> Option.iter (fun mergeInsert ->
-                mergeInsert.InsertValues |> NonEmpty.iter (proveTargetExpr targetRuntime expressionProofs))
+                mergeInsert.InsertValues |> NonEmpty.iter (proveTargetExpr targetRuntime targetProfile expressionProofs))
         document
 
 

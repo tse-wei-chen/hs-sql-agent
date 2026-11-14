@@ -1,0 +1,70 @@
+name: Develop release candidate (read-only)
+
+# This is a pre-publication candidate signal. It NEVER promotes to main,
+# creates tags, closes issues, publishes NuGet or uploads Docker images.
+# On develop push, Tests runs for the same
+# SHA; this gate waits a bounded time for their exact commit evidence.
+on:
+  push:
+    branches: [develop]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: develop-release-candidate
+  cancel-in-progress: true
+
+jobs:
+  release-candidate:
+    name: release-candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - name: Prove negative candidate-gate cases cannot be accepted
+        shell: bash
+        run: dotnet test --project backend/src/UnitTest/Infrastructure.Test/Infrastructure.Test.csproj --framework net10.0 --filter "FullyQualifiedName~CiGovernanceTests"
+      - name: Verify exact current develop push and all required security evidence
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            status=0
+            dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- develop-candidate \
+              > /tmp/release-candidate-verification.log 2>&1 || status=$?
+            case "$status" in
+              0)
+                cat /tmp/release-candidate-verification.log
+                exit 0
+                ;;
+              75)
+                if (( attempt == 60 )); then
+                  echo "::error::Candidate evidence did not finish within 30 minutes." >&2
+                  cat /tmp/release-candidate-verification.log
+                  exit 1
+                fi
+                echo "Waiting for exact develop Tests push evidence (attempt $attempt/60)"
+                sleep 30
+                ;;
+              *)
+                cat /tmp/release-candidate-verification.log
+                exit 1
+                ;;
+            esac
+          done
+      - name: Upload read-only candidate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: develop-release-candidate-proof
+          path: artifacts/release-candidate/develop.json
+          if-no-files-found: warn

@@ -1,6 +1,6 @@
 # hs-sql-agent Admin UI
 
-The Nuxt 4 frontend for hs-sql-agent 3.0.0. Application source lives in `app/`;
+The Nuxt 4 frontend for hs-sql-agent the initial stable release. Application source lives in `app/`;
 both `@` and `~` resolve to that directory.
 
 ## Development

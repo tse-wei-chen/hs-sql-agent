@@ -44,9 +44,11 @@ public class RuntimeAdminController(
             return BadRequest("DbManagementId must be a positive value when provided.");
 
         if (!dbManagementId.HasValue)
-            return Ok(McpBuiltInTools.Catalog);
+            return Ok(McpBuiltInTools.AdminSelectableCatalog);
 
         var customTools = (await customSqlToolService.GetPublishedToolsForDbAsync(dbManagementId.Value, cancellationToken))
+            .Where(tool => !string.Equals(tool.Type, "DDL", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(tool.Name, McpBuiltInTools.ExecuteDdlSql, StringComparison.OrdinalIgnoreCase))
             .Select(tool => new McpToolDescriptor(
                 tool.Name,
                 tool.Type,
@@ -55,7 +57,7 @@ public class RuntimeAdminController(
                 false,
                 false));
 
-        return Ok(McpBuiltInTools.Catalog.Concat(customTools));
+        return Ok(McpBuiltInTools.AdminSelectableCatalog.Concat(customTools));
     }
 
     [HttpPost("mcp-keys")]

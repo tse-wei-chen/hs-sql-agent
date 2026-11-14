@@ -27,7 +27,11 @@ public sealed class MemoryRequestRateLimiter : IRequestRateLimiter
 {
     private sealed class WindowCounter
     {
+#if NET9_0_OR_GREATER
         public readonly Lock Sync = new();
+#else
+        public readonly object Sync = new();
+#endif
         public DateTimeOffset WindowStartedAt { get; set; }
         public DateTimeOffset LastSeenAt { get; set; }
         public int Count { get; set; }

@@ -422,6 +422,9 @@ module internal RewriteRenderer =
         | ScalarValue.Integer value when value >= int64 Int32.MinValue && value <= int64 Int32.MaxValue -> box (int value)
         | ScalarValue.Integer value -> box (decimal value)
         | ScalarValue.Decimal value -> box value
+        | ScalarValue.ExactNumeric _ ->
+            raise (SqlCompilationException(
+                "Exact NUMERIC values require a provider-proven, explicitly cast bound-text parameter."))
         | ScalarValue.Floating value -> box value
         | ScalarValue.Text value -> box value
         | ScalarValue.Date value -> box (value.ToDateTime(TimeOnly.MinValue))
@@ -434,6 +437,65 @@ module internal RewriteRenderer =
     let private renderLiteral (ctx: RenderContext) value =
         let bind scalar = ctx.Bind(scalarObject scalar)
         match ctx.Provider, value with
+        | PostgreSql, ScalarValue.ExactNumeric number ->
+            // PostgreSQL's unbounded NUMERIC uses the original verified
+            // value in a text parameter; no CLR floating-point conversion.
+            "CAST(" + ctx.Bind(box (ExactNumeric.bindingText number)) + " AS NUMERIC)"
+        | Oracle, ScalarValue.ExactNumeric number ->
+            match ExactNumeric.tryBoundedDecimal 38 38 number with
+            | Some(text, precision, scale) ->
+                // Oracle's implicit CAST(VARCHAR2 AS NUMBER) depends on
+                // NLS_NUMERIC_CHARACTERS. Bind the fixed-decimal lexeme,
+                // then parse it with a generated locale-invariant number
+                // format before applying the exact NUMBER(p,s) shape.
+                let integerPositions = max 1 (precision - scale)
+                let format =
+                    "FM" + String('9', integerPositions)
+                    + (if scale = 0 then "" else "D" + String('9', scale))
+                "CAST(TO_NUMBER("
+                + ctx.Bind(box text)
+                + ", '" + format + "', 'NLS_NUMERIC_CHARACTERS=''.,''') AS NUMBER("
+                + string precision + "," + string scale + "))"
+            | None ->
+                raise (SqlCompilationException(
+                    capabilityError ctx.Provider "numeric.exact_literal"
+                    + " Exact value exceeds the Oracle NUMBER precision/scale envelope."))
+        | Firebird, ScalarValue.ExactNumeric number ->
+            // The real Firebird ADO.NET provider converts string-valued
+            // NUMERIC parameters through CLR Decimal, which can round or
+            // overflow even when the server supports INT128. Bind a typed
+            // BigInteger directly to an explicit INT128 input instead.
+            // Fractional values remain unsupported until a verified
+            // scaled-INT128 parameter representation is available.
+            match ExactNumeric.tryBoundedDecimal 38 0 number with
+            | Some(text, precision, 0) ->
+                let exactInteger =
+                    System.Numerics.BigInteger.Parse(
+                        text, Globalization.NumberStyles.AllowLeadingSign,
+                        Globalization.CultureInfo.InvariantCulture)
+                "CAST(CAST(" + ctx.Bind(box exactInteger) + " AS INT128) AS NUMERIC("
+                + string precision + ",0))"
+            | _ ->
+                raise (SqlCompilationException(
+                    capabilityError ctx.Provider "numeric.exact_literal"
+                    + " Firebird INT128 bindings require exact scale-0 integers, <=38 digits."))
+        | (MySql | SqlServer), ScalarValue.ExactNumeric number ->
+            // A derived DECIMAL(p,s) must fit *every* nonzero digit, including
+            // fractional-leading zeroes and exponent shifts. A plain-decimal
+            // string parameter avoids provider-dependent scientific-notation
+            // parsing; neither parameter text nor CAST shape is user SQL.
+            let maximumPrecision, maximumScale =
+                if ctx.Provider = MySql then 65, 30 else 38, 38
+            match ExactNumeric.tryBoundedDecimal maximumPrecision maximumScale number with
+            | Some(text, precision, scale) ->
+                "CAST(" + ctx.Bind(box text) + " AS DECIMAL("
+                + string precision + "," + string scale + "))"
+            | None ->
+                raise (SqlCompilationException(
+                    capabilityError ctx.Provider "numeric.exact_literal"
+                    + " Exact value exceeds the target DECIMAL precision/scale envelope."))
+        | _, ScalarValue.ExactNumeric _ ->
+            raise (SqlCompilationException(capabilityError ctx.Provider "numeric.exact_literal"))
         | PostgreSql, ScalarValue.OffsetDateTime offset ->
             ctx.Bind(box (offset.ToUniversalTime()))
         | Firebird, ScalarValue.Text text ->
@@ -486,10 +548,16 @@ module internal RewriteRenderer =
         | OnJoinKind.Right -> "NATURAL RIGHT JOIN"
         | OnJoinKind.Full -> "NATURAL FULL OUTER JOIN"
 
-    let private setText = function
-        | SetOperator.Union -> "UNION" | SetOperator.UnionAll -> "UNION ALL"
-        | SetOperator.Intersect -> "INTERSECT" | SetOperator.IntersectAll -> "INTERSECT ALL"
-        | SetOperator.Except -> "EXCEPT" | SetOperator.ExceptAll -> "EXCEPT ALL"
+    let private setText provider operator =
+        match provider, operator with
+        | Oracle, SetOperator.Except -> "MINUS"
+        | Oracle, SetOperator.ExceptAll -> "MINUS ALL"
+        | _, SetOperator.Union -> "UNION"
+        | _, SetOperator.UnionAll -> "UNION ALL"
+        | _, SetOperator.Intersect -> "INTERSECT"
+        | _, SetOperator.IntersectAll -> "INTERSECT ALL"
+        | _, SetOperator.Except -> "EXCEPT"
+        | _, SetOperator.ExceptAll -> "EXCEPT ALL"
 
     let private frameBoundText = function
         | WindowFrameBound.UnboundedPreceding -> "UNBOUNDED PRECEDING"
@@ -772,8 +840,27 @@ module internal RewriteRenderer =
             match ctx.Provider with
             | PostgreSql | SQLite | Oracle | Firebird ->
                 renderExpr ctx value + " FILTER (WHERE " + renderPredicate ctx predicate + ")"
-            | _ -> invalidOp "Aggregate FILTER requires provider-specific lowering before rendering."
-        | Expr.Windowed(value, window) -> renderExpr ctx value + " OVER (" + renderWindow ctx window + ")"
+            | MySql | SqlServer ->
+                match Expr.tryFilteredCountArgument value with
+                | Some argument when Expr.isBoundedCountFilterPredicate predicate ->
+                    let counted, distinct =
+                        match argument with
+                        | Expr.AllRows -> doc ctx "1", ""
+                        | Expr.DirectColumn value -> renderExpr ctx value, ""
+                        | Expr.DirectDistinctColumn value ->
+                            renderExpr ctx value, "DISTINCT "
+                    let nativeCount =
+                        if ctx.Provider = SqlServer then "COUNT_BIG(" else "COUNT("
+                    nativeCount + distinct + "CASE WHEN " + renderPredicate ctx predicate
+                    + " THEN " + counted + " END)"
+                | _ -> invalidOp "Unproven expression.filter reached COUNT CASE lowering."
+        | Expr.Windowed(value, window) ->
+            let modifier =
+                match window.NullTreatment with
+                | WindowNullTreatment.DefaultNullTreatment -> ""
+                | WindowNullTreatment.IgnoreNulls -> " IGNORE NULLS"
+                | WindowNullTreatment.RespectNulls -> " RESPECT NULLS"
+            renderExpr ctx value + modifier + " OVER (" + renderWindow ctx window + ")"
         | Expr.Cast _ | Expr.Extract _ -> renderScalarGraph ctx expression
         | Expr.SimpleCase(input, branches, fallback) ->
             let cases = branches |> NonEmpty.toList |> List.map (fun branch -> " WHEN " + renderExpr ctx branch.Match + " THEN " + renderExpr ctx branch.Result) |> joinDocuments ctx ""
@@ -1413,9 +1500,20 @@ module internal RewriteRenderer =
         if not window.PartitionBy.IsEmpty then parts.Add("PARTITION BY " + (window.PartitionBy |> List.map (renderExpr ctx) |> joinDocuments ctx ", "))
         if not window.OrderBy.IsEmpty then parts.Add("ORDER BY " + (window.OrderBy |> List.map (renderOrderBy ctx false) |> List.collect id |> joinDocuments ctx ", "))
         window.Frame |> Option.iter (fun frame ->
-            let unitText = match frame.Unit with WindowFrameUnit.Rows -> "ROWS" | WindowFrameUnit.Range -> "RANGE"
+            let unitText =
+                match frame.Unit with
+                | WindowFrameUnit.Rows -> "ROWS"
+                | WindowFrameUnit.Range -> "RANGE"
+                | WindowFrameUnit.Groups -> "GROUPS"
             let frameSql = match frame.Extent with SingleBound start -> unitText + " " + frameBoundText start | BetweenBounds(start, finish) -> unitText + " BETWEEN " + frameBoundText start + " AND " + frameBoundText finish
-            parts.Add(frameSql))
+            let exclusionSql =
+                match frame.Exclusion with
+                | None -> ""
+                | Some WindowFrameExclusion.ExcludeCurrentRow -> " EXCLUDE CURRENT ROW"
+                | Some WindowFrameExclusion.ExcludeGroup -> " EXCLUDE GROUP"
+                | Some WindowFrameExclusion.ExcludeTies -> " EXCLUDE TIES"
+                | Some WindowFrameExclusion.ExcludeNoOthers -> " EXCLUDE NO OTHERS"
+            parts.Add(frameSql + exclusionSql))
         joinDocuments ctx " " parts
 
     and private renderOrderBy (ctx: RenderContext) setTail (order: OrderBy) : SqlDocument list =
@@ -1455,10 +1553,25 @@ module internal RewriteRenderer =
                         string provider, "; this provider does not use the modeled WITH RECURSIVE syntax contract.")))
             let result = RenderBuffer(ctx, "WITH ")
             if recursiveScope then result.Append("RECURSIVE ") |> ignore
+
+            // CTE output names are part of its schema, not optional cosmetic
+            // aliases. Dropping them silently changes column identity for
+            // SELECT, INSERT, UPDATE and DELETE consumers across providers.
+            let appendCteHeader (cte: Cte) =
+                result.Append(renderAlias ctx cte.Name) |> ignore
+                if not cte.ColumnAliases.IsEmpty then
+                    result.Append('(') |> ignore
+                    cte.ColumnAliases
+                    |> List.iteri (fun index name ->
+                        if index > 0 then result.Append(", ") |> ignore
+                        result.Append(renderAlias ctx name) |> ignore)
+                    result.Append(')') |> ignore
+                result.Append(" AS (") |> ignore
+
             ctes
             |> List.iteri (fun index cte ->
                 if index > 0 then result.Append(", ") |> ignore
-                result.Append(renderAlias ctx cte.Name).Append(" AS (") |> ignore
+                appendCteHeader cte
 
                 // Streaming one-CTE nesting is crucial: each nested CTE body
                 // used to render to a complete string before its parent,
@@ -1473,9 +1586,8 @@ module internal RewriteRenderer =
                     | [ innerCte ] when not innerCte.RecursiveScope
                                         && current.SetOperations.IsEmpty
                                         && not (hasTail current) ->
-                        result.Append("WITH ")
-                              .Append(renderAlias ctx innerCte.Name)
-                              .Append(" AS (") |> ignore
+                        result.Append("WITH ") |> ignore
+                        appendCteHeader innerCte
                         nested.Add(current)
                         current <- innerCte.Query
                     | _ -> walking <- false
@@ -1499,7 +1611,7 @@ module internal RewriteRenderer =
         | TableSource.DerivedTable(query, alias) ->
             renderDerivedSourceChain ctx query alias false
         | TableSource.LateralDerivedTable(query, alias) ->
-            match SqlLateralDerivedTableCapabilityRules.TargetValidationError(providerTool ctx.Provider, null) with
+            match SqlLateralDerivedTableCapabilityRules.SyntaxEmissionValidationError(providerTool ctx.Provider) with
             | null -> renderDerivedSourceChain ctx query alias true
             | message -> raise (SqlCompilationException(message))
 
@@ -1627,6 +1739,8 @@ module internal RewriteRenderer =
         for join in select.Joins do
             let joinSql =
                 match join with
+                | ApplyJoin(ApplyKind.CrossApply, _) -> "CROSS APPLY"
+                | ApplyJoin(ApplyKind.OuterApply, _) -> "OUTER APPLY"
                 | NaturalJoin(kind, _) ->
                     match SqlNaturalJoinCapabilityRules.TargetValidationError(providerTool ctx.Provider) with
                     | null -> naturalJoinText kind
@@ -1636,6 +1750,7 @@ module internal RewriteRenderer =
                .Append(renderSource ctx join.Source) |> ignore
             match join with
             | CrossJoin _
+            | ApplyJoin _
             | NaturalJoin _ -> ()
             | OnJoin(_, _, predicate) ->
                 sql.Append(" ON ").Append(renderPredicate ctx predicate) |> ignore
@@ -1693,14 +1808,14 @@ module internal RewriteRenderer =
                         Offset = None
                         FetchPercent = None
                         FetchWithTies = false }
-                sql.Append(" ").Append(setText branch.Operator).Append(" ") |> ignore
-                if ctx.Provider = PostgreSql
+                sql.Append(" ").Append(setText ctx.Provider branch.Operator).Append(" ") |> ignore
+                if (ctx.Provider = PostgreSql || ctx.Provider = Oracle)
                    && not branchNoTail.SetOperations.IsEmpty
                    && branchNoTail.Head.Ctes.IsEmpty then
                     sql.Append('(') |> ignore
                     pending.Add(CloseNestedSet)
                     pending.Add(EnterSetBody branchNoTail)
-                elif ctx.Provider = PostgreSql
+                elif (ctx.Provider = PostgreSql || ctx.Provider = Oracle)
                      && not branchNoTail.SetOperations.IsEmpty then
                     // Preserve the full WITH/SET contract for the uncommon
                     // CTE-bearing branch; do not lower away capability proof.
@@ -1871,10 +1986,15 @@ module internal RewriteRenderer =
         |> Option.iter (fun source ->
             baseSql.Append(" FROM ").Append(renderSource ctx source) |> ignore)
         for join in query.Head.Joins do
-            baseSql.Append(" ").Append(joinText join.Kind).Append(" ")
+            let joinSql =
+                match join with
+                | ApplyJoin(ApplyKind.CrossApply, _) -> "CROSS APPLY"
+                | ApplyJoin(ApplyKind.OuterApply, _) -> "OUTER APPLY"
+                | _ -> joinText join.Kind
+            baseSql.Append(" ").Append(joinSql).Append(" ")
                    .Append(renderSource ctx join.Source) |> ignore
             match join with
-            | CrossJoin _ -> ()
+            | CrossJoin _ | ApplyJoin _ -> ()
             | NaturalJoin _ ->
                 invalidOp "NATURAL JOIN cannot enter SQL Server pagination lowering without an explicit target capability."
             | OnJoin(_, _, predicate) ->
@@ -2223,8 +2343,7 @@ module internal RewriteRenderer =
                     // Skipping renderSource must not skip its fail-closed
                     // provider proof. Only a primary FROM LATERAL is safe
                     // to stream without constructing left-join scope.
-                    match SqlLateralDerivedTableCapabilityRules.TargetValidationError(
-                              providerTool ctx.Provider, null) with
+                    match SqlLateralDerivedTableCapabilityRules.SyntaxEmissionValidationError(providerTool ctx.Provider) with
                     | null ->
                         frames.Add(FinishMixedLateral(current, alias))
                         sawLateral <- true
@@ -2235,8 +2354,7 @@ module internal RewriteRenderer =
                          && head.GroupBy.IsEmpty && head.Having.IsNone ->
                     match head.Joins with
                     | [ OnJoin(OnJoinKind.Inner, TableSource.LateralDerivedTable(inner, alias), predicate) ] ->
-                        match SqlLateralDerivedTableCapabilityRules.TargetValidationError(
-                                  providerTool ctx.Provider, null) with
+                        match SqlLateralDerivedTableCapabilityRules.SyntaxEmissionValidationError(providerTool ctx.Provider) with
                         | null ->
                             frames.Add(FinishMixedJoinedLateral(current, preceding, alias, predicate))
                             sawLateral <- true
@@ -2253,8 +2371,7 @@ module internal RewriteRenderer =
                             // All preceding sources/predicates keep their
                             // original parameter order. Only the last
                             // Query crosses the heap continuation.
-                            match SqlLateralDerivedTableCapabilityRules.TargetValidationError(
-                                      providerTool ctx.Provider, null) with
+                            match SqlLateralDerivedTableCapabilityRules.SyntaxEmissionValidationError(providerTool ctx.Provider) with
                             | null ->
                                 frames.Add(FinishMixedPrefixedJoinedLateral(
                                     current, preceding, List.rev precedingReversed, alias, predicate))
@@ -2780,7 +2897,7 @@ module internal RewriteRenderer =
         // Emit each assignment after checking the output work budget,
         // instead of constructing both a list of rendered assignments and
         // a second joined SET clause. Render parameter order is unchanged.
-        let sql = RenderBuffer(ctx, "UPDATE ")
+        let sql = RenderBuffer(ctx, renderCtes ctx update.Ctes + "UPDATE ")
         sql.Append(renderIdentifier ctx update.Target)
            .Append(targetAlias)
            .Append(" SET ") |> ignore
@@ -2819,7 +2936,8 @@ module internal RewriteRenderer =
             | Some _ -> invalidOp "DML target aliases are not supported by the target provider."
         let renderedTarget = renderIdentifier ctx delete.Target
         let sql = RenderBuffer(ctx,
-            "DELETE FROM "
+            renderCtes ctx delete.Ctes
+            + "DELETE FROM "
             + renderedTarget
             + targetAlias
             + (if ctx.Provider = SqlServer then
@@ -2856,8 +2974,12 @@ module internal RewriteRenderer =
         // INSERT expressions. One bounded buffer preserves that ordering
         // without large joined intermediate assignment/value strings.
         let sql = RenderBuffer(ctx, "MERGE INTO ")
+        // SQL Server native MERGE requires a serializable target key-range
+        // fence, including the not-yet-existing key for WHEN NOT MATCHED.
+        // The owning transaction, live key proof and approval remain outside
+        // SqlCore; this hint does not independently authorize execution.
         sql.Append(renderIdentifier ctx merge.Target)
-           .Append(" AS ")
+           .Append(" WITH (HOLDLOCK) AS ")
            .Append(renderAlias ctx merge.TargetAlias)
            .Append(" USING (VALUES (") |> ignore
         merge.Source.SourceValues

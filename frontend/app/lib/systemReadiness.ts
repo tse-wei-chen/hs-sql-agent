@@ -69,7 +69,7 @@ export const buildSystemReadinessSteps = (
   steps.push({
     id: "key",
     title: "Issue an MCP access key",
-    description: "Start with the four default read/query tools; enable DML only when needed.",
+    description: "Start with the four default read/query tools; enable DML or DDL only when needed, with separate approvals for writes and schema changes.",
     complete: input.activeKeyCount > 0,
     to: "/runtime/mcp-keys",
     action: input.activeKeyCount > 0 ? "Manage keys" : "Issue key",

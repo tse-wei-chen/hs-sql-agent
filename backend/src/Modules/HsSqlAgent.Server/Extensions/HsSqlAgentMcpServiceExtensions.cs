@@ -85,6 +85,32 @@ public static class HsSqlAgentMcpServiceExtensions
 
                     foreach (var tool in allTools)
                     {
+                        if (tool.ProtocolTool.Name.Equals(McpBuiltInTools.ExecuteDdlSql,
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            // No implicit exposure from missing AllowedTools
+                            // or ordinary DML permission, even if host opts in.
+                            var provider = httpContext.Items[Common.Models.McpContextItemKeys.SqlProvider]?.ToString();
+                            var enabled = provider switch
+                            {
+                                string name when name.Equals("Postgres", StringComparison.OrdinalIgnoreCase) =>
+                                    httpContext.RequestServices.GetService<PostgresDdlRuntime>() is { Enabled: true },
+                                string name when name.Equals("Sqlite", StringComparison.OrdinalIgnoreCase) =>
+                                    httpContext.RequestServices.GetService<SqliteDdlRuntime>() is { Enabled: true },
+                                string name when name.Equals("MsSqlServer", StringComparison.OrdinalIgnoreCase) =>
+                                    httpContext.RequestServices.GetService<SqlServerDdlRuntime>() is { Enabled: true },
+                                string name when name.Equals("Firebird", StringComparison.OrdinalIgnoreCase) =>
+                                    httpContext.RequestServices.GetService<FirebirdDdlRuntime>() is { Enabled: true },
+                                string name when name.Equals("MySQL", StringComparison.OrdinalIgnoreCase) =>
+                                    httpContext.RequestServices.GetService<MySqlDdlRuntime>() is { Enabled: true },
+                                string name when name.Equals("Oracle", StringComparison.OrdinalIgnoreCase) =>
+                                    httpContext.RequestServices.GetService<OracleDdlRuntime>() is { Enabled: true },
+                                _ => false
+                            };
+                            if (!enabled || allowedNames is null
+                                || !allowedNames.Contains(McpBuiltInTools.ExecuteDdlSql))
+                                continue;
+                        }
                         if (allowedNames == null || allowedNames.Contains(tool.ProtocolTool.Name))
                             mcpOptions.ToolCollection.Add(tool);
                     }

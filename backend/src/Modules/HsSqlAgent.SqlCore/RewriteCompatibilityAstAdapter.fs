@@ -56,6 +56,9 @@ module internal RewriteCompatibilityAstAdapter =
         | ScalarValue.Integer value when value >= int64 Int32.MinValue && value <= int64 Int32.MaxValue -> box (int value)
         | ScalarValue.Integer value -> box (decimal value)
         | ScalarValue.Decimal value -> box value
+        | ScalarValue.ExactNumeric _ ->
+            raise (SqlCompilationException(
+                "Exact NUMERIC cannot be projected into the legacy CLR decimal AST without a lossless type."))
         | ScalarValue.Floating value -> box value
         | ScalarValue.Text value -> box value
         | ScalarValue.Date value -> box (SqlDateValue(value))
@@ -360,15 +363,30 @@ module internal RewriteCompatibilityAstAdapter =
                         match value.Unit with
                         | WindowFrameUnit.Rows -> HsSqlAgent.SqlCore.Core.Ast.WindowFrameUnitKind.Rows
                         | WindowFrameUnit.Range -> HsSqlAgent.SqlCore.Core.Ast.WindowFrameUnitKind.Range
+                        | WindowFrameUnit.Groups -> HsSqlAgent.SqlCore.Core.Ast.WindowFrameUnitKind.Groups
+                    let exclusion =
+                        match value.Exclusion with
+                        | None -> HsSqlAgent.SqlCore.Core.Ast.WindowFrameExclusionKind.Unspecified
+                        | Some WindowFrameExclusion.ExcludeCurrentRow -> HsSqlAgent.SqlCore.Core.Ast.WindowFrameExclusionKind.CurrentRow
+                        | Some WindowFrameExclusion.ExcludeGroup -> HsSqlAgent.SqlCore.Core.Ast.WindowFrameExclusionKind.Group
+                        | Some WindowFrameExclusion.ExcludeTies -> HsSqlAgent.SqlCore.Core.Ast.WindowFrameExclusionKind.Ties
+                        | Some WindowFrameExclusion.ExcludeNoOthers -> HsSqlAgent.SqlCore.Core.Ast.WindowFrameExclusionKind.NoOthers
                     let start = frameBound value.Start
                     let finish = value.End |> Option.map frameBound |> Option.defaultValue (Unchecked.defaultof<_>)
-                    HsSqlAgent.SqlCore.Core.Ast.WindowFrame(unit, start, finish, unknown))
+                    HsSqlAgent.SqlCore.Core.Ast.WindowFrame(unit, start, finish, exclusion, unknown))
                 |> Option.defaultValue (Unchecked.defaultof<_>)
-            HsSqlAgent.SqlCore.Core.Ast.WindowSpec(
-                window.PartitionBy |> List.map exprOf |> ImmutableArray.CreateRange,
-                window.OrderBy |> List.map orderByOf |> ImmutableArray.CreateRange,
-                frame,
-                unknown)
+            let result =
+                HsSqlAgent.SqlCore.Core.Ast.WindowSpec(
+                    window.PartitionBy |> List.map exprOf |> ImmutableArray.CreateRange,
+                    window.OrderBy |> List.map orderByOf |> ImmutableArray.CreateRange,
+                    frame,
+                    unknown)
+            result.NullTreatment <-
+                match window.NullTreatment with
+                | WindowNullTreatment.DefaultNullTreatment -> HsSqlAgent.SqlCore.Core.Ast.WindowNullTreatmentKind.Unspecified
+                | WindowNullTreatment.IgnoreNulls -> HsSqlAgent.SqlCore.Core.Ast.WindowNullTreatmentKind.IgnoreNulls
+                | WindowNullTreatment.RespectNulls -> HsSqlAgent.SqlCore.Core.Ast.WindowNullTreatmentKind.RespectNulls
+            result
 
         and tableSourceOf source : HsSqlAgent.SqlCore.Core.Ast.TableSource =
             match source with
@@ -394,6 +412,14 @@ module internal RewriteCompatibilityAstAdapter =
 
         and joinOf join =
             match join with
+            | Join.ApplyJoin(kind, source) ->
+                HsSqlAgent.SqlCore.Core.Ast.JoinSource(
+                    (match kind with
+                     | ApplyKind.CrossApply -> "CROSS APPLY"
+                     | ApplyKind.OuterApply -> "OUTER APPLY"),
+                    tableSourceOf source,
+                    Unchecked.defaultof<_>,
+                    unknown)
             | Join.CrossJoin source ->
                 HsSqlAgent.SqlCore.Core.Ast.JoinSource(
                     "CROSS",
@@ -670,6 +696,7 @@ module internal RewriteCompatibilityAstAdapter =
                         |> ImmutableArray.CreateRange,
                         update.Where |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
                         statementSpan)
+                result.Ctes <- update.Ctes |> List.map cteOf |> ImmutableArray.CreateRange
                 let fromSources = update.From |> List.map tableSourceOf
                 result.FromSources <- fromSources |> ImmutableArray.CreateRange
                 if fromSources |> List.forall (fun source -> source :? HsSqlAgent.SqlCore.Core.Ast.NamedTableSource) then
@@ -739,6 +766,7 @@ module internal RewriteCompatibilityAstAdapter =
                             unknown),
                         delete.Where |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
                         statementSpan)
+                result.Ctes <- delete.Ctes |> List.map cteOf |> ImmutableArray.CreateRange
                 let usingSources = delete.Using |> List.map tableSourceOf
                 result.UsingSources <- usingSources |> ImmutableArray.CreateRange
                 if usingSources |> List.forall (fun source -> source :? HsSqlAgent.SqlCore.Core.Ast.NamedTableSource) then

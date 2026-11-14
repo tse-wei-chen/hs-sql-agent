@@ -16,6 +16,7 @@ const catalog = [
   { name: "get_columns", defaultSelected: true },
   { name: "execute_query_sql", defaultSelected: true },
   { name: "execute_dml_sql", defaultSelected: false },
+  { name: "execute_ddl_sql", defaultSelected: false },
 ] as const;
 
 describe("MCP key issuance helpers", () => {
@@ -60,13 +61,14 @@ describe("MCP key issuance helpers", () => {
   });
 
   it("describes the actual allowed-tools selection", () => {
-    expect(formatAllowedToolsLabel([])).toBe("Global (no restriction)");
+    expect(formatAllowedToolsLabel([])).toBe("Select at least one tool");
+    expect(formatAllowedToolsLabel([], true)).toBe("Legacy unrestricted (existing key)");
     expect(formatAllowedToolsLabel(["get_tables", "execute_query_sql"])).toBe(
       "2 tools selected",
     );
   });
 
-  it("derives four safe defaults from the server catalog and leaves DML opt-in", () => {
+  it("derives four safe defaults and leaves DML and DDL opt-in", () => {
     const defaults = resolveDefaultAllowedTools(catalog);
 
     expect(defaults).toEqual([
@@ -76,6 +78,7 @@ describe("MCP key issuance helpers", () => {
       "execute_query_sql",
     ]);
     expect(defaults).not.toContain("execute_dml_sql");
+    expect(defaults).not.toContain("execute_ddl_sql");
   });
 
   it("creates independent default array values for each form reset", () => {
@@ -87,6 +90,7 @@ describe("MCP key issuance helpers", () => {
     const second = createInitialMcpKeyDetail(defaults);
     expect(second.allowedTools).toEqual(defaults);
     expect(second.allowedTools).not.toContain("execute_dml_sql");
+    expect(second.allowedTools).not.toContain("execute_ddl_sql");
     expect(second.tableWhitelist).toEqual([]);
     expect(second.allowedTools).not.toBe(first.allowedTools);
     expect(second.tableWhitelist).not.toBe(first.tableWhitelist);
@@ -102,7 +106,7 @@ describe("MCP key issuance helpers", () => {
     expect(posture).toEqual({
       level: "read-query",
       title: "Read/query only",
-      description: "4 non-DML tools selected.",
+      description: "4 read/query tools selected.",
       dataScope: "All tables",
     });
   });
@@ -117,17 +121,56 @@ describe("MCP key issuance helpers", () => {
 
     expect(posture.level).toBe("dml-enabled");
     expect(posture.title).toBe("DML enabled");
-    expect(posture.description).toContain("human approval");
+    expect(posture.description).toContain("configured approval");
     expect(posture.dataScope).toBe("2 tables");
   });
 
-  it("makes the empty-selection unrestricted posture explicit", () => {
+  it("classifies DDL separately and requires independent approval even with a tool grant", () => {
+    const posture = resolveMcpAccessPosture(
+      ["execute_query_sql", "EXECUTE_DDL_SQL"],
+      ["execute_dml_sql"],
+      true,
+      2,
+      0,
+      false,
+      ["execute_ddl_sql"],
+    );
+    expect(posture.level).toBe("ddl-enabled");
+    expect(posture.title).toBe("DDL enabled");
+    expect(posture.description).toContain("separate DDL approval");
+    expect(posture.description).toContain("Host enablement");
+    expect(posture.dataScope).toBe("2 tables");
+  });
+
+  it("never disguises simultaneous DML and DDL grants as read-only", () => {
+    const posture = resolveMcpAccessPosture(
+      ["execute_query_sql", "execute_dml_sql", "execute_ddl_sql"],
+      ["execute_dml_sql"],
+      false,
+      0,
+      0,
+      false,
+      ["execute_ddl_sql"],
+    );
+    expect(posture.level).toBe("dml-ddl-enabled");
+    expect(posture.title).toBe("DML & DDL enabled");
+    expect(posture.description).toContain("separate approval flows");
+  });
+
+  it("never treats new key forms with empty selection as unrestricted", () => {
     const posture = resolveMcpAccessPosture([], ["execute_dml_sql"], true, 1);
 
-    expect(posture.level).toBe("unrestricted");
-    expect(posture.title).toBe("Unrestricted tool access");
-    expect(posture.description).toContain("including DML");
+    expect(posture.level).toBe("review");
+    expect(posture.title).toBe("Select allowed tools");
+    expect(posture.description).toContain("cannot create unrestricted");
     expect(posture.dataScope).toBe("1 table");
+  });
+
+  it("identifies historical unrestricted keys without granting new ones implicit wildcard", () => {
+    const legacy = resolveMcpAccessPosture([], ["execute_dml_sql"], true, 1, 0, true);
+    expect(legacy.level).toBe("unrestricted");
+    expect(legacy.description).toContain("including DML");
+    expect(legacy.description).toContain("explicit execute_ddl_sql grant");
   });
 
   it("flags saved tools that are no longer classifiable by the published catalog", () => {
@@ -170,10 +213,12 @@ describe("MCP key issuance helpers", () => {
 
   it("requires Elicitation for unrestricted or selected DML tools", () => {
     const dmlTools = ["execute_dml_sql", "archive_customer"];
-    expect(allowedToolsRequireElicitation([], dmlTools)).toBe(true);
+    expect(allowedToolsRequireElicitation([], dmlTools)).toBe(false);
+    expect(allowedToolsRequireElicitation([], dmlTools, true)).toBe(true);
     expect(allowedToolsRequireElicitation(["execute_dml_sql"], dmlTools)).toBe(true);
     expect(allowedToolsRequireElicitation(["EXECUTE_DML_SQL"], dmlTools)).toBe(true);
     expect(allowedToolsRequireElicitation(["archive_customer"], dmlTools)).toBe(true);
     expect(allowedToolsRequireElicitation(["execute_query_sql"], dmlTools)).toBe(false);
+    expect(allowedToolsRequireElicitation(["execute_ddl_sql"], dmlTools)).toBe(false);
   });
 });

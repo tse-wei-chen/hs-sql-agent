@@ -21,6 +21,7 @@ public static class McpBuiltInTools
     public const string GetSchemas = "get_schemas";
     public const string GetTables = "get_tables";
     public const string ExecuteDmlSql = "execute_dml_sql";
+    public const string ExecuteDdlSql = "execute_ddl_sql";
 
     public static IReadOnlyList<McpToolDescriptor> Catalog { get; } =
     [
@@ -28,8 +29,16 @@ public static class McpBuiltInTools
         new(GetTables, "Query", "Get tables", "low", true, true),
         new(GetColumns, "Query", "Get columns", "low", true, true),
         new(ExecuteQuerySql, "Query", "Execute query", "medium", true, true),
-        new(ExecuteDmlSql, "DML", "Execute DML", "high", true, false)
+        new(ExecuteDmlSql, "DML", "Execute DML", "high", true, false),
+        new(ExecuteDdlSql, "DDL", "Execute DDL", "critical", true, false)
     ];
+
+    // Admin MCP-key tool selection is release-scoped, unlike the canonical runtime
+    // catalog. DDL remains recognized by the MCP runtime but is not offered as a
+    // selectable grant in this release. Keep the four Query defaults and opt-in DML.
+    public static IReadOnlyList<McpToolDescriptor> AdminSelectableCatalog { get; } = Catalog
+        .Where(tool => !string.Equals(tool.Type, "DDL", StringComparison.OrdinalIgnoreCase))
+        .ToArray();
 
     public static FrozenSet<string> Names { get; } = Catalog
         .Select(tool => tool.Name)
@@ -39,4 +48,19 @@ public static class McpBuiltInTools
         .Where(tool => tool.DefaultSelected)
         .Select(tool => tool.Name)
         .ToFrozenSet(StringComparer.OrdinalIgnoreCase);
+
+    // A missing/blank tool selection must not become a wildcard grant when a key
+    // is first issued or explicitly edited. Existing legacy null grants remain
+    // backward-compatible until the administrator elects to change them.
+    public static string DefaultAllowedToolsCsv { get; } =
+        string.Join(',', Catalog.Where(tool => tool.DefaultSelected).Select(tool => tool.Name));
+
+    public static string NormalizeExplicitAllowedTools(string? selectedTools)
+    {
+        var names = selectedTools?.Split(',',
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return names is { Length: > 0 }
+            ? string.Join(',', names)
+            : DefaultAllowedToolsCsv;
+    }
 }

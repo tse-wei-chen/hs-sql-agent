@@ -3,6 +3,7 @@ namespace HsSqlAgent.SqlCore.Rewrite
 open System
 open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Core.Pipeline
+open HsSqlAgent.SqlCore.Catalog
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.Typestate
@@ -11,7 +12,13 @@ open HsSqlAgent.SqlCore.Rewrite.Typestate
 /// It never queries a database or falls back to the compatibility AST.
 module internal RewriteSchemaValidation =
 
-    type private Catalog = { Dialect: SqlAgentToolType; Tables: Map<string, string list> }
+    type private Catalog =
+        { Dialect: SqlAgentToolType
+          // Only physical relation identities are valid mutation targets.
+          Tables: Map<string, string list>
+          // Query and mutation input relations may include proven Views.
+          ReadRelations: Map<string, string list>
+          ProvenInsertColumnOrder: bool }
     type private Source = { Qualifiers: string list; Columns: string list }
     // Unqualified row shape follows JOIN USING coalescing; qualified sources stay separate.
     type private Scope =
@@ -50,8 +57,12 @@ module internal RewriteSchemaValidation =
             value.ToUpperInvariant()
         | _ -> value
 
+    let private qualifiedKey parts =
+        parts |> List.map (fun (part: string) ->
+            part.Replace("\\", "\\\\").Replace(".", "\\.")) |> String.concat "."
+
     let private keyIdentifier dialect identifier =
-        Identifier.parts identifier |> List.map (keyPart dialect) |> String.concat "."
+        Identifier.parts identifier |> List.map (keyPart dialect) |> qualifiedKey
 
     let private keyCatalog dialect (value: string) =
         RewriteResourceBudget.charge (max 1L (int64 value.Length))
@@ -73,7 +84,9 @@ module internal RewriteSchemaValidation =
         tables |> List.iter (fun (name, columns) ->
             if (columns |> List.distinct |> List.length) <> columns.Length then
                 invalidArg "schemaSnapshot" ("Schema columns collide in table '" + name + "'."))
-        { Dialect = dialect; Tables = Map.ofList tables }
+        let physical = Map.ofList tables
+        { Dialect = dialect; Tables = physical; ReadRelations = physical
+          ProvenInsertColumnOrder = false }
 
     let private physicalTable catalog name =
         match Map.tryFind (keyIdentifier catalog.Dialect name) catalog.Tables with
@@ -82,18 +95,25 @@ module internal RewriteSchemaValidation =
             reject "SQL_SCHEMA_TABLE_NOT_FOUND" Span.unknown (
                 "Schema does not contain physical table '" + Identifier.text name + "'.")
 
+    let private readableTable catalog name =
+        match Map.tryFind (keyIdentifier catalog.Dialect name) catalog.ReadRelations with
+        | Some columns -> columns
+        | None ->
+            reject "SQL_SCHEMA_TABLE_NOT_FOUND" Span.unknown (
+                "Schema does not contain readable relation '" + Identifier.text name + "'.")
+
     let private namedSource dialect name alias columns =
         let full = keyIdentifier dialect name
-        let tail = Identifier.parts name |> List.last |> keyPart dialect
+        let tail = Identifier.parts name |> List.last |> keyPart dialect |> List.singleton |> qualifiedKey
         let keys =
             match alias with
-            | Some value -> [ keyPart dialect value ]
+            | Some value -> [ qualifiedKey [keyPart dialect value] ]
             | None when tail = full -> [ full ]
             | None -> [ full; tail ]
         { Qualifiers = keys; Columns = columns }
 
     let private aliasedSource dialect alias columns =
-        { Qualifiers = [ keyPart dialect alias ]; Columns = columns }
+        { Qualifiers = [ qualifiedKey [keyPart dialect alias] ]; Columns = columns }
 
     let private countColumn source key =
         source.Columns |> List.sumBy (fun name ->
@@ -118,6 +138,12 @@ module internal RewriteSchemaValidation =
                 | None -> active.Sources
                 | Some name ->
                     active.Sources |> List.filter (hasQualifier name)
+            // A qualifier must denote exactly ONE source before looking up
+            // its column. It cannot acquire uniqueness merely because only
+            // one of two same-named sources happens to contain that field.
+            if qualifier.IsSome && matchingSources.Length > 1 then
+                reject "SQL_SCHEMA_QUALIFIER_UNPROVABLE" span (
+                    "Table/alias qualifier identifies multiple relations in the current schema scope.")
             let hits =
                 match qualifier with
                 | None -> active.Unqualified |> List.sumBy (fun name ->
@@ -345,7 +371,7 @@ module internal RewriteSchemaValidation =
         and source catalog ctes parent value =
             match value with
             | NamedTable(name, alias) ->
-                namedSource catalog.Dialect name alias (physicalTable catalog name)
+                namedSource catalog.Dialect name alias (readableTable catalog name)
             | CteTable(name, alias) ->
                 match Map.tryFind (keyIdentifier catalog.Dialect name) ctes with
                 | Some columns -> namedSource catalog.Dialect name alias columns
@@ -443,7 +469,7 @@ module internal RewriteSchemaValidation =
                         Unqualified = unqualified }
                 match join with
                 | OnJoin(_, _, predicate) -> expression catalog ctes combined Span.unknown predicate
-                | UsingJoin _ | NaturalJoin _ | CrossJoin _ -> ()
+                | UsingJoin _ | NaturalJoin _ | CrossJoin _ | ApplyJoin _ -> ()
                 current <- combined
 
             let inspect = expression catalog ctes current Span.unknown
@@ -664,6 +690,27 @@ module internal RewriteSchemaValidation =
         let document catalog (doc: Document) =
             let emptyCtes = Map.empty<string, string list>
             let emptyScope = makeScope None []
+            // Reuse the strict Query schema proof for every statement-level
+            // read-only CTE before resolving the UPDATE write scope.
+            // Neither synthetic table metadata nor physical write ownership
+            // is inferred for a CTE.
+            let proveMutationCtes (definitions: Cte list) =
+                let mutable visible = emptyCtes
+                for cte in definitions do
+                    if cte.RecursiveScope then
+                        reject "SQL_SCHEMA_RECURSIVE_CTE_UNPROVABLE" cte.Span
+                            "Recursive CTE schema projection is not proven for mutation."
+                    let projected = queryColumns catalog visible None cte.Query
+                    let names =
+                        match cte.ColumnAliases with
+                        | [] -> requireNamedProjection cte.Span projected
+                        | aliases when aliases.Length = projected.Length ->
+                            aliases |> List.map (keyPart catalog.Dialect)
+                        | _ ->
+                            reject "SQL_SCHEMA_SHAPE_UNPROVABLE" cte.Span
+                                "CTE projection and column-alias widths differ."
+                    visible <- Map.add (keyPart catalog.Dialect cte.Name) names visible
+                visible
             match doc.Statement with
             | QueryStatement query ->
                 queryColumns catalog emptyCtes None query |> ignore
@@ -673,39 +720,276 @@ module internal RewriteSchemaValidation =
                     if countColumn target (keyPart catalog.Dialect name) <> 1 then
                         reject "SQL_SCHEMA_COLUMN_NOT_FOUND" doc.Span (
                             "INSERT column '" + name.Value + "' is not in the target table."))
+                // The target role is always physical. Explicit column lists
+                // are already checked by the parser; only Virtual Catalog
+                // DDL can prove the order of an omitted column list.
+                let layout =
+                    RewriteInsertTargetLayout.select
+                        (insert.Columns |> List.map (keyPart catalog.Dialect))
+                        target.Columns catalog.ProvenInsertColumnOrder
+                let checkWidth width =
+                    match layout with
+                    | ProvenTargets columns when width <> columns.Length ->
+                        reject "SQL_SCHEMA_SHAPE_UNPROVABLE" doc.Span (
+                            "INSERT source width differs from its proven target-column layout.")
+                    | _ -> ()
                 match insert.Input with
                 | Values rows ->
-                    rows |> NonEmpty.iter (NonEmpty.iter (
-                        expression catalog emptyCtes emptyScope Span.unknown))
+                    rows |> NonEmpty.iter (fun row ->
+                        let values = NonEmpty.toList row
+                        values |> List.iter (
+                            expression catalog emptyCtes emptyScope Span.unknown)
+                        checkWidth values.Length)
                 | QuerySource query ->
                     let projected = queryColumns catalog emptyCtes None query
-                    if not insert.Columns.IsEmpty && projected.Length <> insert.Columns.Length then
-                        reject "SQL_SCHEMA_SHAPE_UNPROVABLE" doc.Span (
-                            "INSERT target-column count and SELECT projection width differ in strict snapshot mode.")
+                    checkWidth projected.Length
                 | DefaultValues -> ()
-                if insert.Conflict.IsSome then
-                    reject "SQL_SCHEMA_CONFLICT_UNPROVABLE" doc.Span (
-                        "Strict snapshot mode does not yet prove UPSERT key and assignment columns.")
+                match insert.Conflict with
+                | None -> ()
+                | Some conflict ->
+                    // Strict snapshots only carry names/types, not UNIQUE index
+                    // contracts. A one-row native SQLite/PostgreSQL DO NOTHING can prove that
+                    // its *referenced* key exists; only Host native physical
+                    // key metadata can later authorize conflict execution.
+                    // DO UPDATE never borrows this structural proof.
+                    let closedSkip =
+                        match catalog.Dialect, conflict.Action, conflict.TargetColumns, insert.Input with
+                        | (SqlAgentToolType.Sqlite | SqlAgentToolType.Postgres), DoNothing, Some targets, Values rows
+                            when NonEmpty.length targets = 1
+                                 && NonEmpty.length rows = 1 ->
+                            match Identifier.parts (NonEmpty.toList targets |> List.head) with
+                            | [ key ] ->
+                                let keyName = keyPart catalog.Dialect key
+                                let declared =
+                                    insert.Columns |> List.filter (fun column ->
+                                        keyPart catalog.Dialect column = keyName)
+                                if countColumn target keyName <> 1 then
+                                    reject "SQL_SCHEMA_COLUMN_NOT_FOUND" doc.Span (
+                                        "Native conflict target '" + key.Value
+                                        + "' is not a physical target-table column.")
+                                // Static snapshots prove only the referenced key column;
+                                // only PostgreSQL may return that exact single key.
+                                // Live UNIQUE enforcement remains Host-owned.
+                                let returningKeyProven =
+                                    match catalog.Dialect, insert.Returning with
+                                    | _, [] -> true
+                                    | SqlAgentToolType.Postgres, [ ReturningColumn(identifier, None) ] ->
+                                        match Identifier.parts identifier with
+                                        | [ part ] -> keyPart catalog.Dialect part = keyName
+                                        | _ -> false
+                                    | _ -> false
+                                declared.Length = 1 && returningKeyProven
+                            | _ -> false
+                        | SqlAgentToolType.Postgres, UpdateProposedValues assignments, Some targets, Values rows
+                            when NonEmpty.length targets = 1
+                                 && NonEmpty.length assignments >= 1
+                                 && NonEmpty.length assignments <= 4
+                                 && NonEmpty.length rows = 1
+                                 && insert.Columns.Length = NonEmpty.length assignments + 1 ->
+                            let singleTarget = NonEmpty.toList targets |> List.head
+                            match Identifier.parts singleTarget with
+                            | [ key ] ->
+                                let keyName = keyPart catalog.Dialect key
+                                if countColumn target keyName <> 1 then
+                                    reject "SQL_SCHEMA_COLUMN_NOT_FOUND" doc.Span (
+                                        "Native conflict-update key is not a physical target column.")
+                                let allAssignments = NonEmpty.toList assignments
+                                let updates =
+                                    allAssignments |> List.choose (fun assignment ->
+                                        match Identifier.parts assignment.Target, assignment.Value with
+                                        | [ targetPart ], ConflictProposedColumn proposed ->
+                                            match Identifier.parts proposed with
+                                            | [ sourcePart ] when
+                                                keyPart catalog.Dialect targetPart =
+                                                    keyPart catalog.Dialect sourcePart ->
+                                                Some(keyPart catalog.Dialect targetPart)
+                                            | _ -> None
+                                        | _ -> None)
+                                updates |> List.iter (fun name ->
+                                    if countColumn target name <> 1 then
+                                        reject "SQL_SCHEMA_COLUMN_NOT_FOUND" doc.Span (
+                                            "Native conflict-update SET column is not a physical target column."))
+                                let declared =
+                                    insert.Columns |> List.map (keyPart catalog.Dialect)
+                                let distinctUpdates = updates |> List.distinct
+                                let distinctDeclared = declared |> List.distinct
+                                let returningColumns =
+                                    insert.Returning |> List.choose (function
+                                        | ReturningColumn(identifier, None) ->
+                                            match Identifier.parts identifier with
+                                            | [ part ] -> Some(keyPart catalog.Dialect part)
+                                            | _ -> None
+                                        | _ -> None)
+                                let returningProven =
+                                    insert.Returning.Length <= 5
+                                    && insert.Returning.Length <= declared.Length
+                                    && returningColumns.Length = insert.Returning.Length
+                                    && (returningColumns |> List.distinct).Length = returningColumns.Length
+                                    && (returningColumns |> List.forall (fun name ->
+                                        List.contains name declared
+                                        && countColumn target name = 1))
+                                updates.Length = allAssignments.Length
+                                && distinctUpdates.Length = updates.Length
+                                && distinctDeclared.Length = declared.Length
+                                && not (List.contains keyName updates)
+                                && (declared |> List.filter ((=) keyName)).Length = 1
+                                && (updates |> List.forall (fun name ->
+                                    (declared |> List.filter ((=) name)).Length = 1))
+                                && returningProven
+                            | _ -> false
+                        | _ -> false
+                    if not closedSkip then
+                        reject "SQL_SCHEMA_CONFLICT_UNPROVABLE" doc.Span (
+                            "Strict snapshot mode proves only single-row native SQLite/PostgreSQL DO NOTHING " +
+                            "or 1-4 PostgreSQL SET column = EXCLUDED.column assignments with an explicit physical key; " +
+                            "all unproven UPSERT shapes are rejected.")
                 returning catalog target insert.Returning
             | UpdateStatement update ->
+                let visibleCtes = proveMutationCtes update.Ctes
                 let target = namedSource catalog.Dialect update.Target update.TargetAlias (physicalTable catalog update.Target)
-                let otherSources = update.From |> List.map (source catalog emptyCtes None)
+                let otherSources = update.From |> List.map (source catalog visibleCtes None)
                 let current = makeScope None (target :: otherSources)
                 let targetScope = makeScope None [ target ]
                 update.Assignments |> List.iter (fun assignment ->
+                    // Real Oracle 26 direct-join UPDATE rejects unqualified
+                    // SET columns that are visible in both the physical
+                    // target and a FROM source (ORA-00918). Resolving the
+                    // assignment against targetScope alone is not enough.
+                    // Only explicitly target-qualified assignments can
+                    // disambiguate the column on Oracle.
+                    if catalog.Dialect = SqlAgentToolType.Oracle
+                       && not update.From.IsEmpty then
+                        match Identifier.parts assignment.Target with
+                        | [ part ] ->
+                            let name = keyPart catalog.Dialect part
+                            if otherSources |> List.exists (fun other ->
+                                RewriteResourceBudget.checkpoint ()
+                                countColumn other name > 0) then
+                                reject "SQL_SCHEMA_UPDATE_ASSIGNMENT_AMBIGUOUS" doc.Span (
+                                    "Oracle direct-join UPDATE SET column '" + name
+                                    + "' is ambiguous between the target and a FROM relation; "
+                                    + "qualify it with the update target.")
+                        | _ -> ()
                     column catalog targetScope doc.Span assignment.Target
-                    expression catalog emptyCtes current Span.unknown assignment.Value)
-                update.Where |> Option.iter (expression catalog emptyCtes current Span.unknown)
+                    expression catalog visibleCtes current Span.unknown assignment.Value)
+                update.Where |> Option.iter (expression catalog visibleCtes current Span.unknown)
                 returning catalog target update.Returning
             | DeleteStatement delete ->
+                let visibleCtes = proveMutationCtes delete.Ctes
                 let target = namedSource catalog.Dialect delete.Target delete.TargetAlias (physicalTable catalog delete.Target)
-                let others = delete.Using |> List.map (source catalog emptyCtes None)
+                let others = delete.Using |> List.map (source catalog visibleCtes None)
                 let current = makeScope None (target :: others)
-                delete.Where |> Option.iter (expression catalog emptyCtes current Span.unknown)
+                delete.Where |> Option.iter (expression catalog visibleCtes current Span.unknown)
                 returning catalog target delete.Returning
-            | MergeStatement _ ->
-                reject "SQL_SCHEMA_MERGE_UNPROVABLE" doc.Span (
-                    "Strict snapshot mode does not yet prove MERGE source and target key semantics.")
+            | MergeStatement merge ->
+                // The strict snapshot proves the named physical key column only.
+                // Host must independently prove the sole enforced INT PRIMARY
+                // key, full catalog digest and transaction-held serializable lock.
+                // Every other MERGE effect remains unprovable in this mode.
+                let target = namedSource catalog.Dialect merge.Target
+                                     (Some merge.TargetAlias) (physicalTable catalog merge.Target)
+                let targetNames = Identifier.parts merge.Target
+                let sourceParts = NonEmpty.toList merge.Source.SourceColumns
+                let sourceValues = NonEmpty.toList merge.Source.SourceValues
+                let key =
+                    match sourceParts with
+                    | part :: _ -> keyPart catalog.Dialect part
+                    | _ -> ""
+                let rec unwrap = function
+                    | Spanned(_, inner) -> unwrap inner
+                    | other -> other
+                let directColumn alias expected expression =
+                    match unwrap expression with
+                    | Column identifier | BoundColumn(identifier, _) ->
+                        match Identifier.parts identifier with
+                        | [ qualifier; field ] ->
+                            qualifier.Value = alias
+                            && keyPart catalog.Dialect field = expected
+                        | _ -> false
+                    | _ -> false
+                let provenMatch =
+                    match unwrap merge.MatchPredicate with
+                    | Binary(Equal, left, right) ->
+                        (directColumn "t" key left && directColumn "s" key right)
+                        || (directColumn "t" key right && directColumn "s" key left)
+                    | _ -> false
+                let normalizedSourceFields =
+                    sourceParts |> List.map (keyPart catalog.Dialect)
+                let physicalPayload columns =
+                    columns |> List.forall (fun name ->
+                        name <> key
+                        && not (name.StartsWith("__", StringComparison.Ordinal))
+                        && countColumn target name = 1)
+                let matchedProven =
+                    match merge.Matched with
+                    | Some MergeDelete -> sourceParts.Length = 1
+                    | Some(MergeUpdate assignments) ->
+                        let payload = normalizedSourceFields |> List.tail
+                        let updates = NonEmpty.toList assignments
+                        payload.Length >= 1 && payload.Length <= 3
+                        && updates.Length = payload.Length
+                        && physicalPayload payload
+                        && (updates
+                            |> List.forall (fun assignment ->
+                                match Identifier.parts assignment.Target with
+                                | [ field ] ->
+                                    let name = keyPart catalog.Dialect field
+                                    payload |> List.contains name
+                                    && directColumn "s" name assignment.Value
+                                | _ -> false))
+                        && (updates
+                            |> List.map (fun assignment ->
+                                Identifier.parts assignment.Target
+                                |> List.head
+                                |> keyPart catalog.Dialect)
+                            |> List.distinct
+                            |> List.length) = payload.Length
+                    | _ -> false
+                let notMatchedProven =
+                    match merge.Matched, merge.NotMatched with
+                    | None, Some insert ->
+                        let targets = NonEmpty.toList insert.InsertColumns
+                        let values = NonEmpty.toList insert.InsertValues
+                        let namedTargets = targets |> List.map (fun identifier ->
+                            match Identifier.parts identifier with
+                            | [ field ] -> keyPart catalog.Dialect field
+                            | _ -> "")
+                        let physicalColumns = Set.ofList target.Columns
+                        let sourceColumns = Set.ofList normalizedSourceFields
+                        sourceParts.Length >= 2 && sourceParts.Length <= 4
+                        && target.Columns.Length = sourceParts.Length
+                        && physicalColumns = sourceColumns
+                        && targets.Length = sourceParts.Length
+                        && values.Length = targets.Length
+                        && (Set.ofList namedTargets) = sourceColumns
+                        && (namedTargets |> List.distinct |> List.length) = namedTargets.Length
+                        && (List.forall2 (fun name value ->
+                            name <> "" && directColumn "s" name value) namedTargets values)
+                    | _ -> false
+                let proven =
+                    catalog.Dialect = SqlAgentToolType.MsSqlServer
+                    && targetNames.Length = 2
+                    && keyPart catalog.Dialect targetNames[0] = "DBO"
+                    && merge.TargetAlias.Value = "t"
+                    && merge.Source.Alias.Value = "s"
+                    && key <> ""
+                    && not (key.StartsWith("__", StringComparison.Ordinal))
+                    && countColumn target key = 1
+                    && sourceParts.Length = sourceValues.Length
+                    && sourceParts.Length <= 4
+                    && (normalizedSourceFields |> List.distinct |> List.length) = sourceParts.Length
+                    && (sourceValues |> List.forall (fun value ->
+                        match unwrap value with
+                        | Literal _ -> true
+                        | _ -> false))
+                    && provenMatch
+                    && ((merge.Matched.IsSome && merge.NotMatched.IsNone && matchedProven)
+                        || notMatchedProven)
+                if not proven then
+                    reject "SQL_SCHEMA_MERGE_UNPROVABLE" doc.Span (
+                        "Strict snapshot mode proves only a single literal source key and " +
+                        "SQL Server MATCHED DELETE, bounded UPDATE or complete direct-column NOT MATCHED INSERT; " +
+                        "live physical UNIQUE and transaction approval remain Host-only.")
 
 
         document
@@ -714,3 +998,61 @@ module internal RewriteSchemaValidation =
         let catalog = buildCatalog dialect snapshot
         (createValidation ()) catalog (Bound.value bound)
         bound
+
+    let private verifyProjectedNameRows dialect
+                                        (physical: (string * string list) list)
+                                        (readable: (string * string list) list)
+                                        (bound: BoundSql) =
+        if physical.Length <> (physical |> List.map fst |> List.distinct |> List.length)
+           || readable.Length <> (readable |> List.map fst |> List.distinct |> List.length) then
+            invalidArg "state" "Virtual Catalog contains duplicate structured identifier identities."
+        let catalog =
+            { Dialect = dialect
+              Tables = Map.ofList physical
+              ReadRelations = Map.ofList readable
+              ProvenInsertColumnOrder = true }
+        (createValidation ()) catalog (Bound.value bound)
+        bound
+
+    /// Name and Type validation stay independent. The shared projection
+    /// carries only canonical labels and immutable, untyped DDL column objects.
+    let verifyVirtualPrepared dialect
+                              (projection: RewriteVirtualCatalogProjection.Projection)
+                              (bound: BoundSql) =
+        let normalizedNames relations =
+            relations |> List.map (fun (relation: RewriteVirtualCatalogProjection.Relation) ->
+                RewriteResourceBudget.checkpoint ()
+                relation.Key, relation.Names)
+        let physical = normalizedNames projection.Physical
+        let readable = physical @ normalizedNames projection.ReadableViews
+        verifyProjectedNameRows dialect physical readable bound
+
+    /// Single-stage Name-only callers (notably SQLite's dynamic-affinity
+    /// guard) should not allocate shared Type-stage relation records at all.
+    /// This is the original strict projection with identical collision and
+    /// physical-vs-View binding checks, not an alternative name resolver.
+    let verifyVirtual dialect (state: SqlCatalogState) (bound: BoundSql) =
+        if not state.IsClosedWorld
+           || (state.Tables |> Seq.exists (fun t -> t.Knowledge <> SqlCatalogKnowledge.Known)) then
+            invalidArg "state" "Strict catalog binding requires a complete known closed-world catalog."
+        let physical =
+            state.Tables
+            |> Seq.map (fun table ->
+                RewriteResourceBudget.checkpoint ()
+                table.QualifiedName.BinderKey,
+                (table.Columns |> Seq.map (fun col -> catalogPart dialect col.Name) |> Seq.toList))
+            |> Seq.toList
+        let readable =
+            seq {
+                yield! physical
+                for view in RewriteQueryAnalyzer.readableViews dialect state bound do
+                    RewriteResourceBudget.checkpoint ()
+                    yield view.QualifiedName.BinderKey,
+                          (view.Columns |> Seq.map (fun col -> catalogPart dialect col.Name) |> Seq.toList)
+                for view in RewriteMutationAnalyzer.readableViews dialect state bound do
+                    RewriteResourceBudget.checkpoint ()
+                    yield view.QualifiedName.BinderKey,
+                          (view.Columns |> Seq.map (fun col -> catalogPart dialect col.Name) |> Seq.toList)
+            }
+            |> Seq.toList
+        verifyProjectedNameRows dialect physical readable bound

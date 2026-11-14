@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { exchangeOidcCode } from "@/api/auth";
-import { persistAuthSession } from "@/lib/auth-session";
+import { useAuthStore } from "@/stores/auth";
 definePageMeta({ layout: "auth" });
 const error = ref("");
+const auth = useAuthStore();
 onMounted(async () => {
   try {
     const code = String(useRoute().query.code || "");
     if (!code) throw new Error("Missing login code.");
-    const result = await exchangeOidcCode(code);
-    if (result.requiresMfa && result.mfaToken) { sessionStorage.setItem("mfaToken", result.mfaToken); await navigateTo("/mfa"); return; }
-    persistAuthSession(result);
+    const outcome = await auth.completeSso(code);
+    if (outcome === "mfa") { await navigateTo("/mfa"); return; }
+    if (outcome !== "authenticated") throw new Error("SSO sign-in returned no credentials.");
     await navigateTo("/home");
   } catch (reason: any) { error.value = reason?.response?.data?.message || reason?.message || "SSO sign-in failed."; }
 });

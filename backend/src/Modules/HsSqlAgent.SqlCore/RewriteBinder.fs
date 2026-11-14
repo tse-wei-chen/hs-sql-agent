@@ -527,8 +527,9 @@ module internal RewriteBinder =
         (aliasDisplays: System.Collections.Generic.Dictionary<string, string>)
         (join: Join) : Join * Scope =
         let correlationScope =
-            match join.Source with
-            | LateralDerivedTable _ -> Some scope
+            match join, join.Source with
+            | ApplyJoin(_, DerivedTable _) , _ -> Some scope
+            | _, LateralDerivedTable _ -> Some scope
             | _ -> scope.Parent
         let source = bindTableSource scope.Dialect correlationScope scope.VisibleCtes join.Source
         let binding = sourceBinding scope.Dialect source
@@ -549,6 +550,7 @@ module internal RewriteBinder =
         let boundJoin =
             match join with
             | CrossJoin _ -> CrossJoin source
+            | ApplyJoin(kind, _) -> ApplyJoin(kind, source)
             | NaturalJoin(kind, _) -> NaturalJoin(kind, source)
             | OnJoin(kind, _, predicate) -> OnJoin(kind, source, bindExpr extended predicate)
             | UsingJoin(kind, _, columns) -> UsingJoin(kind, source, columns)
@@ -898,8 +900,9 @@ module internal RewriteBinder =
                     let join = select.JoinItems.[index]
                     let current = scopeOf select
                     let correlationScope =
-                        match join.Source with
-                        | LateralDerivedTable _ -> Some current
+                        match join, join.Source with
+                        | ApplyJoin(_, DerivedTable _), _ -> Some current
+                        | _, LateralDerivedTable _ -> Some current
                         | _ -> current.Parent
                     push (GraphSelectJoinSourceDone(select, index))
                     push (GraphSourceEnter(
@@ -944,6 +947,10 @@ module internal RewriteBinder =
                 | OnJoin(_, _, predicate) ->
                     push (GraphSelectJoinPredicateDone(select, index, source, extended))
                     push (GraphExprEnter(predicate, extended))
+                | ApplyJoin(kind, _) ->
+                    select.BoundJoins.Add(ApplyJoin(kind, source))
+                    select.Scope <- Some extended
+                    push (GraphSelectJoinNext(select, index + 1))
                 | CrossJoin _ ->
                     select.BoundJoins.Add(CrossJoin source)
                     select.Scope <- Some extended
@@ -1186,15 +1193,17 @@ module internal RewriteBinder =
                     | DefaultValues -> DefaultValues
                 InsertStatement { insert with Input = input; Returning = bindReturning targetScope insert.Returning }
             | UpdateStatement update ->
+                let ctes, visibleCtes = bindCtes dialect [] update.Ctes
                 let baseScope : Scope =
                     { Id = 0
                       Parent = None
                       Sources = [ sourceBinding dialect (NamedTable(update.Target, update.TargetAlias)) ]
-                      VisibleCtes = []
+                      VisibleCtes = visibleCtes
                       Dialect = dialect }
                 let from, scope = extendScopeWithSources baseScope update.From
                 UpdateStatement
                     { update with
+                        Ctes = ctes
                         From = from
                         AssignmentItems = update.AssignmentItems |> NonEmpty.map (bindAssignment scope)
                         Where = update.Where |> Option.map (bindExpr scope)
@@ -1239,15 +1248,17 @@ module internal RewriteBinder =
                         Matched = matched
                         NotMatched = notMatched }
             | DeleteStatement delete ->
+                let ctes, visibleCtes = bindCtes dialect [] delete.Ctes
                 let baseScope : Scope =
                     { Id = 0
                       Parent = None
                       Sources = [ sourceBinding dialect (NamedTable(delete.Target, delete.TargetAlias)) ]
-                      VisibleCtes = []
+                      VisibleCtes = visibleCtes
                       Dialect = dialect }
                 let usingSources, scope = extendScopeWithSources baseScope delete.Using
                 DeleteStatement
                     { delete with
+                        Ctes = ctes
                         Using = usingSources
                         Where = delete.Where |> Option.map (bindExpr scope)
                         Returning =
@@ -1341,11 +1352,13 @@ module internal RewriteBinder =
             | None -> ()
             returning value.Returning
         | UpdateStatement value ->
+            for cte in value.Ctes do query cte.Query
             assignments value.Assignments
             for item in value.From do source item
             value.Where |> Option.iter expr
             returning value.Returning
         | DeleteStatement value ->
+            for cte in value.Ctes do query cte.Query
             for item in value.Using do source item
             value.Where |> Option.iter expr
             returning value.Returning

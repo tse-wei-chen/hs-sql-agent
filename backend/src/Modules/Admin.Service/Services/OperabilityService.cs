@@ -67,7 +67,9 @@ public class OperabilityService(
             .OrderBy(x => x.db.Name)
             .Select(x => new DbHealthItem
             {
-                DbManagementId = x.db.Id, Name = x.db.Name, Provider = x.db.SqlProvider,
+                DbManagementId = x.db.Id,
+                Name = x.db.Name,
+                Provider = x.db.SqlProvider,
                 Status = x.health == null ? "unknown" : x.health.Status,
                 LastCheckedAt = x.health == null ? null : x.health.LastCheckedAt,
                 LastSuccessAt = x.health == null ? null : x.health.LastSuccessAt,
@@ -85,7 +87,9 @@ public class OperabilityService(
         if (filter.DbManagementId.HasValue) keys = keys.Where(x => x.DbManagementId == filter.DbManagementId);
         var items = await keys.OrderBy(x => x.Name).Select(x => new KeyUsageItem
         {
-            AccessKeyId = x.Id, Name = x.Name, LastUsedAt = x.LastUsedAt
+            AccessKeyId = x.Id,
+            Name = x.Name,
+            LastUsedAt = x.LastUsedAt
         }).ToListAsync(cancellationToken);
         var ids = items.Select(x => x.AccessKeyId).ToArray();
         var usageQuery = context.AuditLogs.AsNoTracking()
@@ -126,8 +130,14 @@ public class OperabilityService(
         => await context.OutboundDeliveries.AsNoTracking().OrderByDescending(x => x.CreatedAt)
             .Take(Math.Clamp(limit, 1, 500)).Select(x => new DeliveryStatusItem
             {
-                Id = x.Id, Category = x.Category, Status = x.Status, AttemptCount = x.AttemptCount,
-                CreatedAt = x.CreatedAt, DeliveredAt = x.DeliveredAt, LastAttemptAt = x.LastAttemptAt, LastError = x.LastError
+                Id = x.Id,
+                Category = x.Category,
+                Status = x.Status,
+                AttemptCount = x.AttemptCount,
+                CreatedAt = x.CreatedAt,
+                DeliveredAt = x.DeliveredAt,
+                LastAttemptAt = x.LastAttemptAt,
+                LastError = x.LastError
             }).ToListAsync(cancellationToken);
 
     public async Task<bool> RetryDeliveryAsync(long id, CancellationToken cancellationToken = default)
@@ -154,8 +164,13 @@ public class OperabilityService(
         if (await context.OutboundDeliveries.AnyAsync(x => x.DedupeKey == dedupeKey, cancellationToken)) return false;
         context.OutboundDeliveries.Add(new OutboundDelivery
         {
-            Category = category, DedupeKey = dedupeKey, TargetUrl = targetUrl, Payload = payload,
-            Status = "pending", CreatedAt = DateTime.UtcNow, NextAttemptAt = DateTime.UtcNow
+            Category = category,
+            DedupeKey = dedupeKey,
+            TargetUrl = targetUrl,
+            Payload = payload,
+            Status = "pending",
+            CreatedAt = DateTime.UtcNow,
+            NextAttemptAt = DateTime.UtcNow
         });
         try { await context.SaveChangesAsync(cancellationToken); }
         catch (DbUpdateException) { return false; }

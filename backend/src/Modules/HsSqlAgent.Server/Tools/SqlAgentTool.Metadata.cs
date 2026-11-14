@@ -109,12 +109,12 @@ public partial class SqlAgentTool
         }
         catch (Exception ex)
         {
-            await _auditService.WriteLogAsync(
+            await McpErrorResponsePolicy.TryAuditFailureAsync(() => _auditService.WriteLogAsync(
                 "mcp.get_columns",
                 $"{schemaName}.{tableName}",
                 "failed",
                 ex.Message,
-                cancellationToken);
+                cancellationToken));
             return new McpColumnsToolResult(
                 false,
                 providerName,
@@ -159,12 +159,12 @@ public partial class SqlAgentTool
         }
         catch (Exception ex)
         {
-            await _auditService.WriteLogAsync(
+            await McpErrorResponsePolicy.TryAuditFailureAsync(() => _auditService.WriteLogAsync(
                 "mcp.get_schemas",
                 "database",
                 "failed",
                 ex.Message,
-                cancellationToken);
+                cancellationToken));
             return new McpSchemasToolResult(false, providerName, [], DescribeMetadataError(ex));
         }
     }
@@ -242,12 +242,12 @@ public partial class SqlAgentTool
         }
         catch (Exception ex)
         {
-            await _auditService.WriteLogAsync(
+            await McpErrorResponsePolicy.TryAuditFailureAsync(() => _auditService.WriteLogAsync(
                 "mcp.get_tables",
                 schemaName,
                 "failed",
                 ex.Message,
-                cancellationToken);
+                cancellationToken));
             return new McpTablesToolResult(false, providerName, schemaName, [], DescribeMetadataError(ex));
         }
     }
@@ -297,40 +297,20 @@ public partial class SqlAgentTool
         }
         catch (Exception ex)
         {
-            await _auditService.WriteLogAsync(
+            await McpErrorResponsePolicy.TryAuditFailureAsync(() => _auditService.WriteLogAsync(
                 "mcp.update_semantic_layer",
                 "semantic_layer",
                 "failed",
-                ex.Message);
-            return $"Error updating semantic layer: {ex.Message}";
+                ex.Message));
+            return "Error updating semantic layer: request failed. Check server diagnostics.";
         }
     }
 
     private static McpToolError InvalidConfigurationError() =>
         new("configuration.invalid", InvalidSqlConfigurationMessage, "Configuration");
 
-    private static McpToolError DescribeMetadataError(Exception error) => error switch
-    {
-        UnauthorizedAccessException => new McpToolError(
-            "authorization.denied",
-            error.Message,
-            "Authorization"),
-        TimeoutException => new McpToolError(
-            "metadata.timeout",
-            error.Message,
-            "Metadata",
-            true),
-        InvalidOperationException when error.Message.StartsWith("Server busy:", StringComparison.Ordinal) =>
-            new McpToolError(
-                "server.busy",
-                error.Message,
-                "Metadata",
-                true),
-        _ => new McpToolError(
-            "metadata.failed",
-            error.Message,
-            "Metadata")
-    };
+    private static McpToolError DescribeMetadataError(Exception error) =>
+        McpErrorResponsePolicy.Classify(error, McpErrorSurface.Metadata);
 
     private static bool SameIdentifier(string? left, string? right) =>
         string.Equals(left ?? string.Empty, right ?? string.Empty, StringComparison.OrdinalIgnoreCase);

@@ -1,0 +1,2162 @@
+[
+  {
+    "id": "pg-catalog-01-inventory_reservations",
+    "dialect": "Postgres",
+    "group": "Catalog",
+    "sql": "CREATE TABLE pg_inventory_reservations (id INTEGER);\nDROP TABLE pg_inventory_reservations;",
+    "statementCount": 2,
+    "catalogChanges": 2,
+    "failureIndex": -1
+  },
+  {
+    "id": "pg-catalog-02-warehouse_bins",
+    "dialect": "Postgres",
+    "group": "Catalog",
+    "sql": "CREATE TABLE pg_warehouse_bins (id INTEGER);\nCREATE TABLE pg_warehouse_bins_history (id INTEGER);\nDROP TABLE pg_warehouse_bins_history;\nDROP TABLE pg_warehouse_bins;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "pg-catalog-03-shipping_labels",
+    "dialect": "Postgres",
+    "group": "Catalog",
+    "sql": "CREATE TABLE pg_shipping_labels (id INTEGER);\nALTER TABLE pg_shipping_labels ADD COLUMN note TEXT;\nDROP TABLE pg_shipping_labels;",
+    "statementCount": 3,
+    "catalogChanges": 3,
+    "failureIndex": -1
+  },
+  {
+    "id": "pg-catalog-04-billing_invoices",
+    "dialect": "Postgres",
+    "group": "Catalog",
+    "sql": "CREATE TABLE pg_billing_invoices (id INTEGER);\nCREATE TABLE pg_billing_invoices_history (id INTEGER);\nDROP TABLE pg_billing_invoices;\nDROP TABLE pg_billing_invoices_history;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "pg-catalog-05-supplier_orders",
+    "dialect": "Postgres",
+    "group": "Catalog",
+    "sql": "CREATE TABLE pg_supplier_orders (id INTEGER, label TEXT);\nDROP TABLE pg_supplier_orders;",
+    "statementCount": 2,
+    "catalogChanges": 2,
+    "failureIndex": -1
+  },
+  {
+    "id": "pg-catalog-06-employee_rosters",
+    "dialect": "Postgres",
+    "group": "Catalog",
+    "sql": "CREATE TABLE pg_employee_rosters (id INTEGER);\nALTER TABLE pg_employee_rosters ADD COLUMN note TEXT;\nCREATE TABLE pg_employee_rosters_history (id INTEGER);\nDROP TABLE pg_employee_rosters_history;\nDROP TABLE pg_employee_rosters;",
+    "statementCount": 5,
+    "catalogChanges": 5,
+    "failureIndex": -1
+  },
+  {
+    "id": "pg-catalog-07-payment_reconciliations",
+    "dialect": "Postgres",
+    "group": "Catalog",
+    "sql": "CREATE TABLE pg_payment_reconciliations (id INTEGER);\nDROP TABLE pg_payment_reconciliations;\nCREATE TABLE pg_payment_reconciliations (id INTEGER, title TEXT);\nDROP TABLE pg_payment_reconciliations;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "pg-catalog-08-audit_entries",
+    "dialect": "Postgres",
+    "group": "Catalog",
+    "sql": "CREATE TABLE pg_audit_entries (id INTEGER);\nCREATE TABLE pg_audit_entries_history (id INTEGER);\nALTER TABLE pg_audit_entries_history ADD COLUMN note TEXT;\nDROP TABLE pg_audit_entries;\nDROP TABLE pg_audit_entries_history;",
+    "statementCount": 5,
+    "catalogChanges": 5,
+    "failureIndex": -1
+  },
+  {
+    "id": "pg-catalog-09-customer_addresses",
+    "dialect": "Postgres",
+    "group": "Catalog",
+    "sql": "CREATE TABLE pg_customer_addresses (id INTEGER);\nDROP TABLE pg_customer_addresses;",
+    "statementCount": 2,
+    "catalogChanges": 2,
+    "failureIndex": -1
+  },
+  {
+    "id": "pg-catalog-10-delivery_routes",
+    "dialect": "Postgres",
+    "group": "Catalog",
+    "sql": "CREATE TABLE pg_delivery_routes (id INTEGER);\nCREATE TABLE pg_delivery_routes_history (id INTEGER);\nDROP TABLE pg_delivery_routes_history;\nDROP TABLE pg_delivery_routes;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "pg-catalog-11-production_batches",
+    "dialect": "Postgres",
+    "group": "Catalog",
+    "sql": "CREATE TABLE pg_production_batches (id INTEGER);\nALTER TABLE pg_production_batches ADD COLUMN note TEXT;\nDROP TABLE pg_production_batches;",
+    "statementCount": 3,
+    "catalogChanges": 3,
+    "failureIndex": -1
+  },
+  {
+    "id": "pg-catalog-12-maintenance_checks",
+    "dialect": "Postgres",
+    "group": "Catalog",
+    "sql": "CREATE TABLE pg_maintenance_checks (id INTEGER);\nCREATE TABLE pg_maintenance_checks_history (id INTEGER);\nDROP TABLE pg_maintenance_checks;\nDROP TABLE pg_maintenance_checks_history;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "pg-catalog-13-support_tickets",
+    "dialect": "Postgres",
+    "group": "Catalog",
+    "sql": "CREATE TABLE pg_support_tickets (id INTEGER, label TEXT);\nDROP TABLE pg_support_tickets;",
+    "statementCount": 2,
+    "catalogChanges": 2,
+    "failureIndex": -1
+  },
+  {
+    "id": "pg-catalog-14-account_balances",
+    "dialect": "Postgres",
+    "group": "Catalog",
+    "sql": "CREATE TABLE pg_account_balances (id INTEGER);\nALTER TABLE pg_account_balances ADD COLUMN note TEXT;\nCREATE TABLE pg_account_balances_history (id INTEGER);\nDROP TABLE pg_account_balances_history;\nDROP TABLE pg_account_balances;",
+    "statementCount": 5,
+    "catalogChanges": 5,
+    "failureIndex": -1
+  },
+  {
+    "id": "pg-catalog-15-clinic_appointments",
+    "dialect": "Postgres",
+    "group": "Catalog",
+    "sql": "CREATE TABLE pg_clinic_appointments (id INTEGER);\nDROP TABLE pg_clinic_appointments;\nCREATE TABLE pg_clinic_appointments (id INTEGER, title TEXT);\nDROP TABLE pg_clinic_appointments;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "pg-catalog-16-asset_registers",
+    "dialect": "Postgres",
+    "group": "Catalog",
+    "sql": "CREATE TABLE pg_asset_registers (id INTEGER);\nCREATE TABLE pg_asset_registers_history (id INTEGER);\nALTER TABLE pg_asset_registers_history ADD COLUMN note TEXT;\nDROP TABLE pg_asset_registers;\nDROP TABLE pg_asset_registers_history;",
+    "statementCount": 5,
+    "catalogChanges": 5,
+    "failureIndex": -1
+  },
+  {
+    "id": "pg-mixed-17-purchase_receipts",
+    "dialect": "Postgres",
+    "group": "Mixed",
+    "sql": "CREATE TABLE pg_purchase_receipts (id INTEGER);\nSELECT id FROM pg_purchase_receipts WHERE id = 1;",
+    "statementCount": 2,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "pg-mixed-18-stock_replenishments",
+    "dialect": "Postgres",
+    "group": "Mixed",
+    "sql": "CREATE TABLE pg_stock_replenishments (id INTEGER);\nINSERT INTO pg_stock_replenishments(id) VALUES (1);\nSELECT id FROM pg_stock_replenishments;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "pg-mixed-19-subscription_renewals",
+    "dialect": "Postgres",
+    "group": "Mixed",
+    "sql": "CREATE TABLE pg_subscription_renewals (id INTEGER);\nUPDATE pg_subscription_renewals SET id = 2 WHERE id = 1;\nSELECT id FROM pg_subscription_renewals;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "pg-mixed-20-room_bookings",
+    "dialect": "Postgres",
+    "group": "Mixed",
+    "sql": "CREATE TABLE pg_room_bookings (id INTEGER);\nDELETE FROM pg_room_bookings WHERE id = 1;\nSELECT id FROM pg_room_bookings;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "pg-mixed-21-sales_forecasts",
+    "dialect": "Postgres",
+    "group": "Mixed",
+    "sql": "CREATE TABLE pg_sales_forecasts (id INTEGER);\nSELECT id FROM pg_sales_forecasts WHERE id = 1;",
+    "statementCount": 2,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "pg-mixed-22-expense_claims",
+    "dialect": "Postgres",
+    "group": "Mixed",
+    "sql": "CREATE TABLE pg_expense_claims (id INTEGER);\nINSERT INTO pg_expense_claims(id) VALUES (1);\nSELECT id FROM pg_expense_claims;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "pg-mixed-23-service_requests",
+    "dialect": "Postgres",
+    "group": "Mixed",
+    "sql": "CREATE TABLE pg_service_requests (id INTEGER);\nUPDATE pg_service_requests SET id = 2 WHERE id = 1;\nSELECT id FROM pg_service_requests;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "pg-mixed-24-product_returns",
+    "dialect": "Postgres",
+    "group": "Mixed",
+    "sql": "CREATE TABLE pg_product_returns (id INTEGER);\nDELETE FROM pg_product_returns WHERE id = 1;\nSELECT id FROM pg_product_returns;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "pg-invalid-25-invoice_allocations",
+    "dialect": "Postgres",
+    "group": "Invalid",
+    "sql": "CREATE TABLE pg_invoice_allocations (id INTEGER, id INTEGER);\nSELECT id FROM pg_invoice_allocations;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "pg-invalid-26-reconciliation_runs",
+    "dialect": "Postgres",
+    "group": "Invalid",
+    "sql": "DROP TABLE pg_reconciliation_runs;\nSELECT 1;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "pg-invalid-27-credit_authorizations",
+    "dialect": "Postgres",
+    "group": "Invalid",
+    "sql": "CREATE TABLE pg_credit_authorizations (id INTEGER);\nCREATE TABLE pg_credit_authorizations (id INTEGER);",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "pg-invalid-28-loan_accounts",
+    "dialect": "Postgres",
+    "group": "Invalid",
+    "sql": "CREATE TABLE pg_loan_accounts (id INTEGER);\nDROP TABLE pg_loan_accounts;\nDROP TABLE pg_loan_accounts;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 2
+  },
+  {
+    "id": "pg-invalid-29-warehouse_transfers",
+    "dialect": "Postgres",
+    "group": "Invalid",
+    "sql": "CREATE TABLE pg_warehouse_transfers (id INTEGER, id INTEGER);\nSELECT id FROM pg_warehouse_transfers;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "pg-invalid-30-insurance_claims",
+    "dialect": "Postgres",
+    "group": "Invalid",
+    "sql": "DROP TABLE pg_insurance_claims;\nSELECT 1;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "pg-invalid-31-project_milestones",
+    "dialect": "Postgres",
+    "group": "Invalid",
+    "sql": "CREATE TABLE pg_project_milestones (id INTEGER);\nCREATE TABLE pg_project_milestones (id INTEGER);",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "pg-invalid-32-staff_rotations",
+    "dialect": "Postgres",
+    "group": "Invalid",
+    "sql": "CREATE TABLE pg_staff_rotations (id INTEGER);\nDROP TABLE pg_staff_rotations;\nDROP TABLE pg_staff_rotations;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 2
+  },
+  {
+    "id": "pg-unsupported-33-attendance_records",
+    "dialect": "Postgres",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE pg_attendance_records (id INTEGER, CHECK (id > 0));\nSELECT id FROM pg_attendance_records;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "pg-unsupported-34-order_fulfillments",
+    "dialect": "Postgres",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE pg_order_fulfillments (id INTEGER);\nCREATE TABLE pg_order_fulfillments_history (id INTEGER, CHECK (id > 0));\nSELECT id FROM pg_order_fulfillments;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "pg-unsupported-35-shipment_scans",
+    "dialect": "Postgres",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE pg_shipment_scans (id INTEGER);\nUNRECOGNIZED WORDS;\nSELECT id FROM pg_shipment_scans;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "pg-unsupported-36-inventory_counts",
+    "dialect": "Postgres",
+    "group": "Unsupported",
+    "sql": "SOME UNKNOWN STATEMENT;\nCREATE TABLE pg_inventory_counts (id INTEGER);\nSELECT id FROM pg_inventory_counts;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "pg-unsupported-37-merchant_settlements",
+    "dialect": "Postgres",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE pg_merchant_settlements (id INTEGER, CHECK (id > 0));\nSELECT id FROM pg_merchant_settlements;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "pg-unsupported-38-payroll_adjustments",
+    "dialect": "Postgres",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE pg_payroll_adjustments (id INTEGER);\nCREATE TABLE pg_payroll_adjustments_history (id INTEGER, CHECK (id > 0));\nSELECT id FROM pg_payroll_adjustments;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "pg-unsupported-39-course_enrollments",
+    "dialect": "Postgres",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE pg_course_enrollments (id INTEGER);\nUNRECOGNIZED WORDS;\nSELECT id FROM pg_course_enrollments;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "pg-unsupported-40-refund_batches",
+    "dialect": "Postgres",
+    "group": "Unsupported",
+    "sql": "SOME UNKNOWN STATEMENT;\nCREATE TABLE pg_refund_batches (id INTEGER);\nSELECT id FROM pg_refund_batches;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "my-catalog-01-inventory_reservations",
+    "dialect": "MySQL",
+    "group": "Catalog",
+    "sql": "CREATE TABLE my_inventory_reservations (id INT);\nDROP TABLE my_inventory_reservations;",
+    "statementCount": 2,
+    "catalogChanges": 2,
+    "failureIndex": -1
+  },
+  {
+    "id": "my-catalog-02-warehouse_bins",
+    "dialect": "MySQL",
+    "group": "Catalog",
+    "sql": "CREATE TABLE my_warehouse_bins (id INT);\nCREATE TABLE my_warehouse_bins_history (id INT);\nDROP TABLE my_warehouse_bins_history;\nDROP TABLE my_warehouse_bins;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "my-catalog-03-shipping_labels",
+    "dialect": "MySQL",
+    "group": "Catalog",
+    "sql": "CREATE TABLE my_shipping_labels (id INT);\nALTER TABLE my_shipping_labels ADD COLUMN note VARCHAR(64);\nDROP TABLE my_shipping_labels;",
+    "statementCount": 3,
+    "catalogChanges": 3,
+    "failureIndex": -1
+  },
+  {
+    "id": "my-catalog-04-billing_invoices",
+    "dialect": "MySQL",
+    "group": "Catalog",
+    "sql": "CREATE TABLE my_billing_invoices (id INT);\nCREATE TABLE my_billing_invoices_history (id INT);\nDROP TABLE my_billing_invoices;\nDROP TABLE my_billing_invoices_history;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "my-catalog-05-supplier_orders",
+    "dialect": "MySQL",
+    "group": "Catalog",
+    "sql": "CREATE TABLE my_supplier_orders (id INT, label VARCHAR(64));\nDROP TABLE my_supplier_orders;",
+    "statementCount": 2,
+    "catalogChanges": 2,
+    "failureIndex": -1
+  },
+  {
+    "id": "my-catalog-06-employee_rosters",
+    "dialect": "MySQL",
+    "group": "Catalog",
+    "sql": "CREATE TABLE my_employee_rosters (id INT);\nALTER TABLE my_employee_rosters ADD COLUMN note VARCHAR(64);\nCREATE TABLE my_employee_rosters_history (id INT);\nDROP TABLE my_employee_rosters_history;\nDROP TABLE my_employee_rosters;",
+    "statementCount": 5,
+    "catalogChanges": 5,
+    "failureIndex": -1
+  },
+  {
+    "id": "my-catalog-07-payment_reconciliations",
+    "dialect": "MySQL",
+    "group": "Catalog",
+    "sql": "CREATE TABLE my_payment_reconciliations (id INT);\nDROP TABLE my_payment_reconciliations;\nCREATE TABLE my_payment_reconciliations (id INT, title VARCHAR(64));\nDROP TABLE my_payment_reconciliations;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "my-catalog-08-audit_entries",
+    "dialect": "MySQL",
+    "group": "Catalog",
+    "sql": "CREATE TABLE my_audit_entries (id INT);\nCREATE TABLE my_audit_entries_history (id INT);\nALTER TABLE my_audit_entries_history ADD COLUMN note VARCHAR(64);\nDROP TABLE my_audit_entries;\nDROP TABLE my_audit_entries_history;",
+    "statementCount": 5,
+    "catalogChanges": 5,
+    "failureIndex": -1
+  },
+  {
+    "id": "my-catalog-09-customer_addresses",
+    "dialect": "MySQL",
+    "group": "Catalog",
+    "sql": "CREATE TABLE my_customer_addresses (id INT);\nDROP TABLE my_customer_addresses;",
+    "statementCount": 2,
+    "catalogChanges": 2,
+    "failureIndex": -1
+  },
+  {
+    "id": "my-catalog-10-delivery_routes",
+    "dialect": "MySQL",
+    "group": "Catalog",
+    "sql": "CREATE TABLE my_delivery_routes (id INT);\nCREATE TABLE my_delivery_routes_history (id INT);\nDROP TABLE my_delivery_routes_history;\nDROP TABLE my_delivery_routes;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "my-catalog-11-production_batches",
+    "dialect": "MySQL",
+    "group": "Catalog",
+    "sql": "CREATE TABLE my_production_batches (id INT);\nALTER TABLE my_production_batches ADD COLUMN note VARCHAR(64);\nDROP TABLE my_production_batches;",
+    "statementCount": 3,
+    "catalogChanges": 3,
+    "failureIndex": -1
+  },
+  {
+    "id": "my-catalog-12-maintenance_checks",
+    "dialect": "MySQL",
+    "group": "Catalog",
+    "sql": "CREATE TABLE my_maintenance_checks (id INT);\nCREATE TABLE my_maintenance_checks_history (id INT);\nDROP TABLE my_maintenance_checks;\nDROP TABLE my_maintenance_checks_history;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "my-catalog-13-support_tickets",
+    "dialect": "MySQL",
+    "group": "Catalog",
+    "sql": "CREATE TABLE my_support_tickets (id INT, label VARCHAR(64));\nDROP TABLE my_support_tickets;",
+    "statementCount": 2,
+    "catalogChanges": 2,
+    "failureIndex": -1
+  },
+  {
+    "id": "my-catalog-14-account_balances",
+    "dialect": "MySQL",
+    "group": "Catalog",
+    "sql": "CREATE TABLE my_account_balances (id INT);\nALTER TABLE my_account_balances ADD COLUMN note VARCHAR(64);\nCREATE TABLE my_account_balances_history (id INT);\nDROP TABLE my_account_balances_history;\nDROP TABLE my_account_balances;",
+    "statementCount": 5,
+    "catalogChanges": 5,
+    "failureIndex": -1
+  },
+  {
+    "id": "my-catalog-15-clinic_appointments",
+    "dialect": "MySQL",
+    "group": "Catalog",
+    "sql": "CREATE TABLE my_clinic_appointments (id INT);\nDROP TABLE my_clinic_appointments;\nCREATE TABLE my_clinic_appointments (id INT, title VARCHAR(64));\nDROP TABLE my_clinic_appointments;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "my-catalog-16-asset_registers",
+    "dialect": "MySQL",
+    "group": "Catalog",
+    "sql": "CREATE TABLE my_asset_registers (id INT);\nCREATE TABLE my_asset_registers_history (id INT);\nALTER TABLE my_asset_registers_history ADD COLUMN note VARCHAR(64);\nDROP TABLE my_asset_registers;\nDROP TABLE my_asset_registers_history;",
+    "statementCount": 5,
+    "catalogChanges": 5,
+    "failureIndex": -1
+  },
+  {
+    "id": "my-mixed-17-purchase_receipts",
+    "dialect": "MySQL",
+    "group": "Mixed",
+    "sql": "CREATE TABLE my_purchase_receipts (id INT);\nSELECT id FROM my_purchase_receipts WHERE id = 1;",
+    "statementCount": 2,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "my-mixed-18-stock_replenishments",
+    "dialect": "MySQL",
+    "group": "Mixed",
+    "sql": "CREATE TABLE my_stock_replenishments (id INT);\nINSERT INTO my_stock_replenishments(id) VALUES (1);\nSELECT id FROM my_stock_replenishments;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "my-mixed-19-subscription_renewals",
+    "dialect": "MySQL",
+    "group": "Mixed",
+    "sql": "CREATE TABLE my_subscription_renewals (id INT);\nUPDATE my_subscription_renewals SET id = 2 WHERE id = 1;\nSELECT id FROM my_subscription_renewals;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "my-mixed-20-room_bookings",
+    "dialect": "MySQL",
+    "group": "Mixed",
+    "sql": "CREATE TABLE my_room_bookings (id INT);\nDELETE FROM my_room_bookings WHERE id = 1;\nSELECT id FROM my_room_bookings;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "my-mixed-21-sales_forecasts",
+    "dialect": "MySQL",
+    "group": "Mixed",
+    "sql": "CREATE TABLE my_sales_forecasts (id INT);\nSELECT id FROM my_sales_forecasts WHERE id = 1;",
+    "statementCount": 2,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "my-mixed-22-expense_claims",
+    "dialect": "MySQL",
+    "group": "Mixed",
+    "sql": "CREATE TABLE my_expense_claims (id INT);\nINSERT INTO my_expense_claims(id) VALUES (1);\nSELECT id FROM my_expense_claims;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "my-mixed-23-service_requests",
+    "dialect": "MySQL",
+    "group": "Mixed",
+    "sql": "CREATE TABLE my_service_requests (id INT);\nUPDATE my_service_requests SET id = 2 WHERE id = 1;\nSELECT id FROM my_service_requests;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "my-mixed-24-product_returns",
+    "dialect": "MySQL",
+    "group": "Mixed",
+    "sql": "CREATE TABLE my_product_returns (id INT);\nDELETE FROM my_product_returns WHERE id = 1;\nSELECT id FROM my_product_returns;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "my-invalid-25-invoice_allocations",
+    "dialect": "MySQL",
+    "group": "Invalid",
+    "sql": "CREATE TABLE my_invoice_allocations (id INT, id INT);\nSELECT id FROM my_invoice_allocations;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "my-invalid-26-reconciliation_runs",
+    "dialect": "MySQL",
+    "group": "Invalid",
+    "sql": "DROP TABLE my_reconciliation_runs;\nSELECT 1;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "my-invalid-27-credit_authorizations",
+    "dialect": "MySQL",
+    "group": "Invalid",
+    "sql": "CREATE TABLE my_credit_authorizations (id INT);\nCREATE TABLE my_credit_authorizations (id INT);",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "my-invalid-28-loan_accounts",
+    "dialect": "MySQL",
+    "group": "Invalid",
+    "sql": "CREATE TABLE my_loan_accounts (id INT);\nDROP TABLE my_loan_accounts;\nDROP TABLE my_loan_accounts;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 2
+  },
+  {
+    "id": "my-invalid-29-warehouse_transfers",
+    "dialect": "MySQL",
+    "group": "Invalid",
+    "sql": "CREATE TABLE my_warehouse_transfers (id INT, id INT);\nSELECT id FROM my_warehouse_transfers;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "my-invalid-30-insurance_claims",
+    "dialect": "MySQL",
+    "group": "Invalid",
+    "sql": "DROP TABLE my_insurance_claims;\nSELECT 1;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "my-invalid-31-project_milestones",
+    "dialect": "MySQL",
+    "group": "Invalid",
+    "sql": "CREATE TABLE my_project_milestones (id INT);\nCREATE TABLE my_project_milestones (id INT);",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "my-invalid-32-staff_rotations",
+    "dialect": "MySQL",
+    "group": "Invalid",
+    "sql": "CREATE TABLE my_staff_rotations (id INT);\nDROP TABLE my_staff_rotations;\nDROP TABLE my_staff_rotations;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 2
+  },
+  {
+    "id": "my-unsupported-33-attendance_records",
+    "dialect": "MySQL",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE my_attendance_records (id INT, CHECK (id > 0));\nSELECT id FROM my_attendance_records;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "my-unsupported-34-order_fulfillments",
+    "dialect": "MySQL",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE my_order_fulfillments (id INT);\nCREATE TABLE my_order_fulfillments_history (id INT, CHECK (id > 0));\nSELECT id FROM my_order_fulfillments;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "my-unsupported-35-shipment_scans",
+    "dialect": "MySQL",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE my_shipment_scans (id INT);\nUNRECOGNIZED WORDS;\nSELECT id FROM my_shipment_scans;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "my-unsupported-36-inventory_counts",
+    "dialect": "MySQL",
+    "group": "Unsupported",
+    "sql": "SOME UNKNOWN STATEMENT;\nCREATE TABLE my_inventory_counts (id INT);\nSELECT id FROM my_inventory_counts;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "my-unsupported-37-merchant_settlements",
+    "dialect": "MySQL",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE my_merchant_settlements (id INT, CHECK (id > 0));\nSELECT id FROM my_merchant_settlements;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "my-unsupported-38-payroll_adjustments",
+    "dialect": "MySQL",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE my_payroll_adjustments (id INT);\nCREATE TABLE my_payroll_adjustments_history (id INT, CHECK (id > 0));\nSELECT id FROM my_payroll_adjustments;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "my-unsupported-39-course_enrollments",
+    "dialect": "MySQL",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE my_course_enrollments (id INT);\nUNRECOGNIZED WORDS;\nSELECT id FROM my_course_enrollments;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "my-unsupported-40-refund_batches",
+    "dialect": "MySQL",
+    "group": "Unsupported",
+    "sql": "SOME UNKNOWN STATEMENT;\nCREATE TABLE my_refund_batches (id INT);\nSELECT id FROM my_refund_batches;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "sq-catalog-01-inventory_reservations",
+    "dialect": "Sqlite",
+    "group": "Catalog",
+    "sql": "CREATE TABLE sq_inventory_reservations (id INTEGER);\nDROP TABLE sq_inventory_reservations;",
+    "statementCount": 2,
+    "catalogChanges": 2,
+    "failureIndex": -1
+  },
+  {
+    "id": "sq-catalog-02-warehouse_bins",
+    "dialect": "Sqlite",
+    "group": "Catalog",
+    "sql": "CREATE TABLE sq_warehouse_bins (id INTEGER);\nCREATE TABLE sq_warehouse_bins_history (id INTEGER);\nDROP TABLE sq_warehouse_bins_history;\nDROP TABLE sq_warehouse_bins;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "sq-catalog-03-shipping_labels",
+    "dialect": "Sqlite",
+    "group": "Catalog",
+    "sql": "CREATE TABLE sq_shipping_labels (id INTEGER);\nALTER TABLE sq_shipping_labels ADD COLUMN note TEXT;\nDROP TABLE sq_shipping_labels;",
+    "statementCount": 3,
+    "catalogChanges": 3,
+    "failureIndex": -1
+  },
+  {
+    "id": "sq-catalog-04-billing_invoices",
+    "dialect": "Sqlite",
+    "group": "Catalog",
+    "sql": "CREATE TABLE sq_billing_invoices (id INTEGER);\nCREATE TABLE sq_billing_invoices_history (id INTEGER);\nDROP TABLE sq_billing_invoices;\nDROP TABLE sq_billing_invoices_history;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "sq-catalog-05-supplier_orders",
+    "dialect": "Sqlite",
+    "group": "Catalog",
+    "sql": "CREATE TABLE sq_supplier_orders (id INTEGER, label TEXT);\nDROP TABLE sq_supplier_orders;",
+    "statementCount": 2,
+    "catalogChanges": 2,
+    "failureIndex": -1
+  },
+  {
+    "id": "sq-catalog-06-employee_rosters",
+    "dialect": "Sqlite",
+    "group": "Catalog",
+    "sql": "CREATE TABLE sq_employee_rosters (id INTEGER);\nALTER TABLE sq_employee_rosters ADD COLUMN note TEXT;\nCREATE TABLE sq_employee_rosters_history (id INTEGER);\nDROP TABLE sq_employee_rosters_history;\nDROP TABLE sq_employee_rosters;",
+    "statementCount": 5,
+    "catalogChanges": 5,
+    "failureIndex": -1
+  },
+  {
+    "id": "sq-catalog-07-payment_reconciliations",
+    "dialect": "Sqlite",
+    "group": "Catalog",
+    "sql": "CREATE TABLE sq_payment_reconciliations (id INTEGER);\nDROP TABLE sq_payment_reconciliations;\nCREATE TABLE sq_payment_reconciliations (id INTEGER, title TEXT);\nDROP TABLE sq_payment_reconciliations;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "sq-catalog-08-audit_entries",
+    "dialect": "Sqlite",
+    "group": "Catalog",
+    "sql": "CREATE TABLE sq_audit_entries (id INTEGER);\nCREATE TABLE sq_audit_entries_history (id INTEGER);\nALTER TABLE sq_audit_entries_history ADD COLUMN note TEXT;\nDROP TABLE sq_audit_entries;\nDROP TABLE sq_audit_entries_history;",
+    "statementCount": 5,
+    "catalogChanges": 5,
+    "failureIndex": -1
+  },
+  {
+    "id": "sq-catalog-09-customer_addresses",
+    "dialect": "Sqlite",
+    "group": "Catalog",
+    "sql": "CREATE TABLE sq_customer_addresses (id INTEGER);\nDROP TABLE sq_customer_addresses;",
+    "statementCount": 2,
+    "catalogChanges": 2,
+    "failureIndex": -1
+  },
+  {
+    "id": "sq-catalog-10-delivery_routes",
+    "dialect": "Sqlite",
+    "group": "Catalog",
+    "sql": "CREATE TABLE sq_delivery_routes (id INTEGER);\nCREATE TABLE sq_delivery_routes_history (id INTEGER);\nDROP TABLE sq_delivery_routes_history;\nDROP TABLE sq_delivery_routes;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "sq-catalog-11-production_batches",
+    "dialect": "Sqlite",
+    "group": "Catalog",
+    "sql": "CREATE TABLE sq_production_batches (id INTEGER);\nALTER TABLE sq_production_batches ADD COLUMN note TEXT;\nDROP TABLE sq_production_batches;",
+    "statementCount": 3,
+    "catalogChanges": 3,
+    "failureIndex": -1
+  },
+  {
+    "id": "sq-catalog-12-maintenance_checks",
+    "dialect": "Sqlite",
+    "group": "Catalog",
+    "sql": "CREATE TABLE sq_maintenance_checks (id INTEGER);\nCREATE TABLE sq_maintenance_checks_history (id INTEGER);\nDROP TABLE sq_maintenance_checks;\nDROP TABLE sq_maintenance_checks_history;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "sq-catalog-13-support_tickets",
+    "dialect": "Sqlite",
+    "group": "Catalog",
+    "sql": "CREATE TABLE sq_support_tickets (id INTEGER, label TEXT);\nDROP TABLE sq_support_tickets;",
+    "statementCount": 2,
+    "catalogChanges": 2,
+    "failureIndex": -1
+  },
+  {
+    "id": "sq-catalog-14-account_balances",
+    "dialect": "Sqlite",
+    "group": "Catalog",
+    "sql": "CREATE TABLE sq_account_balances (id INTEGER);\nALTER TABLE sq_account_balances ADD COLUMN note TEXT;\nCREATE TABLE sq_account_balances_history (id INTEGER);\nDROP TABLE sq_account_balances_history;\nDROP TABLE sq_account_balances;",
+    "statementCount": 5,
+    "catalogChanges": 5,
+    "failureIndex": -1
+  },
+  {
+    "id": "sq-catalog-15-clinic_appointments",
+    "dialect": "Sqlite",
+    "group": "Catalog",
+    "sql": "CREATE TABLE sq_clinic_appointments (id INTEGER);\nDROP TABLE sq_clinic_appointments;\nCREATE TABLE sq_clinic_appointments (id INTEGER, title TEXT);\nDROP TABLE sq_clinic_appointments;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "sq-catalog-16-asset_registers",
+    "dialect": "Sqlite",
+    "group": "Catalog",
+    "sql": "CREATE TABLE sq_asset_registers (id INTEGER);\nCREATE TABLE sq_asset_registers_history (id INTEGER);\nALTER TABLE sq_asset_registers_history ADD COLUMN note TEXT;\nDROP TABLE sq_asset_registers;\nDROP TABLE sq_asset_registers_history;",
+    "statementCount": 5,
+    "catalogChanges": 5,
+    "failureIndex": -1
+  },
+  {
+    "id": "sq-mixed-17-purchase_receipts",
+    "dialect": "Sqlite",
+    "group": "Mixed",
+    "sql": "CREATE TABLE sq_purchase_receipts (id INTEGER);\nSELECT id FROM sq_purchase_receipts WHERE id = 1;",
+    "statementCount": 2,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "sq-mixed-18-stock_replenishments",
+    "dialect": "Sqlite",
+    "group": "Mixed",
+    "sql": "CREATE TABLE sq_stock_replenishments (id INTEGER);\nINSERT INTO sq_stock_replenishments(id) VALUES (1);\nSELECT id FROM sq_stock_replenishments;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "sq-mixed-19-subscription_renewals",
+    "dialect": "Sqlite",
+    "group": "Mixed",
+    "sql": "CREATE TABLE sq_subscription_renewals (id INTEGER);\nUPDATE sq_subscription_renewals SET id = 2 WHERE id = 1;\nSELECT id FROM sq_subscription_renewals;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "sq-mixed-20-room_bookings",
+    "dialect": "Sqlite",
+    "group": "Mixed",
+    "sql": "CREATE TABLE sq_room_bookings (id INTEGER);\nDELETE FROM sq_room_bookings WHERE id = 1;\nSELECT id FROM sq_room_bookings;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "sq-mixed-21-sales_forecasts",
+    "dialect": "Sqlite",
+    "group": "Mixed",
+    "sql": "CREATE TABLE sq_sales_forecasts (id INTEGER);\nSELECT id FROM sq_sales_forecasts WHERE id = 1;",
+    "statementCount": 2,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "sq-mixed-22-expense_claims",
+    "dialect": "Sqlite",
+    "group": "Mixed",
+    "sql": "CREATE TABLE sq_expense_claims (id INTEGER);\nINSERT INTO sq_expense_claims(id) VALUES (1);\nSELECT id FROM sq_expense_claims;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "sq-mixed-23-service_requests",
+    "dialect": "Sqlite",
+    "group": "Mixed",
+    "sql": "CREATE TABLE sq_service_requests (id INTEGER);\nUPDATE sq_service_requests SET id = 2 WHERE id = 1;\nSELECT id FROM sq_service_requests;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "sq-mixed-24-product_returns",
+    "dialect": "Sqlite",
+    "group": "Mixed",
+    "sql": "CREATE TABLE sq_product_returns (id INTEGER);\nDELETE FROM sq_product_returns WHERE id = 1;\nSELECT id FROM sq_product_returns;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "sq-invalid-25-invoice_allocations",
+    "dialect": "Sqlite",
+    "group": "Invalid",
+    "sql": "CREATE TABLE sq_invoice_allocations (id INTEGER, id INTEGER);\nSELECT id FROM sq_invoice_allocations;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "sq-invalid-26-reconciliation_runs",
+    "dialect": "Sqlite",
+    "group": "Invalid",
+    "sql": "DROP TABLE sq_reconciliation_runs;\nSELECT 1;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "sq-invalid-27-credit_authorizations",
+    "dialect": "Sqlite",
+    "group": "Invalid",
+    "sql": "CREATE TABLE sq_credit_authorizations (id INTEGER);\nCREATE TABLE sq_credit_authorizations (id INTEGER);",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "sq-invalid-28-loan_accounts",
+    "dialect": "Sqlite",
+    "group": "Invalid",
+    "sql": "CREATE TABLE sq_loan_accounts (id INTEGER);\nDROP TABLE sq_loan_accounts;\nDROP TABLE sq_loan_accounts;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 2
+  },
+  {
+    "id": "sq-invalid-29-warehouse_transfers",
+    "dialect": "Sqlite",
+    "group": "Invalid",
+    "sql": "CREATE TABLE sq_warehouse_transfers (id INTEGER, id INTEGER);\nSELECT id FROM sq_warehouse_transfers;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "sq-invalid-30-insurance_claims",
+    "dialect": "Sqlite",
+    "group": "Invalid",
+    "sql": "DROP TABLE sq_insurance_claims;\nSELECT 1;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "sq-invalid-31-project_milestones",
+    "dialect": "Sqlite",
+    "group": "Invalid",
+    "sql": "CREATE TABLE sq_project_milestones (id INTEGER);\nCREATE TABLE sq_project_milestones (id INTEGER);",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "sq-invalid-32-staff_rotations",
+    "dialect": "Sqlite",
+    "group": "Invalid",
+    "sql": "CREATE TABLE sq_staff_rotations (id INTEGER);\nDROP TABLE sq_staff_rotations;\nDROP TABLE sq_staff_rotations;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 2
+  },
+  {
+    "id": "sq-unsupported-33-attendance_records",
+    "dialect": "Sqlite",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE sq_attendance_records (id INTEGER, CHECK (id > 0));\nSELECT id FROM sq_attendance_records;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "sq-unsupported-34-order_fulfillments",
+    "dialect": "Sqlite",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE sq_order_fulfillments (id INTEGER);\nCREATE TABLE sq_order_fulfillments_history (id INTEGER, CHECK (id > 0));\nSELECT id FROM sq_order_fulfillments;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "sq-unsupported-35-shipment_scans",
+    "dialect": "Sqlite",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE sq_shipment_scans (id INTEGER);\nUNRECOGNIZED WORDS;\nSELECT id FROM sq_shipment_scans;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "sq-unsupported-36-inventory_counts",
+    "dialect": "Sqlite",
+    "group": "Unsupported",
+    "sql": "SOME UNKNOWN STATEMENT;\nCREATE TABLE sq_inventory_counts (id INTEGER);\nSELECT id FROM sq_inventory_counts;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "sq-unsupported-37-merchant_settlements",
+    "dialect": "Sqlite",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE sq_merchant_settlements (id INTEGER, CHECK (id > 0));\nSELECT id FROM sq_merchant_settlements;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "sq-unsupported-38-payroll_adjustments",
+    "dialect": "Sqlite",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE sq_payroll_adjustments (id INTEGER);\nCREATE TABLE sq_payroll_adjustments_history (id INTEGER, CHECK (id > 0));\nSELECT id FROM sq_payroll_adjustments;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "sq-unsupported-39-course_enrollments",
+    "dialect": "Sqlite",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE sq_course_enrollments (id INTEGER);\nUNRECOGNIZED WORDS;\nSELECT id FROM sq_course_enrollments;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "sq-unsupported-40-refund_batches",
+    "dialect": "Sqlite",
+    "group": "Unsupported",
+    "sql": "SOME UNKNOWN STATEMENT;\nCREATE TABLE sq_refund_batches (id INTEGER);\nSELECT id FROM sq_refund_batches;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "ms-catalog-01-inventory_reservations",
+    "dialect": "MsSqlServer",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ms_inventory_reservations (id INT);\nDROP TABLE ms_inventory_reservations;",
+    "statementCount": 2,
+    "catalogChanges": 2,
+    "failureIndex": -1
+  },
+  {
+    "id": "ms-catalog-02-warehouse_bins",
+    "dialect": "MsSqlServer",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ms_warehouse_bins (id INT);\nCREATE TABLE ms_warehouse_bins_history (id INT);\nDROP TABLE ms_warehouse_bins_history;\nDROP TABLE ms_warehouse_bins;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "ms-catalog-03-shipping_labels",
+    "dialect": "MsSqlServer",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ms_shipping_labels (id INT);\nALTER TABLE ms_shipping_labels ADD note NVARCHAR(64);\nDROP TABLE ms_shipping_labels;",
+    "statementCount": 3,
+    "catalogChanges": 3,
+    "failureIndex": -1
+  },
+  {
+    "id": "ms-catalog-04-billing_invoices",
+    "dialect": "MsSqlServer",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ms_billing_invoices (id INT);\nCREATE TABLE ms_billing_invoices_history (id INT);\nDROP TABLE ms_billing_invoices;\nDROP TABLE ms_billing_invoices_history;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "ms-catalog-05-supplier_orders",
+    "dialect": "MsSqlServer",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ms_supplier_orders (id INT, label NVARCHAR(64));\nDROP TABLE ms_supplier_orders;",
+    "statementCount": 2,
+    "catalogChanges": 2,
+    "failureIndex": -1
+  },
+  {
+    "id": "ms-catalog-06-employee_rosters",
+    "dialect": "MsSqlServer",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ms_employee_rosters (id INT);\nALTER TABLE ms_employee_rosters ADD note NVARCHAR(64);\nCREATE TABLE ms_employee_rosters_history (id INT);\nDROP TABLE ms_employee_rosters_history;\nDROP TABLE ms_employee_rosters;",
+    "statementCount": 5,
+    "catalogChanges": 5,
+    "failureIndex": -1
+  },
+  {
+    "id": "ms-catalog-07-payment_reconciliations",
+    "dialect": "MsSqlServer",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ms_payment_reconciliations (id INT);\nDROP TABLE ms_payment_reconciliations;\nCREATE TABLE ms_payment_reconciliations (id INT, title NVARCHAR(64));\nDROP TABLE ms_payment_reconciliations;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "ms-catalog-08-audit_entries",
+    "dialect": "MsSqlServer",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ms_audit_entries (id INT);\nCREATE TABLE ms_audit_entries_history (id INT);\nALTER TABLE ms_audit_entries_history ADD note NVARCHAR(64);\nDROP TABLE ms_audit_entries;\nDROP TABLE ms_audit_entries_history;",
+    "statementCount": 5,
+    "catalogChanges": 5,
+    "failureIndex": -1
+  },
+  {
+    "id": "ms-catalog-09-customer_addresses",
+    "dialect": "MsSqlServer",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ms_customer_addresses (id INT);\nDROP TABLE ms_customer_addresses;",
+    "statementCount": 2,
+    "catalogChanges": 2,
+    "failureIndex": -1
+  },
+  {
+    "id": "ms-catalog-10-delivery_routes",
+    "dialect": "MsSqlServer",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ms_delivery_routes (id INT);\nCREATE TABLE ms_delivery_routes_history (id INT);\nDROP TABLE ms_delivery_routes_history;\nDROP TABLE ms_delivery_routes;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "ms-catalog-11-production_batches",
+    "dialect": "MsSqlServer",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ms_production_batches (id INT);\nALTER TABLE ms_production_batches ADD note NVARCHAR(64);\nDROP TABLE ms_production_batches;",
+    "statementCount": 3,
+    "catalogChanges": 3,
+    "failureIndex": -1
+  },
+  {
+    "id": "ms-catalog-12-maintenance_checks",
+    "dialect": "MsSqlServer",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ms_maintenance_checks (id INT);\nCREATE TABLE ms_maintenance_checks_history (id INT);\nDROP TABLE ms_maintenance_checks;\nDROP TABLE ms_maintenance_checks_history;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "ms-catalog-13-support_tickets",
+    "dialect": "MsSqlServer",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ms_support_tickets (id INT, label NVARCHAR(64));\nDROP TABLE ms_support_tickets;",
+    "statementCount": 2,
+    "catalogChanges": 2,
+    "failureIndex": -1
+  },
+  {
+    "id": "ms-catalog-14-account_balances",
+    "dialect": "MsSqlServer",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ms_account_balances (id INT);\nALTER TABLE ms_account_balances ADD note NVARCHAR(64);\nCREATE TABLE ms_account_balances_history (id INT);\nDROP TABLE ms_account_balances_history;\nDROP TABLE ms_account_balances;",
+    "statementCount": 5,
+    "catalogChanges": 5,
+    "failureIndex": -1
+  },
+  {
+    "id": "ms-catalog-15-clinic_appointments",
+    "dialect": "MsSqlServer",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ms_clinic_appointments (id INT);\nDROP TABLE ms_clinic_appointments;\nCREATE TABLE ms_clinic_appointments (id INT, title NVARCHAR(64));\nDROP TABLE ms_clinic_appointments;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "ms-catalog-16-asset_registers",
+    "dialect": "MsSqlServer",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ms_asset_registers (id INT);\nCREATE TABLE ms_asset_registers_history (id INT);\nALTER TABLE ms_asset_registers_history ADD note NVARCHAR(64);\nDROP TABLE ms_asset_registers;\nDROP TABLE ms_asset_registers_history;",
+    "statementCount": 5,
+    "catalogChanges": 5,
+    "failureIndex": -1
+  },
+  {
+    "id": "ms-mixed-17-purchase_receipts",
+    "dialect": "MsSqlServer",
+    "group": "Mixed",
+    "sql": "CREATE TABLE ms_purchase_receipts (id INT);\nSELECT id FROM ms_purchase_receipts WHERE id = 1;",
+    "statementCount": 2,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "ms-mixed-18-stock_replenishments",
+    "dialect": "MsSqlServer",
+    "group": "Mixed",
+    "sql": "CREATE TABLE ms_stock_replenishments (id INT);\nINSERT INTO ms_stock_replenishments(id) VALUES (1);\nSELECT id FROM ms_stock_replenishments;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "ms-mixed-19-subscription_renewals",
+    "dialect": "MsSqlServer",
+    "group": "Mixed",
+    "sql": "CREATE TABLE ms_subscription_renewals (id INT);\nUPDATE ms_subscription_renewals SET id = 2 WHERE id = 1;\nSELECT id FROM ms_subscription_renewals;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "ms-mixed-20-room_bookings",
+    "dialect": "MsSqlServer",
+    "group": "Mixed",
+    "sql": "CREATE TABLE ms_room_bookings (id INT);\nDELETE FROM ms_room_bookings WHERE id = 1;\nSELECT id FROM ms_room_bookings;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "ms-mixed-21-sales_forecasts",
+    "dialect": "MsSqlServer",
+    "group": "Mixed",
+    "sql": "CREATE TABLE ms_sales_forecasts (id INT);\nSELECT id FROM ms_sales_forecasts WHERE id = 1;",
+    "statementCount": 2,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "ms-mixed-22-expense_claims",
+    "dialect": "MsSqlServer",
+    "group": "Mixed",
+    "sql": "CREATE TABLE ms_expense_claims (id INT);\nINSERT INTO ms_expense_claims(id) VALUES (1);\nSELECT id FROM ms_expense_claims;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "ms-mixed-23-service_requests",
+    "dialect": "MsSqlServer",
+    "group": "Mixed",
+    "sql": "CREATE TABLE ms_service_requests (id INT);\nUPDATE ms_service_requests SET id = 2 WHERE id = 1;\nSELECT id FROM ms_service_requests;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "ms-mixed-24-product_returns",
+    "dialect": "MsSqlServer",
+    "group": "Mixed",
+    "sql": "CREATE TABLE ms_product_returns (id INT);\nDELETE FROM ms_product_returns WHERE id = 1;\nSELECT id FROM ms_product_returns;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "ms-invalid-25-invoice_allocations",
+    "dialect": "MsSqlServer",
+    "group": "Invalid",
+    "sql": "CREATE TABLE ms_invoice_allocations (id INT, id INT);\nSELECT id FROM ms_invoice_allocations;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "ms-invalid-26-reconciliation_runs",
+    "dialect": "MsSqlServer",
+    "group": "Invalid",
+    "sql": "DROP TABLE ms_reconciliation_runs;\nSELECT 1;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "ms-invalid-27-credit_authorizations",
+    "dialect": "MsSqlServer",
+    "group": "Invalid",
+    "sql": "CREATE TABLE ms_credit_authorizations (id INT);\nCREATE TABLE ms_credit_authorizations (id INT);",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "ms-invalid-28-loan_accounts",
+    "dialect": "MsSqlServer",
+    "group": "Invalid",
+    "sql": "CREATE TABLE ms_loan_accounts (id INT);\nDROP TABLE ms_loan_accounts;\nDROP TABLE ms_loan_accounts;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 2
+  },
+  {
+    "id": "ms-invalid-29-warehouse_transfers",
+    "dialect": "MsSqlServer",
+    "group": "Invalid",
+    "sql": "CREATE TABLE ms_warehouse_transfers (id INT, id INT);\nSELECT id FROM ms_warehouse_transfers;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "ms-invalid-30-insurance_claims",
+    "dialect": "MsSqlServer",
+    "group": "Invalid",
+    "sql": "DROP TABLE ms_insurance_claims;\nSELECT 1;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "ms-invalid-31-project_milestones",
+    "dialect": "MsSqlServer",
+    "group": "Invalid",
+    "sql": "CREATE TABLE ms_project_milestones (id INT);\nCREATE TABLE ms_project_milestones (id INT);",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "ms-invalid-32-staff_rotations",
+    "dialect": "MsSqlServer",
+    "group": "Invalid",
+    "sql": "CREATE TABLE ms_staff_rotations (id INT);\nDROP TABLE ms_staff_rotations;\nDROP TABLE ms_staff_rotations;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 2
+  },
+  {
+    "id": "ms-unsupported-33-attendance_records",
+    "dialect": "MsSqlServer",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE ms_attendance_records (id INT, CHECK (id > 0));\nSELECT id FROM ms_attendance_records;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "ms-unsupported-34-order_fulfillments",
+    "dialect": "MsSqlServer",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE ms_order_fulfillments (id INT);\nCREATE TABLE ms_order_fulfillments_history (id INT, CHECK (id > 0));\nSELECT id FROM ms_order_fulfillments;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "ms-unsupported-35-shipment_scans",
+    "dialect": "MsSqlServer",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE ms_shipment_scans (id INT);\nUNRECOGNIZED WORDS;\nSELECT id FROM ms_shipment_scans;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "ms-unsupported-36-inventory_counts",
+    "dialect": "MsSqlServer",
+    "group": "Unsupported",
+    "sql": "SOME UNKNOWN STATEMENT;\nCREATE TABLE ms_inventory_counts (id INT);\nSELECT id FROM ms_inventory_counts;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "ms-unsupported-37-merchant_settlements",
+    "dialect": "MsSqlServer",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE ms_merchant_settlements (id INT, CHECK (id > 0));\nSELECT id FROM ms_merchant_settlements;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "ms-unsupported-38-payroll_adjustments",
+    "dialect": "MsSqlServer",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE ms_payroll_adjustments (id INT);\nCREATE TABLE ms_payroll_adjustments_history (id INT, CHECK (id > 0));\nSELECT id FROM ms_payroll_adjustments;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "ms-unsupported-39-course_enrollments",
+    "dialect": "MsSqlServer",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE ms_course_enrollments (id INT);\nUNRECOGNIZED WORDS;\nSELECT id FROM ms_course_enrollments;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "ms-unsupported-40-refund_batches",
+    "dialect": "MsSqlServer",
+    "group": "Unsupported",
+    "sql": "SOME UNKNOWN STATEMENT;\nCREATE TABLE ms_refund_batches (id INT);\nSELECT id FROM ms_refund_batches;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "ora-catalog-01-inventory_reservations",
+    "dialect": "Oracle",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ora_inventory_reservations (id NUMBER);\nDROP TABLE ora_inventory_reservations;",
+    "statementCount": 2,
+    "catalogChanges": 2,
+    "failureIndex": -1
+  },
+  {
+    "id": "ora-catalog-02-warehouse_bins",
+    "dialect": "Oracle",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ora_warehouse_bins (id NUMBER);\nCREATE TABLE ora_warehouse_bins_history (id NUMBER);\nDROP TABLE ora_warehouse_bins_history;\nDROP TABLE ora_warehouse_bins;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "ora-catalog-03-shipping_labels",
+    "dialect": "Oracle",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ora_shipping_labels (id NUMBER);\nALTER TABLE ora_shipping_labels ADD (note VARCHAR2(64));\nDROP TABLE ora_shipping_labels;",
+    "statementCount": 3,
+    "catalogChanges": 3,
+    "failureIndex": -1
+  },
+  {
+    "id": "ora-catalog-04-billing_invoices",
+    "dialect": "Oracle",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ora_billing_invoices (id NUMBER);\nCREATE TABLE ora_billing_invoices_history (id NUMBER);\nDROP TABLE ora_billing_invoices;\nDROP TABLE ora_billing_invoices_history;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "ora-catalog-05-supplier_orders",
+    "dialect": "Oracle",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ora_supplier_orders (id NUMBER, label VARCHAR2(64));\nDROP TABLE ora_supplier_orders;",
+    "statementCount": 2,
+    "catalogChanges": 2,
+    "failureIndex": -1
+  },
+  {
+    "id": "ora-catalog-06-employee_rosters",
+    "dialect": "Oracle",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ora_employee_rosters (id NUMBER);\nALTER TABLE ora_employee_rosters ADD (note VARCHAR2(64));\nCREATE TABLE ora_employee_rosters_history (id NUMBER);\nDROP TABLE ora_employee_rosters_history;\nDROP TABLE ora_employee_rosters;",
+    "statementCount": 5,
+    "catalogChanges": 5,
+    "failureIndex": -1
+  },
+  {
+    "id": "ora-catalog-07-payment_reconciliations",
+    "dialect": "Oracle",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ora_payment_reconciliations (id NUMBER);\nDROP TABLE ora_payment_reconciliations;\nCREATE TABLE ora_payment_reconciliations (id NUMBER, title VARCHAR2(64));\nDROP TABLE ora_payment_reconciliations;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "ora-catalog-08-audit_entries",
+    "dialect": "Oracle",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ora_audit_entries (id NUMBER);\nCREATE TABLE ora_audit_entries_history (id NUMBER);\nALTER TABLE ora_audit_entries_history ADD (note VARCHAR2(64));\nDROP TABLE ora_audit_entries;\nDROP TABLE ora_audit_entries_history;",
+    "statementCount": 5,
+    "catalogChanges": 5,
+    "failureIndex": -1
+  },
+  {
+    "id": "ora-catalog-09-customer_addresses",
+    "dialect": "Oracle",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ora_customer_addresses (id NUMBER);\nDROP TABLE ora_customer_addresses;",
+    "statementCount": 2,
+    "catalogChanges": 2,
+    "failureIndex": -1
+  },
+  {
+    "id": "ora-catalog-10-delivery_routes",
+    "dialect": "Oracle",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ora_delivery_routes (id NUMBER);\nCREATE TABLE ora_delivery_routes_history (id NUMBER);\nDROP TABLE ora_delivery_routes_history;\nDROP TABLE ora_delivery_routes;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "ora-catalog-11-production_batches",
+    "dialect": "Oracle",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ora_production_batches (id NUMBER);\nALTER TABLE ora_production_batches ADD (note VARCHAR2(64));\nDROP TABLE ora_production_batches;",
+    "statementCount": 3,
+    "catalogChanges": 3,
+    "failureIndex": -1
+  },
+  {
+    "id": "ora-catalog-12-maintenance_checks",
+    "dialect": "Oracle",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ora_maintenance_checks (id NUMBER);\nCREATE TABLE ora_maintenance_checks_history (id NUMBER);\nDROP TABLE ora_maintenance_checks;\nDROP TABLE ora_maintenance_checks_history;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "ora-catalog-13-support_tickets",
+    "dialect": "Oracle",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ora_support_tickets (id NUMBER, label VARCHAR2(64));\nDROP TABLE ora_support_tickets;",
+    "statementCount": 2,
+    "catalogChanges": 2,
+    "failureIndex": -1
+  },
+  {
+    "id": "ora-catalog-14-account_balances",
+    "dialect": "Oracle",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ora_account_balances (id NUMBER);\nALTER TABLE ora_account_balances ADD (note VARCHAR2(64));\nCREATE TABLE ora_account_balances_history (id NUMBER);\nDROP TABLE ora_account_balances_history;\nDROP TABLE ora_account_balances;",
+    "statementCount": 5,
+    "catalogChanges": 5,
+    "failureIndex": -1
+  },
+  {
+    "id": "ora-catalog-15-clinic_appointments",
+    "dialect": "Oracle",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ora_clinic_appointments (id NUMBER);\nDROP TABLE ora_clinic_appointments;\nCREATE TABLE ora_clinic_appointments (id NUMBER, title VARCHAR2(64));\nDROP TABLE ora_clinic_appointments;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "ora-catalog-16-asset_registers",
+    "dialect": "Oracle",
+    "group": "Catalog",
+    "sql": "CREATE TABLE ora_asset_registers (id NUMBER);\nCREATE TABLE ora_asset_registers_history (id NUMBER);\nALTER TABLE ora_asset_registers_history ADD (note VARCHAR2(64));\nDROP TABLE ora_asset_registers;\nDROP TABLE ora_asset_registers_history;",
+    "statementCount": 5,
+    "catalogChanges": 5,
+    "failureIndex": -1
+  },
+  {
+    "id": "ora-mixed-17-purchase_receipts",
+    "dialect": "Oracle",
+    "group": "Mixed",
+    "sql": "CREATE TABLE ora_purchase_receipts (id NUMBER);\nSELECT id FROM ora_purchase_receipts WHERE id = 1;",
+    "statementCount": 2,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "ora-mixed-18-stock_replenishments",
+    "dialect": "Oracle",
+    "group": "Mixed",
+    "sql": "CREATE TABLE ora_stock_replenishments (id NUMBER);\nINSERT INTO ora_stock_replenishments(id) VALUES (1);\nSELECT id FROM ora_stock_replenishments;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "ora-mixed-19-subscription_renewals",
+    "dialect": "Oracle",
+    "group": "Mixed",
+    "sql": "CREATE TABLE ora_subscription_renewals (id NUMBER);\nUPDATE ora_subscription_renewals SET id = 2 WHERE id = 1;\nSELECT id FROM ora_subscription_renewals;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "ora-mixed-20-room_bookings",
+    "dialect": "Oracle",
+    "group": "Mixed",
+    "sql": "CREATE TABLE ora_room_bookings (id NUMBER);\nDELETE FROM ora_room_bookings WHERE id = 1;\nSELECT id FROM ora_room_bookings;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "ora-mixed-21-sales_forecasts",
+    "dialect": "Oracle",
+    "group": "Mixed",
+    "sql": "CREATE TABLE ora_sales_forecasts (id NUMBER);\nSELECT id FROM ora_sales_forecasts WHERE id = 1;",
+    "statementCount": 2,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "ora-mixed-22-expense_claims",
+    "dialect": "Oracle",
+    "group": "Mixed",
+    "sql": "CREATE TABLE ora_expense_claims (id NUMBER);\nINSERT INTO ora_expense_claims(id) VALUES (1);\nSELECT id FROM ora_expense_claims;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "ora-mixed-23-service_requests",
+    "dialect": "Oracle",
+    "group": "Mixed",
+    "sql": "CREATE TABLE ora_service_requests (id NUMBER);\nUPDATE ora_service_requests SET id = 2 WHERE id = 1;\nSELECT id FROM ora_service_requests;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "ora-mixed-24-product_returns",
+    "dialect": "Oracle",
+    "group": "Mixed",
+    "sql": "CREATE TABLE ora_product_returns (id NUMBER);\nDELETE FROM ora_product_returns WHERE id = 1;\nSELECT id FROM ora_product_returns;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "ora-invalid-25-invoice_allocations",
+    "dialect": "Oracle",
+    "group": "Invalid",
+    "sql": "CREATE TABLE ora_invoice_allocations (id NUMBER, id NUMBER);\nSELECT id FROM ora_invoice_allocations;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "ora-invalid-26-reconciliation_runs",
+    "dialect": "Oracle",
+    "group": "Invalid",
+    "sql": "DROP TABLE ora_reconciliation_runs;\nSELECT 1;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "ora-invalid-27-credit_authorizations",
+    "dialect": "Oracle",
+    "group": "Invalid",
+    "sql": "CREATE TABLE ora_credit_authorizations (id NUMBER);\nCREATE TABLE ora_credit_authorizations (id NUMBER);",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "ora-invalid-28-loan_accounts",
+    "dialect": "Oracle",
+    "group": "Invalid",
+    "sql": "CREATE TABLE ora_loan_accounts (id NUMBER);\nDROP TABLE ora_loan_accounts;\nDROP TABLE ora_loan_accounts;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 2
+  },
+  {
+    "id": "ora-invalid-29-warehouse_transfers",
+    "dialect": "Oracle",
+    "group": "Invalid",
+    "sql": "CREATE TABLE ora_warehouse_transfers (id NUMBER, id NUMBER);\nSELECT id FROM ora_warehouse_transfers;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "ora-invalid-30-insurance_claims",
+    "dialect": "Oracle",
+    "group": "Invalid",
+    "sql": "DROP TABLE ora_insurance_claims;\nSELECT 1;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "ora-invalid-31-project_milestones",
+    "dialect": "Oracle",
+    "group": "Invalid",
+    "sql": "CREATE TABLE ora_project_milestones (id NUMBER);\nCREATE TABLE ora_project_milestones (id NUMBER);",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "ora-invalid-32-staff_rotations",
+    "dialect": "Oracle",
+    "group": "Invalid",
+    "sql": "CREATE TABLE ora_staff_rotations (id NUMBER);\nDROP TABLE ora_staff_rotations;\nDROP TABLE ora_staff_rotations;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 2
+  },
+  {
+    "id": "ora-unsupported-33-attendance_records",
+    "dialect": "Oracle",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE ora_attendance_records (id NUMBER, CHECK (id > 0));\nSELECT id FROM ora_attendance_records;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "ora-unsupported-34-order_fulfillments",
+    "dialect": "Oracle",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE ora_order_fulfillments (id NUMBER);\nCREATE TABLE ora_order_fulfillments_history (id NUMBER, CHECK (id > 0));\nSELECT id FROM ora_order_fulfillments;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "ora-unsupported-35-shipment_scans",
+    "dialect": "Oracle",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE ora_shipment_scans (id NUMBER);\nUNRECOGNIZED WORDS;\nSELECT id FROM ora_shipment_scans;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "ora-unsupported-36-inventory_counts",
+    "dialect": "Oracle",
+    "group": "Unsupported",
+    "sql": "SOME UNKNOWN STATEMENT;\nCREATE TABLE ora_inventory_counts (id NUMBER);\nSELECT id FROM ora_inventory_counts;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "ora-unsupported-37-merchant_settlements",
+    "dialect": "Oracle",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE ora_merchant_settlements (id NUMBER, CHECK (id > 0));\nSELECT id FROM ora_merchant_settlements;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "ora-unsupported-38-payroll_adjustments",
+    "dialect": "Oracle",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE ora_payroll_adjustments (id NUMBER);\nCREATE TABLE ora_payroll_adjustments_history (id NUMBER, CHECK (id > 0));\nSELECT id FROM ora_payroll_adjustments;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "ora-unsupported-39-course_enrollments",
+    "dialect": "Oracle",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE ora_course_enrollments (id NUMBER);\nUNRECOGNIZED WORDS;\nSELECT id FROM ora_course_enrollments;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "ora-unsupported-40-refund_batches",
+    "dialect": "Oracle",
+    "group": "Unsupported",
+    "sql": "SOME UNKNOWN STATEMENT;\nCREATE TABLE ora_refund_batches (id NUMBER);\nSELECT id FROM ora_refund_batches;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "fb-catalog-01-inventory_reservations",
+    "dialect": "Firebird",
+    "group": "Catalog",
+    "sql": "CREATE TABLE fb_inventory_reservations (id INTEGER);\nDROP TABLE fb_inventory_reservations;",
+    "statementCount": 2,
+    "catalogChanges": 2,
+    "failureIndex": -1
+  },
+  {
+    "id": "fb-catalog-02-warehouse_bins",
+    "dialect": "Firebird",
+    "group": "Catalog",
+    "sql": "CREATE TABLE fb_warehouse_bins (id INTEGER);\nCREATE TABLE fb_warehouse_bins_history (id INTEGER);\nDROP TABLE fb_warehouse_bins_history;\nDROP TABLE fb_warehouse_bins;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "fb-catalog-03-shipping_labels",
+    "dialect": "Firebird",
+    "group": "Catalog",
+    "sql": "CREATE TABLE fb_shipping_labels (id INTEGER);\nALTER TABLE fb_shipping_labels ADD note VARCHAR(64);\nDROP TABLE fb_shipping_labels;",
+    "statementCount": 3,
+    "catalogChanges": 3,
+    "failureIndex": -1
+  },
+  {
+    "id": "fb-catalog-04-billing_invoices",
+    "dialect": "Firebird",
+    "group": "Catalog",
+    "sql": "CREATE TABLE fb_billing_invoices (id INTEGER);\nCREATE TABLE fb_billing_invoices_history (id INTEGER);\nDROP TABLE fb_billing_invoices;\nDROP TABLE fb_billing_invoices_history;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "fb-catalog-05-supplier_orders",
+    "dialect": "Firebird",
+    "group": "Catalog",
+    "sql": "CREATE TABLE fb_supplier_orders (id INTEGER, label VARCHAR(64));\nDROP TABLE fb_supplier_orders;",
+    "statementCount": 2,
+    "catalogChanges": 2,
+    "failureIndex": -1
+  },
+  {
+    "id": "fb-catalog-06-employee_rosters",
+    "dialect": "Firebird",
+    "group": "Catalog",
+    "sql": "CREATE TABLE fb_employee_rosters (id INTEGER);\nALTER TABLE fb_employee_rosters ADD note VARCHAR(64);\nCREATE TABLE fb_employee_rosters_history (id INTEGER);\nDROP TABLE fb_employee_rosters_history;\nDROP TABLE fb_employee_rosters;",
+    "statementCount": 5,
+    "catalogChanges": 5,
+    "failureIndex": -1
+  },
+  {
+    "id": "fb-catalog-07-payment_reconciliations",
+    "dialect": "Firebird",
+    "group": "Catalog",
+    "sql": "CREATE TABLE fb_payment_reconciliations (id INTEGER);\nDROP TABLE fb_payment_reconciliations;\nCREATE TABLE fb_payment_reconciliations (id INTEGER, title VARCHAR(64));\nDROP TABLE fb_payment_reconciliations;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "fb-catalog-08-audit_entries",
+    "dialect": "Firebird",
+    "group": "Catalog",
+    "sql": "CREATE TABLE fb_audit_entries (id INTEGER);\nCREATE TABLE fb_audit_entries_history (id INTEGER);\nALTER TABLE fb_audit_entries_history ADD note VARCHAR(64);\nDROP TABLE fb_audit_entries;\nDROP TABLE fb_audit_entries_history;",
+    "statementCount": 5,
+    "catalogChanges": 5,
+    "failureIndex": -1
+  },
+  {
+    "id": "fb-catalog-09-customer_addresses",
+    "dialect": "Firebird",
+    "group": "Catalog",
+    "sql": "CREATE TABLE fb_customer_addresses (id INTEGER);\nDROP TABLE fb_customer_addresses;",
+    "statementCount": 2,
+    "catalogChanges": 2,
+    "failureIndex": -1
+  },
+  {
+    "id": "fb-catalog-10-delivery_routes",
+    "dialect": "Firebird",
+    "group": "Catalog",
+    "sql": "CREATE TABLE fb_delivery_routes (id INTEGER);\nCREATE TABLE fb_delivery_routes_history (id INTEGER);\nDROP TABLE fb_delivery_routes_history;\nDROP TABLE fb_delivery_routes;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "fb-catalog-11-production_batches",
+    "dialect": "Firebird",
+    "group": "Catalog",
+    "sql": "CREATE TABLE fb_production_batches (id INTEGER);\nALTER TABLE fb_production_batches ADD note VARCHAR(64);\nDROP TABLE fb_production_batches;",
+    "statementCount": 3,
+    "catalogChanges": 3,
+    "failureIndex": -1
+  },
+  {
+    "id": "fb-catalog-12-maintenance_checks",
+    "dialect": "Firebird",
+    "group": "Catalog",
+    "sql": "CREATE TABLE fb_maintenance_checks (id INTEGER);\nCREATE TABLE fb_maintenance_checks_history (id INTEGER);\nDROP TABLE fb_maintenance_checks;\nDROP TABLE fb_maintenance_checks_history;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "fb-catalog-13-support_tickets",
+    "dialect": "Firebird",
+    "group": "Catalog",
+    "sql": "CREATE TABLE fb_support_tickets (id INTEGER, label VARCHAR(64));\nDROP TABLE fb_support_tickets;",
+    "statementCount": 2,
+    "catalogChanges": 2,
+    "failureIndex": -1
+  },
+  {
+    "id": "fb-catalog-14-account_balances",
+    "dialect": "Firebird",
+    "group": "Catalog",
+    "sql": "CREATE TABLE fb_account_balances (id INTEGER);\nALTER TABLE fb_account_balances ADD note VARCHAR(64);\nCREATE TABLE fb_account_balances_history (id INTEGER);\nDROP TABLE fb_account_balances_history;\nDROP TABLE fb_account_balances;",
+    "statementCount": 5,
+    "catalogChanges": 5,
+    "failureIndex": -1
+  },
+  {
+    "id": "fb-catalog-15-clinic_appointments",
+    "dialect": "Firebird",
+    "group": "Catalog",
+    "sql": "CREATE TABLE fb_clinic_appointments (id INTEGER);\nDROP TABLE fb_clinic_appointments;\nCREATE TABLE fb_clinic_appointments (id INTEGER, title VARCHAR(64));\nDROP TABLE fb_clinic_appointments;",
+    "statementCount": 4,
+    "catalogChanges": 4,
+    "failureIndex": -1
+  },
+  {
+    "id": "fb-catalog-16-asset_registers",
+    "dialect": "Firebird",
+    "group": "Catalog",
+    "sql": "CREATE TABLE fb_asset_registers (id INTEGER);\nCREATE TABLE fb_asset_registers_history (id INTEGER);\nALTER TABLE fb_asset_registers_history ADD note VARCHAR(64);\nDROP TABLE fb_asset_registers;\nDROP TABLE fb_asset_registers_history;",
+    "statementCount": 5,
+    "catalogChanges": 5,
+    "failureIndex": -1
+  },
+  {
+    "id": "fb-mixed-17-purchase_receipts",
+    "dialect": "Firebird",
+    "group": "Mixed",
+    "sql": "CREATE TABLE fb_purchase_receipts (id INTEGER);\nSELECT id FROM fb_purchase_receipts WHERE id = 1;",
+    "statementCount": 2,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "fb-mixed-18-stock_replenishments",
+    "dialect": "Firebird",
+    "group": "Mixed",
+    "sql": "CREATE TABLE fb_stock_replenishments (id INTEGER);\nINSERT INTO fb_stock_replenishments(id) VALUES (1);\nSELECT id FROM fb_stock_replenishments;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "fb-mixed-19-subscription_renewals",
+    "dialect": "Firebird",
+    "group": "Mixed",
+    "sql": "CREATE TABLE fb_subscription_renewals (id INTEGER);\nUPDATE fb_subscription_renewals SET id = 2 WHERE id = 1;\nSELECT id FROM fb_subscription_renewals;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "fb-mixed-20-room_bookings",
+    "dialect": "Firebird",
+    "group": "Mixed",
+    "sql": "CREATE TABLE fb_room_bookings (id INTEGER);\nDELETE FROM fb_room_bookings WHERE id = 1;\nSELECT id FROM fb_room_bookings;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "fb-mixed-21-sales_forecasts",
+    "dialect": "Firebird",
+    "group": "Mixed",
+    "sql": "CREATE TABLE fb_sales_forecasts (id INTEGER);\nSELECT id FROM fb_sales_forecasts WHERE id = 1;",
+    "statementCount": 2,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "fb-mixed-22-expense_claims",
+    "dialect": "Firebird",
+    "group": "Mixed",
+    "sql": "CREATE TABLE fb_expense_claims (id INTEGER);\nINSERT INTO fb_expense_claims(id) VALUES (1);\nSELECT id FROM fb_expense_claims;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "fb-mixed-23-service_requests",
+    "dialect": "Firebird",
+    "group": "Mixed",
+    "sql": "CREATE TABLE fb_service_requests (id INTEGER);\nUPDATE fb_service_requests SET id = 2 WHERE id = 1;\nSELECT id FROM fb_service_requests;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "fb-mixed-24-product_returns",
+    "dialect": "Firebird",
+    "group": "Mixed",
+    "sql": "CREATE TABLE fb_product_returns (id INTEGER);\nDELETE FROM fb_product_returns WHERE id = 1;\nSELECT id FROM fb_product_returns;",
+    "statementCount": 3,
+    "catalogChanges": 1,
+    "failureIndex": -1
+  },
+  {
+    "id": "fb-invalid-25-invoice_allocations",
+    "dialect": "Firebird",
+    "group": "Invalid",
+    "sql": "CREATE TABLE fb_invoice_allocations (id INTEGER, id INTEGER);\nSELECT id FROM fb_invoice_allocations;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "fb-invalid-26-reconciliation_runs",
+    "dialect": "Firebird",
+    "group": "Invalid",
+    "sql": "DROP TABLE fb_reconciliation_runs;\nSELECT 1;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "fb-invalid-27-credit_authorizations",
+    "dialect": "Firebird",
+    "group": "Invalid",
+    "sql": "CREATE TABLE fb_credit_authorizations (id INTEGER);\nCREATE TABLE fb_credit_authorizations (id INTEGER);",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "fb-invalid-28-loan_accounts",
+    "dialect": "Firebird",
+    "group": "Invalid",
+    "sql": "CREATE TABLE fb_loan_accounts (id INTEGER);\nDROP TABLE fb_loan_accounts;\nDROP TABLE fb_loan_accounts;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 2
+  },
+  {
+    "id": "fb-invalid-29-warehouse_transfers",
+    "dialect": "Firebird",
+    "group": "Invalid",
+    "sql": "CREATE TABLE fb_warehouse_transfers (id INTEGER, id INTEGER);\nSELECT id FROM fb_warehouse_transfers;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "fb-invalid-30-insurance_claims",
+    "dialect": "Firebird",
+    "group": "Invalid",
+    "sql": "DROP TABLE fb_insurance_claims;\nSELECT 1;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "fb-invalid-31-project_milestones",
+    "dialect": "Firebird",
+    "group": "Invalid",
+    "sql": "CREATE TABLE fb_project_milestones (id INTEGER);\nCREATE TABLE fb_project_milestones (id INTEGER);",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "fb-invalid-32-staff_rotations",
+    "dialect": "Firebird",
+    "group": "Invalid",
+    "sql": "CREATE TABLE fb_staff_rotations (id INTEGER);\nDROP TABLE fb_staff_rotations;\nDROP TABLE fb_staff_rotations;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 2
+  },
+  {
+    "id": "fb-unsupported-33-attendance_records",
+    "dialect": "Firebird",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE fb_attendance_records (id INTEGER, CHECK (id > 0));\nSELECT id FROM fb_attendance_records;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "fb-unsupported-34-order_fulfillments",
+    "dialect": "Firebird",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE fb_order_fulfillments (id INTEGER);\nCREATE TABLE fb_order_fulfillments_history (id INTEGER, CHECK (id > 0));\nSELECT id FROM fb_order_fulfillments;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "fb-unsupported-35-shipment_scans",
+    "dialect": "Firebird",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE fb_shipment_scans (id INTEGER);\nUNRECOGNIZED WORDS;\nSELECT id FROM fb_shipment_scans;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "fb-unsupported-36-inventory_counts",
+    "dialect": "Firebird",
+    "group": "Unsupported",
+    "sql": "SOME UNKNOWN STATEMENT;\nCREATE TABLE fb_inventory_counts (id INTEGER);\nSELECT id FROM fb_inventory_counts;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "fb-unsupported-37-merchant_settlements",
+    "dialect": "Firebird",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE fb_merchant_settlements (id INTEGER, CHECK (id > 0));\nSELECT id FROM fb_merchant_settlements;",
+    "statementCount": 2,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  },
+  {
+    "id": "fb-unsupported-38-payroll_adjustments",
+    "dialect": "Firebird",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE fb_payroll_adjustments (id INTEGER);\nCREATE TABLE fb_payroll_adjustments_history (id INTEGER, CHECK (id > 0));\nSELECT id FROM fb_payroll_adjustments;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "fb-unsupported-39-course_enrollments",
+    "dialect": "Firebird",
+    "group": "Unsupported",
+    "sql": "CREATE TABLE fb_course_enrollments (id INTEGER);\nUNRECOGNIZED WORDS;\nSELECT id FROM fb_course_enrollments;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 1
+  },
+  {
+    "id": "fb-unsupported-40-refund_batches",
+    "dialect": "Firebird",
+    "group": "Unsupported",
+    "sql": "SOME UNKNOWN STATEMENT;\nCREATE TABLE fb_refund_batches (id INTEGER);\nSELECT id FROM fb_refund_batches;",
+    "statementCount": 3,
+    "catalogChanges": 0,
+    "failureIndex": 0
+  }
+]
