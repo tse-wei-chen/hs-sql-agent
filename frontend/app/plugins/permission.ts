@@ -1,24 +1,15 @@
 import { watch } from "vue"
-import { authSessionRevision } from "@/lib/auth-session"
+import { useAuthStore } from "@/stores/auth"
 import { canAccess, type PermissionGrant } from "@/lib/permissions"
 
-function getPermissions(): PermissionGrant[] {
-  try {
-    const raw = localStorage.getItem("permissions")
-    return raw ? JSON.parse(raw) : []
-  } catch {
-    return []
-  }
-}
-
-export default defineNuxtPlugin((nuxtApp) => {
+ export default defineNuxtPlugin((nuxtApp) => {
   const route = useRoute()
+  const auth = useAuthStore()
   const directiveWatchers = new WeakMap<HTMLElement, () => void>()
 
   function currentCheck(value: string | string[]) {
-    // Establish a reactive dependency so computed callers of $can update after
-    // token refresh, sign-in, or sign-out changes the stored permission grants.
-    void authSessionRevision.value
+    // Pinia is the reactive source of permission grants. API authorization
+    // remains enforced by the backend regardless of this UI hint.
 
     // Relative action names are resolved against the page's declared canonical permission,
     // never against its navigational URL. A route can therefore move without changing its
@@ -26,7 +17,7 @@ export default defineNuxtPlugin((nuxtApp) => {
     const pagePermission = typeof route.meta.permission === "string"
       ? route.meta.permission
       : undefined
-    return canAccess(getPermissions(), value, pagePermission)
+    return canAccess(auth.permissions, value, pagePermission)
   }
 
   nuxtApp.vueApp.directive("permission", {
@@ -35,7 +26,10 @@ export default defineNuxtPlugin((nuxtApp) => {
         el.style.display = currentCheck(binding.value) ? "" : "none"
       }
       applyVisibility()
-      directiveWatchers.set(el, watch(authSessionRevision, applyVisibility))
+      directiveWatchers.set(el, watch(
+        [() => auth.permissions, () => route.meta.permission],
+        applyVisibility,
+      ))
     },
     updated(el, binding) {
       el.style.display = currentCheck(binding.value) ? "" : "none"
