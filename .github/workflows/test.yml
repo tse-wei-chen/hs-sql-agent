@@ -38,9 +38,7 @@ jobs:
         run: |
           set -euo pipefail
           for framework in net10.0 net8.0; do
-            dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify \
-              --directory artifacts/test-evidence/common-test/"$framework" \
-              --suite Common.Test --require-complete
+            dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/common-test/"$framework" --suite Common.Test --require-complete
           done
       - name: Upload Common.Test TRX and instrumented source coverage
         if: always()
@@ -134,9 +132,7 @@ jobs:
         run: |
           set -euo pipefail
           for framework in net10.0 net8.0; do
-            dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify \
-              --directory artifacts/test-evidence/infrastructure-test/"$framework" \
-              --suite Infrastructure.Test --require-complete
+            dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/infrastructure-test/"$framework" --suite Infrastructure.Test --require-complete
           done
       - name: Upload Infrastructure.Test TRX and instrumented source coverage
         if: always()
@@ -172,9 +168,7 @@ jobs:
         run: |
           set -euo pipefail
           for framework in net10.0 net8.0; do
-            dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify \
-              --directory artifacts/test-evidence/auth-test/"$framework" \
-              --suite Auth.Test --require-complete
+            dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/auth-test/"$framework" --suite Auth.Test --require-complete
           done
       - name: Upload Auth.Test TRX and instrumented source coverage
         if: always()
@@ -210,9 +204,7 @@ jobs:
         run: |
           set -euo pipefail
           for framework in net10.0 net8.0; do
-            dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify \
-              --directory artifacts/test-evidence/admin-test/"$framework" \
-              --suite Admin.Test --require-complete
+            dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/admin-test/"$framework" --suite Admin.Test --require-complete
           done
       - name: Upload Admin.Test TRX and instrumented source coverage
         if: always()
