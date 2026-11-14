@@ -6,6 +6,8 @@ using Auth.Service.Interfaces;
 using Auth.Service.Models;
 using Auth.Service.Services;
 using Microsoft.Extensions.Options;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Moq;
 using Moq.EntityFrameworkCore;
 using Xunit;
@@ -154,7 +156,14 @@ public class AuthServiceTests
         _contextMock.Setup(c => c.Members).ReturnsDbSet(members);
         _contextMock.Setup(c => c.Roles).ReturnsDbSet(roles);
         _contextMock.Setup(c => c.MemberRoles).ReturnsDbSet(memberRoles);
-        _contextMock.Setup(c => c.PermissionActionTemplates).ReturnsDbSet(new List<PermissionActionTemplate>());
+        // Use a real EF async query provider: Moq.EntityFrameworkCore's
+        // mock enumerator throws during DisposeAsync on .NET 8.
+        await using var templatesConnection = new SqliteConnection("Data Source=:memory:");
+        await templatesConnection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var templatesContext = new AuthContext(
+            new DbContextOptionsBuilder<AuthContext>().UseSqlite(templatesConnection).Options);
+        await templatesContext.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
+        _contextMock.Setup(c => c.PermissionActionTemplates).Returns(templatesContext.PermissionActionTemplates);
         _contextMock.Setup(c => c.PermissionActions).ReturnsDbSet(permissionActions);
 
         // Capture Add so DbSet queries can find created entities

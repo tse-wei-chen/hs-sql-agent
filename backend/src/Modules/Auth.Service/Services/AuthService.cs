@@ -275,8 +275,8 @@ public class AuthService(
         _context.Roles.Add(role);
         await _context.SaveChangesAsync(cancellationToken);
 
-        // A read-only bootstrap lookup: avoid the EF8 mocked AsNoTracking async enumerator.
         var templates = await _context.PermissionActionTemplates
+            .AsNoTracking()
             .ToListAsync(cancellationToken);
 
         foreach (var t in templates)
