@@ -1,10 +1,31 @@
 # HsSqlAgent.SqlCore
 
-Provider-driver-free SQL parsing, validation and compilation for HsSqlAgent.
+**Driver-free SQL parsing, static analysis, and fail-closed compilation for .NET.**
 
-It contains the structured SQL parser, AST, binding, normalization, semantic/capability validation,
-provider-specific SQL lowering and query/DML compilation pipeline. It intentionally does not carry
-ADO.NET database drivers, Dapper, MCP, ASP.NET Core, authentication or administration services.
+`HsSqlAgent.SqlCore` is the compiler library used by [hs-sql-agent](https://github.com/tse-wei-chen/hs-sql-agent). It supports six SQL dialects: **PostgreSQL, MySQL, SQL Server, Oracle, SQLite, and Firebird**. Syntax and capabilities are deliberately provider- and version-specific; support for a dialect does **not** mean every statement is executable.
+
+The compiler uses a closed F# AST, typed validation and capability checks, and provider-native rendering behind a CLR-friendly C# facade. **It does not connect to a database or execute SQL.**
+
+## Capabilities
+
+Support depends on statement shape, provider, version, compilation policy and proof inputs.
+
+| Family | Compilation | Static analysis |
+| --- | --- | --- |
+| DQL | `CompileQuery`: supported SELECT shapes and proven dialect transformations | Query binding, dependencies and diagnostics through script analysis |
+| DML | `CompileDml`: supported INSERT / UPDATE / DELETE and bounded conflict / MERGE forms | Modeled mutation effects and dependencies, with explicit uncertainty |
+| DDL | `CompileDdl`, limited PostgreSQL `CompileDdlBatch`, immutable plans and static `PreviewDdl` | Modeled schema changes, virtual catalog evolution and dependencies |
+
+The six dialects do not have identical support. Cross-provider compilation requires
+proven transformations. Parsing a statement does not imply compilation support.
+
+`ParseScript` / `AnalyzeScript` also cover bounded DCL, transaction, session,
+utility and procedural models. Analysis simulates catalog/effects in statement
+order and reports uncertainty; it does not determine actual affected rows or
+replace a database optimizer.
+
+Compilation requires no human approval. Consumers receive SQL, parameters and
+plans, and choose their own execution workflow.
 
 ## Install
 
@@ -12,181 +33,90 @@ ADO.NET database drivers, Dapper, MCP, ASP.NET Core, authentication or administr
 dotnet add package HsSqlAgent.SqlCore
 ```
 
-## Compile SQL
+## Compile a query
 
 ```csharp
+using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Core.Pipeline;
 using HsSqlAgent.SqlCore.Enums;
-using HsSqlAgent.SqlCore.SqlParsing;
 
-var parsed = CoreSqlTextParser.ParseQuery(
-    "SELECT id, name FROM users WHERE active = true",
-    SqlAgentToolType.Postgres);
-
-var command = CoreSqlCompiler.CreateDefault().Compile(
-    parsed,
+var command = SqlCoreFacade.CompileQuery(
+    "SELECT 1",
     SqlAgentToolType.Postgres,
-    new SqlPlanValidationContext("app-policy-v1"),
-    new SqlExecutionPlanPolicy(QueryMaxRows: 100));
+    SqlAgentToolType.Postgres,
+    new SqlPlanValidationContext("my-query-policy"),
+    new SqlExecutionPlanPolicy(100));
 
 Console.WriteLine(command.Sql);
-foreach (var parameter in command.Parameters)
-    Console.WriteLine($"{parameter.Name} = {parameter.Value}");
 ```
 
-For mutations, use `CoreSqlTextParser.ParseDml` with `CoreDmlCompiler`. Compilation produces an
-immutable `CompiledSqlCommand`; this package does not open database connections or execute SQL.
+`CompiledSqlCommand` contains native SQL, bound parameters, and compiler evidence. The caller remains responsible for database access, connection identity, permissions, and runtime limits.
 
-## Architecture invariants
+## Other compiler APIs
 
-The public CLR compatibility surface and the compiler core are intentionally separate:
+| API | Purpose |
+| --- | --- |
+| `CompileQuery` / `TryCompileQuery` | Validate and render a query under an explicit policy |
+| `CompileDml` / `TryCompileDml` | Validate and render a bounded mutation under DML policy and applicable proof requirements |
+| `CompileDdl` / `TryCompileDdl` | Compile an explicitly supported single DDL operation into an immutable schema plan |
+| `CompileDdlBatch` / `TryCompileDdlBatch` | Compile the limited, proven PostgreSQL DDL batch topologies |
+| `PreviewDdl` / `TryPreviewDdl` | Inspect a static before/expected-after schema change |
+| `ParseScript` / `AnalyzeScript` | Inspect multi-statement SQL, catalog effects, dependencies, and uncertainty |
 
-- `RewriteCoreModel` is the closed F# DU source of truth after SQL enters the compiler.
-- Compiler state advances through unforgeable stages: parsed → bound → canonical → validated → executable.
-- Source dialect semantics travel as `VerifiedSource`; target runtime and target capability proofs travel together as `VerifiedTarget`.
-- `RewriteLegacyAstAdapter`, `RewriteCompatibilityAstAdapter` and `RewriteFacadeAdapter` are the only rewrite-layer seams allowed to depend on the legacy `Core.Ast` / `ParsedStatement` compatibility model.
-- Binder, normalization/validation, policy and native rendering must not depend on the compatibility AST. CI reflects over internal rewrite signatures and rejects any dependency that crosses this boundary.
-- Typed diagnostics preserve code, compiler stage, category and source span without changing legacy exception compatibility.
-- Rendering accepts executable typestate, not an arbitrary AST plus a separately supplied provider identity.
+Use the `SqlCoreFacade` APIs from `HsSqlAgent.SqlCore`. More advanced overloads accept typed source/target capability profiles, compilation policies, proof inputs, and cancellation tokens.
 
-The compatibility AST remains available for CLR callers that inspect or replace `ParsedStatement.Statement`,
-but it is a projection/ingress format rather than a second semantic source of truth.
-
-## Temporal capability boundary
-
-Date arithmetic units are represented as a closed F# algebra rather than free-form canonical strings.
-PostgreSQL, MySQL, SQL Server, and Firebird currently have declared DATEADD lowering for DAY, WEEK,
-MONTH, QUARTER, YEAR, HOUR, MINUTE, and SECOND. Oracle and SQLite currently admit DAY, WEEK, HOUR,
-MINUTE, and SECOND only. MONTH, QUARTER, and YEAR remain fail-closed for Oracle and SQLite because
-their calendar rollover behavior is not yet proven equivalent to the canonical source semantics.
-Cross-provider non-DAY DATEDIFF also remains fail-closed because provider boundary-counting rules differ.
-
-## DML capability boundary
-
-SQLite UPDATE ... FROM is enabled only when both source and target capability profiles explicitly
-prove ServerVersion 3.33 or newer. PostgreSQL, SQL Server, and version-proven SQLite keep their native
-joined-update syntax; cross-provider joined-update lowering remains fail-closed when SQL Server or
-SQLite participates because duplicate-match target-row selection is not proven equivalent.
-
-SQLite 3.35+ rich RETURNING expressions are native-only and limited to the modified target table.
-Auxiliary UPDATE FROM sources are not visible to RETURNING, and the existing proven expression subset
-continues to reject top-level aggregates, window functions, subqueries, correlated references, and
-unproven functions.
-
-Firebird 5.0+ DSQL rich RETURNING uses the same proven scalar/predicate subset and may cross-lower
-with PostgreSQL when ordinary expression capabilities are proven. Firebird-specific OLD/NEW row
-contexts are not represented by the portable Core AST and remain outside this contract.
-
-SQL Server INSERT/UPDATE/DELETE OUTPUT is represented by the same closed result-row AST for a
-target-only column/wildcard subset and rendered with INSERTED/DELETED row images. Direct OUTPUT is
-admitted only for same-provider SQL Server compilation when the validation context carries
-metadata-backed DmlResultRowAssurance.NoEnabledTriggers for the exact target table and DML operation.
-Cross-provider RETURNING/OUTPUT lowering stays fail-closed because SQL Server OUTPUT exposes the
-pre-trigger row image while other providers do not share that trigger-timing contract.
-
-PostgreSQL and Firebird UPDATE/DELETE target aliases share a proven alias-hides-original-target
-contract. Both are represented structurally and may cross-lower between those two providers; target
-aliases for the remaining providers stay fail-closed until their mutation-specific alias grammar and
-name-resolution rules are modeled.
-
-PostgreSQL DELETE ... USING can lower to SQL Server joined DELETE for the proven no-target-alias
-shape by restating the target table in the Transact-SQL FROM source list. SQL Server native joined
-DELETE ... FROM source grammar is represented by the same closed AST, while PostgreSQL USING spelling
-remains invalid Transact-SQL source syntax.
-
-Oracle 26+ direct-join UPDATE ... FROM and DELETE ... {FROM|USING} are version-gated by explicit
-source and target profiles. Oracle joined UPDATE is same-provider native-only because duplicate target
-matches raise ORA-30926, which is not the portable behavior of the other joined-update providers.
-Oracle 26 joined DELETE participates in the PostgreSQL/SQL Server joined-delete intersection because
-Oracle documents duplicate source matches as deleting each target row once. RETURNING/OUTPUT remains
-independently capability-gated.
-
-
-## Opt-in metadata-backed column validation
-
-The compiler accepts an immutable, version-labelled, **host-provided** `SqlSchemaSnapshot`.
-It checks physical table existence, qualified/unqualified column references, join predicates,
-ambiguous columns, CTE/derived projections, correlated subqueries, and ordinary
-INSERT/UPDATE/DELETE target columns against that snapshot.
+### Analyze a script without executing it
 
 ```csharp
-using HsSqlAgent.SqlCore.Core.Pipeline;
+using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.Catalog;
+using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.Script;
 
-var schema = new SqlSchemaSnapshot(
-    SqlAgentToolType.Postgres,
-    "catalog-snapshot-2026-10",
-    new[] {
-        new SqlSchemaTable("public.users", new[] { "id", "name", "active" })
-    });
-var context = new SqlPlanValidationContext("app-policy-v2")
-    .WithSchemaSnapshot(schema);
-var command = SqlCoreFacade.CompileQuery(
-    "SELECT id, name FROM public.users WHERE active = true",
-    SqlAgentToolType.Postgres,
-    SqlAgentToolType.Postgres,
-    context,
-    new SqlExecutionPlanPolicy(100));
+var analysis = SqlCoreFacade.AnalyzeScript(
+    "CREATE TABLE demo (id INT); SELECT id FROM demo;",
+    new SqlScriptAnalysisOptions(
+        SqlAgentToolType.Postgres,
+        SqlCatalogState.KnownEmpty()));
+
+Console.WriteLine(analysis.EffectCoverage);
 ```
 
-Without a snapshot, prior compilation behavior is unchanged. With a snapshot, unverifiable
-shapes (currently recursive CTEs, NATURAL JOIN, MERGE and UPSERT conflict clauses) **fail
-closed**, using typed Binding-stage diagnostics. Missing tables and columns, ambiguous columns
-and unprovable projected column names also fail closed. The input snapshot must use actual
-provider-catalog identifier spelling, including PostgreSQL and Oracle case rules.
+`KnownEmpty()` is an **explicit caller assertion** about the starting virtual catalog. Without it, analysis starts from an unknown/open-world catalog. Neither state proves the real database schema.
 
-This first stage establishes **name-existence** proofs, not a complete type checker:
-function overloads, SQL expression types, NULL behavior, collations, generated columns,
-uniqueness, metadata freshness and execution-time catalog drift are not yet proven.
-The host is responsible for capturing trustworthy catalog metadata and versioning it.
-Do not treat schema validation as a replacement for runtime DML approval, access control
-or transaction-row verification.
-
-
-### Optional portable type-family proofs
-
-Typed metadata is an additional opt-in contract. Existing `new SqlSchemaTable(name, string[])`
-remains name-only (`Unknown` type family). To validate proven type conflicts:
+### Compile a DDL plan, not a database change
 
 ```csharp
-var typed = SqlSchemaTable.WithTypes(
-    "users",
-    new[] {
-        new SqlSchemaColumn("id", SqlSchemaValueKind.Numeric),
-        new SqlSchemaColumn("name", SqlSchemaValueKind.Text)
-    });
-var typedContext = new SqlPlanValidationContext("strict-v1")
-    .WithSchemaSnapshot(new SqlSchemaSnapshot(
-        SqlAgentToolType.Postgres, "catalog-v1", new[] { typed }));
+using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.Ddl;
+using HsSqlAgent.SqlCore.Enums;
+
+var options = new DdlCompilationOptions(
+    SqlAgentToolType.Postgres,
+    SqlAgentToolType.Postgres);
+
+var preview = SqlCoreFacade.PreviewDdl(
+    "CREATE TABLE public.demo (id INTEGER NOT NULL)",
+    options);
+
+Console.WriteLine(preview.Plan.Command.Sql);
+Console.WriteLine(preview.AuthorizesExecution); // False
 ```
 
-In typed snapshot mode, the compiler rejects **provably incompatible** comparisons,
-numeric arithmetic, LIKE operands and literal INSERT/UPDATE assignments with
-`SQL_SCHEMA_TYPE_MISMATCH` at `SemanticValidation`.
-Explicitly `Unknown` columns, casts, function results, unproven CTE/derived output types
-and provider-specific implicit coercions are not claimed as proven. This is
-*not* a provider-exact type checker or NULL/collation/overload solver.
-Typed metadata is part of compilation fingerprint and evidence identity.
+DDL preview computes a **static** before/expected-after schema diff from the supplied virtual catalog. It does not inspect a live database. Supported operations and batches depend on provider and statement shape.
 
-## DML predicate safety
+## Package boundary
 
-With the default DML policy, UPDATE and DELETE require a WHERE clause. The compiler now also
-rejects WHERE conditions **provably TRUE for every row**, such as `WHERE 1 = 1`,
-`WHERE 1 = 1 OR id = 5`, and `WHERE NOT (1 = 0)`.
-These denials carry stable Policy-stage diagnostic codes
-`SQL_POLICY_UPDATE_UNBOUNDED_PREDICATE` and
-`SQL_POLICY_DELETE_UNBOUNDED_PREDICATE`. Explicit full-table DML authorization bypasses
-this restriction, while missing-WHERE diagnostics remain unchanged.
+SqlCore contains dialect-aware parsing, source spans, binding, typed semantics,
+source/target capability checks, compilation, immutable plans and static analysis.
+Database drivers, connections, transactions and execution belong to the consumer.
 
-This is a conservative proof, **not a completeness claim**: column-dependent tautologies,
-unknown functions, implicit type conversions and collation-sensitive expressions are not
-treated as known constants. Enforcement of per-request DML row counts, previews, approvals,
-permissions, and query resource limits remains the responsibility of the hosting runtime.
+Unsupported syntax, ambiguous identities and unproven transformations are rejected.
+The package does not claim complete SQL grammar or cross-dialect equivalence.
 
-## Package boundaries
+## Documentation
 
-- Use `HsSqlAgent.Provider.*` when you also need an ADO.NET driver, metadata discovery and
-  provider-specific runtime behavior.
-- Use `HsSqlAgent.Server` to embed the complete MCP SQL Agent in ASP.NET Core.
-- SQL lowering is rendered directly from the validated canonical Core AST; SqlCore has no query-builder backend dependency.
-
-Project: https://github.com/tse-wei-chen/hs-sql-agent
+- [SQL syntax and capability reference](https://sql-agent.net/en/docs/sql-compiler/sql-support)
+- [Architecture and contribution guide](https://sql-agent.net/en/docs/development/architecture)
+- [Full documentation](https://sql-agent.net/en/docs/)
+- [Release history and feature discussions](https://github.com/tse-wei-chen/hs-sql-agent/pulls?q=is%3Apr+is%3Amerged)

@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+        <!-- Executable test governance runs on a single framework compatible with
+         both net8 and net10 test-project references. -->
+    <TargetFramework Condition="'$(LibraryFrameworks)'==''">net8.0</TargetFramework>
+    <RollForward>Major</RollForward>
+    <TargetFrameworks Condition="'$(LibraryFrameworks)'!=''">$(LibraryFrameworks)</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+</Project>

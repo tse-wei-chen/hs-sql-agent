@@ -71,19 +71,23 @@ public class CustomToolProxy(
         int? queryReturnedRows = null;
         int? dmlAffectedRows = null;
         var parameters = new Dictionary<string, object?>();
-        if (arguments.ValueKind == JsonValueKind.Object)
-        {
-            foreach (var prop in arguments.EnumerateObject())
-                parameters[prop.Name] = _queryValueParserService.UnwrapJsonElement(prop.Value);
-        }
 
         CustomSqlTool? tool = null;
         QueryFacts? auditQueryFacts = null;
         SqlAgentToolType? auditQueryDialect = null;
         ParsedDmlBatch? auditDml = null;
+        string? auditApprovalRequestId = null;
         string renderedSql = string.Empty;
         try
         {
+            // Parameter conversion is an untrusted-input boundary too. Do not
+            // let a value-parser exception bypass the sanitized MCP response.
+            if (arguments.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var prop in arguments.EnumerateObject())
+                    parameters[prop.Name] = _queryValueParserService.UnwrapJsonElement(prop.Value);
+            }
+
             ValidateToolAccess();
             var sqlConfig = ResolveSqlConfig();
             var dbManagementId = ResolveDbManagementId();
@@ -132,6 +136,7 @@ public class CustomToolProxy(
                 {
                     if (lease is null)
                         throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
+                    using var leaseCancellation = new SqlExecutionLeaseCancellation(lease, cancellationToken);
                     QueryExecutionResult execution;
                     var securityPolicy = _securityPolicyRuntimeState.GetCurrent();
                     var allowedTables = ResolveTableWhitelist();
@@ -139,7 +144,7 @@ public class CustomToolProxy(
                     {
                         var compiledExecution = await factsRuntime.ExecuteWithFactsAsync(
                             provider, sqlConfig.ConnectionString, renderedSql, dbType,
-                            securityPolicy, allowedTables, cancellationToken);
+                            securityPolicy, allowedTables, leaseCancellation.Token);
                         auditQueryFacts = compiledExecution.Facts;
                         execution = compiledExecution.Execution;
                     }
@@ -148,8 +153,9 @@ public class CustomToolProxy(
                         auditQueryFacts = SqlCoreInspection.GetQueryFacts(renderedSql, dbType);
                         execution = await _typedQueryRuntime.ExecuteAsync(
                             provider, sqlConfig.ConnectionString, renderedSql, dbType,
-                            securityPolicy, allowedTables, cancellationToken);
+                            securityPolicy, allowedTables, leaseCancellation.Token);
                     }
+                    leaseCancellation.Token.ThrowIfCancellationRequested();
                     queryReturnedRows = execution.RowCount;
                     result = JsonSerializer.Serialize(execution.Rows);
                 }
@@ -158,11 +164,12 @@ public class CustomToolProxy(
             {
                 var accessKeyId = ResolveAccessKeyId()
                                   ?? throw new UnauthorizedAccessException("DML approval requires a stable MCP access-key identity.");
-                var parsedDml = await _typedDmlRuntime.ParseDmlBatchWithVerifiedRuntimeProfileAsync(
+                var parsedDml = await _typedDmlRuntime.ParseDmlBatchWithVerifiedRuntimeProfileUnderLeaseAsync(
                     provider,
                     sqlConfig.ConnectionString,
                     renderedSql,
                     dbType,
+                    _sqlConcurrencyLimiter,
                     cancellationToken);
                 auditDml = parsedDml;
                 foreach (var statement in parsedDml.Statements)
@@ -196,6 +203,37 @@ public class CustomToolProxy(
                 result = dmlExecution.Result;
                 approvalWaitDurationMs += dmlExecution.ApprovalWaitDurationMs;
                 dmlAffectedRows = dmlExecution.AffectedRows;
+                auditApprovalRequestId = dmlExecution.ApprovalRequestId;
+
+                // A confirmed COMMIT and an unconfirmed COMMIT/ROLLBACK are terminal
+                // physical outcomes. Audit I/O must never turn either into a retryable
+                // failure or lose the one-time approval correlation.
+                var outcomeUnknown = !dmlExecution.Committed
+                    && dmlExecution.ErrorCode is ("dml.commit_outcome_unknown" or "dml.rollback_outcome_unknown");
+                if (dmlExecution.Committed || outcomeUnknown)
+                {
+                    return await CompleteTerminalDmlOutcomeAsync(
+                        dmlExecution,
+                        () => _auditService.WriteEventAsync(
+                            $"mcp.{_name}.executed",
+                            _name,
+                            outcomeUnknown ? "outcome_unknown" : "success",
+                            new AuditEventContext
+                            {
+                                ToolName = _name,
+                                Operation = DmlOperationName(parsedDml),
+                                DurationMs = ProcessingDuration(stopwatch, approvalWaitDurationMs),
+                                AffectedRows = outcomeUnknown ? null : dmlAffectedRows,
+                                ApprovalStatus = "approved",
+                                ErrorCategory = outcomeUnknown
+                                    ? (dmlExecution.ErrorCode == "dml.rollback_outcome_unknown"
+                                        ? "DmlRollbackOutcomeUnknown" : "DmlCommitOutcomeUnknown")
+                                    : null,
+                                Definition = DescribeDml(parsedDml, auditApprovalRequestId)
+                            },
+                            outcomeUnknown ? dmlExecution.Result : $"Type: {tool.Type}",
+                            CancellationToken.None));
+                }
 
                 if (!dmlExecution.Committed)
                 {
@@ -216,11 +254,17 @@ public class CustomToolProxy(
                             DurationMs = ProcessingDuration(stopwatch, approvalWaitDurationMs),
                             AffectedRows = dmlAffectedRows,
                             ApprovalStatus = approvalStatus,
-                            Definition = DescribeDml(parsedDml)
+                            Definition = DescribeDml(parsedDml, auditApprovalRequestId)
                         },
                         result,
                         cancellationToken);
-                    return result;
+                    if (dmlExecution.ApprovalDecision is DmlApprovalDecision.Pending or DmlApprovalDecision.Rejected)
+                        return result;
+                    if (dmlExecution.ErrorCode == "approval.unavailable")
+                        return "Error: This MCP client does not support the required interactive DML approval.";
+                    var dmlError = McpErrorResponsePolicy.ForDmlFlowFailure(
+                        dmlExecution.ErrorCode, dmlExecution.ErrorStage, dmlExecution.Retryable);
+                    return $"Error: {dmlError.Code} ({dmlError.Stage}): {dmlError.Message}";
                 }
             }
             else
@@ -246,7 +290,7 @@ public class CustomToolProxy(
                     ApprovalStatus = isDml ? "approved" : null,
                     Definition = isQuery && auditQueryFacts != null
                         ? DescribeQuery(renderedSql, dbType, auditQueryFacts)
-                        : auditDml == null ? null : DescribeDml(auditDml)
+                        : auditDml == null ? null : DescribeDml(auditDml, auditApprovalRequestId)
                 },
                 $"Type: {tool.Type}",
                 cancellationToken);
@@ -255,7 +299,7 @@ public class CustomToolProxy(
         catch (Exception ex)
         {
             auditQueryFacts ??= SqlCoreInspection.TryGetQueryFactsFromException(ex);
-            await _auditService.WriteEventAsync(
+            await McpErrorResponsePolicy.TryAuditFailureAsync(() => _auditService.WriteEventAsync(
                 $"mcp.{_name}.executed",
                 _name,
                 "failed",
@@ -273,16 +317,52 @@ public class CustomToolProxy(
                     ErrorCategory = ex.GetType().Name,
                     Definition = auditQueryFacts != null && auditQueryDialect.HasValue
                         ? DescribeQuery(renderedSql, auditQueryDialect.Value, auditQueryFacts)
-                        : auditDml == null ? null : DescribeDml(auditDml)
+                        : auditDml == null ? null : DescribeDml(auditDml, auditApprovalRequestId)
                 },
                 ex.Message,
-                cancellationToken);
-            var toolType = tool?.Type ?? "Unknown";
-            var suggestedTool = string.Equals(toolType, "Query", StringComparison.OrdinalIgnoreCase)
-                ? "execute_query_sql"
-                : "execute_dml_sql";
-            return $"Error: {ex.Message}\nPlease fix the parameters or SQL template and use '{suggestedTool}' to try again.";
+                cancellationToken));
+            var surface = string.Equals(tool?.Type, "DML", StringComparison.OrdinalIgnoreCase)
+                ? McpErrorSurface.Dml : McpErrorSurface.Query;
+            var external = McpErrorResponsePolicy.Classify(ex, surface);
+            // Never suggest replaying a Custom DML operation just because the
+            // secondary MCP call observed an error. Reconcile approval/audit first.
+            return $"Error: {external.Code} ({external.Stage}): {external.Message}";
         }
+    }
+
+    // This boundary is reached only after the approval flow has returned a terminal
+    // database outcome. Secondary telemetry must not change the physical result.
+    internal static async Task<string> CompleteTerminalDmlOutcomeAsync(
+        TypedDmlExecutionTiming execution,
+        Func<Task> writeAudit)
+    {
+        ArgumentNullException.ThrowIfNull(writeAudit);
+        var outcomeUnknown = !execution.Committed
+            && execution.ErrorCode is ("dml.commit_outcome_unknown" or "dml.rollback_outcome_unknown");
+        if (!execution.Committed && !outcomeUnknown)
+            throw new ArgumentException(
+                "Only a confirmed commit or an unknown physical outcome may cross this boundary.",
+                nameof(execution));
+
+        try
+        {
+            await writeAudit();
+        }
+        catch (Exception)
+        {
+            // Even cancellation of the original MCP request cannot undo a COMMIT,
+            // confirm a ROLLBACK, or make a consumed approval safe to replay.
+        }
+
+        if (execution.Committed)
+            return execution.Result;
+
+        // The Custom Tool transport returns a string. Preserve machine-readable
+        // correlation without exposing raw driver errors in the MCP response.
+        return $"status=outcome_unknown; errorCode={execution.ErrorCode}; retryable=false; " +
+               $"approvalRequestId={execution.ApprovalRequestId ?? "unavailable"}; " +
+               "The database transaction outcome is unconfirmed. Do not retry; " +
+               "reconcile database state before any further mutation.";
     }
 
     private static long ProcessingDuration(Stopwatch stopwatch, long approvalWaitDurationMs) =>
@@ -298,10 +378,11 @@ public class CustomToolProxy(
             facts.ContainsSubquery
         });
 
-    private static string DescribeDml(ParsedDmlBatch parsedDml) =>
+    private static string DescribeDml(ParsedDmlBatch parsedDml, string? approvalRequestId) =>
         JsonSerializer.Serialize(new
         {
             StatementCount = parsedDml.Count,
+            ApprovalRequestId = approvalRequestId,
             Statements = parsedDml.Statements.Select((statement, index) =>
             {
                 var table = statement.Statement switch

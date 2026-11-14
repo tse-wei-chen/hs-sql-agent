@@ -29,12 +29,21 @@ module internal RewriteParser =
           Joins: JoinProofs
           Expressions: ExpressionProofs
           Dml: DmlProofs
+          SqlServerWithMutationCte: CapabilityProof
+          MySqlOrdinaryCte: CapabilityProof
+          MySqlWithUpdateCte: CapabilityProof
+          SqliteWithUpdateCte: CapabilityProof
+          MySqlWithDeleteCte: CapabilityProof
+          SqliteWithDeleteCte: CapabilityProof
           OnConflict: CapabilityProof
           Ordering: SourceOrderingProofs
           FetchPercent: CapabilityProof
           FetchWithTies: CapabilityProof
+          ApplyJoin: CapabilityProof
           LateralDerivedTable: CapabilityProof
           RecursiveCte: CapabilityProof
+          SetAll: CapabilityProof
+          OracleExceptSyntax: CapabilityProof
           Lexical: RewriteLexer.LexicalSemantics }
 
     module SourceSemantics =
@@ -85,12 +94,24 @@ module internal RewriteParser =
               Joins = permissiveJoins
               Expressions = permissiveExpressions
               Dml = permissiveDml
+              SqlServerWithMutationCte = ProvenCapability
+              MySqlOrdinaryCte = ProvenCapability
+              MySqlWithUpdateCte = ProvenCapability
+              SqliteWithUpdateCte = ProvenCapability
+              MySqlWithDeleteCte = ProvenCapability
+              SqliteWithDeleteCte = ProvenCapability
               OnConflict = ProvenCapability
               Ordering = permissiveOrdering
               FetchPercent = ProvenCapability
               FetchWithTies = ProvenCapability
+              ApplyJoin = ProvenCapability
               LateralDerivedTable = ProvenCapability
               RecursiveCte = ProvenCapability
+              SetAll =
+                RejectedCapability(CapabilityRejection.create
+                    CapabilitySide.SourceCapability
+                    "Duplicate-preserving set syntax requires explicit source capability proof")
+              OracleExceptSyntax = ProvenCapability
               Lexical = RewriteLexer.LexicalSemantics.standard }
 
         let mysqlPipesAsConcat =
@@ -104,12 +125,24 @@ module internal RewriteParser =
               Joins = permissiveJoins
               Expressions = permissiveExpressions
               Dml = permissiveDml
+              SqlServerWithMutationCte = ProvenCapability
+              MySqlOrdinaryCte = ProvenCapability
+              MySqlWithUpdateCte = ProvenCapability
+              SqliteWithUpdateCte = ProvenCapability
+              MySqlWithDeleteCte = ProvenCapability
+              SqliteWithDeleteCte = ProvenCapability
               OnConflict = ProvenCapability
               Ordering = permissiveOrdering
               FetchPercent = ProvenCapability
               FetchWithTies = ProvenCapability
+              ApplyJoin = ProvenCapability
               LateralDerivedTable = ProvenCapability
               RecursiveCte = ProvenCapability
+              SetAll =
+                RejectedCapability(CapabilityRejection.create
+                    CapabilitySide.SourceCapability
+                    "Duplicate-preserving set syntax requires explicit source capability proof")
+              OracleExceptSyntax = ProvenCapability
               Lexical = RewriteLexer.LexicalSemantics.mysql false false }
 
     [<Struct>]
@@ -293,7 +326,7 @@ module internal RewriteParser =
                     else
                         let literal =
                             match at (close + 2) with
-                            | IntegerLiteral _ | DecimalLiteral _ | StringLiteral _
+                            | IntegerLiteral _ | DecimalLiteral _ | ExactNumericLiteral _ | StringLiteral _
                             | Keyword "NULL" | Keyword "TRUE" | Keyword "FALSE" -> true
                             | _ -> false
                         literal && at (close + 3) = Keyword "END"
@@ -324,12 +357,21 @@ module internal RewriteParser =
         member _.SourceJoins = semantics.Joins
         member _.SourceExpressions = semantics.Expressions
         member _.SourceDml = semantics.Dml
+        member _.SourceSqlServerWithMutationCte = semantics.SqlServerWithMutationCte
+        member _.SourceMySqlOrdinaryCte = semantics.MySqlOrdinaryCte
+        member _.SourceMySqlWithUpdateCte = semantics.MySqlWithUpdateCte
+        member _.SourceSqliteWithUpdateCte = semantics.SqliteWithUpdateCte
+        member _.SourceMySqlWithDeleteCte = semantics.MySqlWithDeleteCte
+        member _.SourceSqliteWithDeleteCte = semantics.SqliteWithDeleteCte
         member _.SourceOnConflict = semantics.OnConflict
         member _.SourceOrdering = semantics.Ordering
         member _.SourceFetchPercent = semantics.FetchPercent
         member _.SourceFetchWithTies = semantics.FetchWithTies
+        member _.SourceApplyJoin = semantics.ApplyJoin
         member _.SourceLateralDerivedTable = semantics.LateralDerivedTable
         member _.SourceRecursiveCte = semantics.RecursiveCte
+        member _.SourceSetAll = semantics.SetAll
+        member _.SourceOracleExceptSyntax = semantics.OracleExceptSyntax
 
     let private parsedSpan start (cursor: Cursor) =
         { Start = start
@@ -695,6 +737,10 @@ module internal RewriteParser =
                             message))
 
         match cursor.Dialect, CastType.semantic parsedType with
+        | SourceDialect.Firebird, Some(SqlDecimal(Some precision, _)) when precision > 18 ->
+            // Firebird 3 and earlier have no 19..38 precision SQL type.
+            // The declared source profile must prove the 4.0+ capability.
+            requireSourceParseCapability typeToken cursor.SourceExpressions.FirebirdExtendedDecimal
         | SourceDialect.Firebird, Some(SqlTime(_, true))
         | SourceDialect.Firebird, Some(SqlTimestamp(_, true)) ->
             requireSourceCapability typeToken cursor.SourceExpressions.FirebirdTimeZoneType
@@ -833,6 +879,14 @@ module internal RewriteParser =
             | true, value -> Literal(ScalarValue.LocalDateTime(DateTime.SpecifyKind(value, DateTimeKind.Unspecified)))
             | _ -> fail cursor.Current "Invalid local DATETIME literal in CAST"
         | _ -> Cast(expression, target)
+
+    // Oracle MINUS is a contextual set-boundary operator. Do not reserve
+    // an identifier token in the five other source dialects.
+    let private isOracleMinusSet (cursor: Cursor) =
+        match cursor.Current.Kind with
+        | Identifier(value, false) when cursor.Dialect = SourceDialect.Oracle ->
+            value.Equals("MINUS", StringComparison.OrdinalIgnoreCase)
+        | _ -> false
 
     let rec private parseExpression (cursor: Cursor) : Expr =
         RewriteResourceBudget.checkpoint ()
@@ -1170,6 +1224,19 @@ module internal RewriteParser =
                         | Some casted -> expression <- casted
                         | None -> scanningCast <- false
                     expression
+                | ExactNumericLiteral text ->
+                    cursor.Advance()
+                    let value = ExactNumeric.create text
+                    let signed =
+                        if innermost = UnaryOperator.Negate then ExactNumeric.negate value
+                        else value
+                    let mutable expression = Literal(ScalarValue.ExactNumeric signed)
+                    let mutable scanningCast = true
+                    while scanningCast do
+                        match tryParsePostfixCast cursor expression with
+                        | Some casted -> expression <- casted
+                        | None -> scanningCast <- false
+                    expression
                 | _ ->
                     markExpr start cursor (Unary(innermost, parsePostfix cursor))
             let mutable expression = inner
@@ -1196,6 +1263,7 @@ module internal RewriteParser =
         let mutable filterSeen = false
         let mutable overSeen = false
         let mutable castSeen = false
+        let mutable nullTreatment = WindowNullTreatment.DefaultNullTreatment
 
         while scanning do
             match cursor.Current.Kind with
@@ -1311,6 +1379,45 @@ module internal RewriteParser =
                     filterSeen <- true
                 | _ ->
                     fail cursor.Current "FILTER must modify a function call"
+            | Keyword modifier
+            | Identifier(modifier, false)
+                when (modifier.Equals("IGNORE", StringComparison.OrdinalIgnoreCase)
+                      || modifier.Equals("RESPECT", StringComparison.OrdinalIgnoreCase))
+                     && (match (cursor.Peek 1).Kind with
+                         | Keyword next
+                         | Identifier(next, false) ->
+                             next.Equals("NULLS", StringComparison.OrdinalIgnoreCase)
+                             || next.Equals("OVER", StringComparison.OrdinalIgnoreCase)
+                         | _ -> false) ->
+                if not directFunctionSyntax || overSeen || castSeen
+                   || nullTreatment <> WindowNullTreatment.DefaultNullTreatment then
+                    fail cursor.Current "Window null treatment must occur once after a supported window function and before OVER."
+                let token = cursor.Current
+                let treatment =
+                    match token.Kind with
+                    | Keyword value
+                    | Identifier(value, false) when value.Equals("IGNORE", StringComparison.OrdinalIgnoreCase) ->
+                        WindowNullTreatment.IgnoreNulls
+                    | _ -> WindowNullTreatment.RespectNulls
+                match Expr.unspan expression with
+                | FunctionCall call
+                    when not call.IsDistinct
+                         && not (FunctionName.requiresNativeIdentifierSemantics call.Name)
+                         && (String.Equals(FunctionName.value call.Name, "LAG", StringComparison.OrdinalIgnoreCase)
+                             || String.Equals(FunctionName.value call.Name, "LEAD", StringComparison.OrdinalIgnoreCase)
+                             || String.Equals(FunctionName.value call.Name, "FIRST_VALUE", StringComparison.OrdinalIgnoreCase)
+                             || String.Equals(FunctionName.value call.Name, "LAST_VALUE", StringComparison.OrdinalIgnoreCase)) ->
+                    match cursor.Dialect with
+                    | SourceDialect.SqlServer | SourceDialect.Oracle -> ()
+                    | _ -> fail token "SQL capability 'window.null_treatment' is not valid for this source dialect."
+                    cursor.Advance()
+                    match cursor.Current.Kind with
+                    | Keyword value
+                    | Identifier(value, false) when value.Equals("NULLS", StringComparison.OrdinalIgnoreCase) ->
+                        cursor.Advance()
+                    | _ -> fail cursor.Current "IGNORE/RESPECT requires NULLS."
+                    nullTreatment <- treatment
+                | _ -> fail token "SQL capability 'window.null_treatment' requires LAG, LEAD, FIRST_VALUE or LAST_VALUE."
             | Keyword "OVER" ->
                 if not directFunctionSyntax then
                     fail cursor.Current "OVER must directly modify a function call or its FILTER result"
@@ -1320,12 +1427,15 @@ module internal RewriteParser =
                 | FunctionCall _
                 | FilteredAggregate _ ->
                     cursor.Advance()
-                    expression <- Windowed(expression, parseWindow cursor)
+                    let window = parseWindow cursor
+                    expression <- Windowed(expression, { window with NullTreatment = nullTreatment })
                     overSeen <- true
                 | _ ->
                     fail cursor.Current "OVER must modify a function call or FILTER result"
             | _ ->
                 scanning <- false
+        if nullTreatment <> WindowNullTreatment.DefaultNullTreatment && not overSeen then
+            fail cursor.Current "SQL capability 'window.null_treatment' requires OVER after IGNORE/RESPECT NULLS."
         expression
 
     and private parseWindow cursor =
@@ -1336,19 +1446,72 @@ module internal RewriteParser =
             partitions.Add(parseExpression cursor)
             while acceptSymbol ',' cursor do partitions.Add(parseExpression cursor)
         let orderBy = parseOrderBy false cursor
+        // GROUPS is a soft keyword: do not make existing identifiers named
+        // groups reserved across the six source dialects.
+        let groupsToken =
+            match cursor.Current.Kind with
+            | Identifier(name, false) when name.Equals("GROUPS", StringComparison.OrdinalIgnoreCase) -> true
+            | _ -> false
         let frame =
-            if isKeyword "ROWS" cursor.Current || isKeyword "RANGE" cursor.Current then
-                let unit = if acceptKeyword "ROWS" cursor then WindowFrameUnit.Rows else expectKeyword "RANGE" cursor; WindowFrameUnit.Range
+            if isKeyword "ROWS" cursor.Current || isKeyword "RANGE" cursor.Current || groupsToken then
+                let frameToken = cursor.Current
+                let unit =
+                    if acceptKeyword "ROWS" cursor then WindowFrameUnit.Rows
+                    elif acceptKeyword "RANGE" cursor then WindowFrameUnit.Range
+                    else
+                        let token = cursor.Current
+                        match cursor.Dialect with
+                        | SourceDialect.PostgreSql | SourceDialect.SQLite -> ()
+                        | _ -> fail token "SQL capability 'window.groups' is not proven for this source dialect."
+                        cursor.Advance()
+                        WindowFrameUnit.Groups
                 let extent =
                     if acceptKeyword "BETWEEN" cursor then
                         let first = parseFrameBound cursor
                         expectKeyword "AND" cursor
                         BetweenBounds(first, parseFrameBound cursor)
                     else SingleBound(parseFrameBound cursor)
-                Some { Unit = unit; Extent = extent }
+                // EXCLUDE / TIES / NO OTHERS remain soft keywords: existing
+                // identifiers in unrelated SQL must not become reserved.
+                let acceptSoft text =
+                    match cursor.Current.Kind with
+                    | Identifier(value, false)
+                    | Keyword value when value.Equals(text, StringComparison.OrdinalIgnoreCase) ->
+                        cursor.Advance()
+                        true
+                    | _ -> false
+                let exclusionToken = cursor.Current
+                let exclusion =
+                    if acceptSoft "EXCLUDE" then
+                        match cursor.Dialect with
+                        | SourceDialect.PostgreSql | SourceDialect.SQLite -> ()
+                        | _ -> fail exclusionToken "SQL capability 'window.exclude' is not proven for this source dialect."
+                        if acceptKeyword "CURRENT" cursor then
+                            expectKeyword "ROW" cursor
+                            Some WindowFrameExclusion.ExcludeCurrentRow
+                        elif acceptKeyword "GROUP" cursor then
+                            Some WindowFrameExclusion.ExcludeGroup
+                        elif acceptSoft "TIES" then
+                            Some WindowFrameExclusion.ExcludeTies
+                        elif acceptSoft "NO" then
+                            if acceptSoft "OTHERS" then Some WindowFrameExclusion.ExcludeNoOthers
+                            else fail cursor.Current "EXCLUDE NO requires OTHERS"
+                        else fail cursor.Current "Expected CURRENT ROW, GROUP, TIES or NO OTHERS after EXCLUDE"
+                    else None
+                let frame = { Unit = unit; Extent = extent; Exclusion = exclusion }
+                // SQL Server permits numeric frame offsets for ROWS only.
+                // Reject at the SOURCE grammar, even if another target accepts RANGE offsets.
+                if cursor.Dialect = SourceDialect.SqlServer
+                   && frame.Unit = WindowFrameUnit.Range
+                   && frame.HasNumericOffset then
+                    fail frameToken "SQL capability 'window.range_offset' is not valid for SQL Server source RANGE frames."
+                Some frame
             else None
         expectSymbol ')' cursor
-        { PartitionBy = partitions |> Seq.toList; OrderBy = orderBy; Frame = frame }
+        { PartitionBy = partitions |> Seq.toList
+          OrderBy = orderBy
+          Frame = frame
+          NullTreatment = WindowNullTreatment.DefaultNullTreatment }
 
     and private parseFrameBound cursor =
         if acceptKeyword "UNBOUNDED" cursor then
@@ -1506,6 +1669,9 @@ module internal RewriteParser =
         match token.Kind with
         | IntegerLiteral value -> cursor.Advance(); Literal(ScalarValue.Integer value)
         | DecimalLiteral value -> cursor.Advance(); Literal(ScalarValue.Decimal value)
+        | ExactNumericLiteral text ->
+            cursor.Advance()
+            Literal(ScalarValue.ExactNumeric(ExactNumeric.create text))
         | StringLiteral value -> cursor.Advance(); Literal(ScalarValue.Text value)
         | Operator "*" -> cursor.Advance(); Wildcard None
         | Keyword "NULL" -> cursor.Advance(); Literal ScalarValue.Null
@@ -1677,6 +1843,7 @@ module internal RewriteParser =
     and private parseSelectAlias cursor =
         let alias =
             if acceptKeyword "AS" cursor then Some(aliasIdentifierPart cursor)
+            elif isOracleMinusSet cursor then None
             else
                 match cursor.Current.Kind with
                 | Identifier _ -> Some(identifierPart cursor)
@@ -1794,6 +1961,7 @@ module internal RewriteParser =
             let name = identifier cursor
             let alias =
                 if acceptKeyword "AS" cursor then Some(identifierPart cursor)
+                elif isOracleMinusSet cursor then None
                 else
                     match cursor.Current.Kind with
                     | Identifier _ -> Some(identifierPart cursor)
@@ -1849,11 +2017,27 @@ module internal RewriteParser =
 
             NaturalJoin(kind, source)
         elif acceptKeyword "CROSS" cursor then
-            expectKeyword "JOIN" cursor
+            if acceptKeyword "APPLY" cursor then
+                requireSourceParseCapability cursor.Current cursor.SourceApplyJoin
+                let source = parseTableSource cursor
+                match source with
+                | DerivedTable _ when not (isKeyword "ON" cursor.Current || isKeyword "USING" cursor.Current) ->
+                    ApplyJoin(ApplyKind.CrossApply, source)
+                | _ -> fail cursor.Current "CROSS APPLY requires a derived query without LATERAL, ON or USING"
+            else
+                expectKeyword "JOIN" cursor
+                let source = parseTableSource cursor
+                if isKeyword "ON" cursor.Current || isKeyword "USING" cursor.Current then
+                    fail cursor.Current "CROSS JOIN must not have ON/USING predicates"
+                CrossJoin source
+        elif acceptKeyword "OUTER" cursor then
+            expectKeyword "APPLY" cursor
+            requireSourceParseCapability cursor.Current cursor.SourceApplyJoin
             let source = parseTableSource cursor
-            if isKeyword "ON" cursor.Current || isKeyword "USING" cursor.Current then
-                fail cursor.Current "CROSS JOIN must not have ON/USING predicates"
-            CrossJoin source
+            match source with
+            | DerivedTable _ when not (isKeyword "ON" cursor.Current || isKeyword "USING" cursor.Current) ->
+                ApplyJoin(ApplyKind.OuterApply, source)
+            | _ -> fail cursor.Current "OUTER APPLY requires a derived query without LATERAL, ON or USING"
         else
             let kind =
                 if acceptKeyword "INNER" cursor then expectKeyword "JOIN" cursor; OnJoinKind.Inner
@@ -1903,13 +2087,14 @@ module internal RewriteParser =
                 OnJoin(kind, source, parseExpression cursor)
 
     and private startsJoin (cursor: Cursor) =
-        [ "JOIN"; "INNER"; "LEFT"; "RIGHT"; "FULL"; "CROSS"; "NATURAL" ]
+        [ "JOIN"; "INNER"; "LEFT"; "RIGHT"; "FULL"; "CROSS"; "OUTER"; "NATURAL" ]
         |> List.exists (fun keyword -> isKeyword keyword cursor.Current)
 
     and private parseCtes
         (cursor: Cursor)
         (scheduleQuery: (Query -> unit) -> unit)
         (complete: Cte list -> unit) =
+        let withToken = cursor.Current
         if not (acceptKeyword "WITH" cursor) then complete []
         else
             let recursiveScope =
@@ -1920,6 +2105,9 @@ module internal RewriteParser =
                     true
                 else
                     false
+            // Recursive CTE has its own version and diagnostic contract.
+            if cursor.Dialect = SourceDialect.MySql && not recursiveScope then
+                requireSourceParseCapability withToken cursor.SourceMySqlOrdinaryCte
             let ctes = ResizeArray<Cte>()
             let rec scheduleOne () =
                 let start = cursor.Current.Start
@@ -2061,7 +2249,13 @@ module internal RewriteParser =
             while acceptSymbol ',' cursor do items.Add(parseOrderItem allowOrdinal cursor)
             items |> Seq.toList
 
-    and private parseSetOperator cursor =
+    and private parseSetOperator (cursor: Cursor) =
+        let operatorToken = cursor.Current
+        let requireSetAll () =
+            // PostgreSQL's established native syntax needs no version
+            // gate. Oracle 21c+ must carry a Source capability proof.
+            if cursor.Dialect <> SourceDialect.PostgreSql then
+                requireSourceParseCapability operatorToken cursor.SourceSetAll
         if acceptKeyword "UNION" cursor then
             if acceptKeyword "ALL" cursor then Some SetOperator.UnionAll
             else
@@ -2069,24 +2263,26 @@ module internal RewriteParser =
                 Some SetOperator.Union
         elif acceptKeyword "INTERSECT" cursor then
             if acceptKeyword "ALL" cursor then
-                match SqlSetAllCapabilityRules.SourceValidationError(
-                          "INTERSECT",
-                          sourceDialectToolType cursor.Dialect) with
-                | null -> Some SetOperator.IntersectAll
-                | message -> fail cursor.Current message
+                requireSetAll ()
+                Some SetOperator.IntersectAll
             else
                 acceptKeyword "DISTINCT" cursor |> ignore
                 Some SetOperator.Intersect
         elif acceptKeyword "EXCEPT" cursor then
+            if cursor.Dialect = SourceDialect.Oracle then
+                requireSourceParseCapability operatorToken cursor.SourceOracleExceptSyntax
             if acceptKeyword "ALL" cursor then
-                match SqlSetAllCapabilityRules.SourceValidationError(
-                          "EXCEPT",
-                          sourceDialectToolType cursor.Dialect) with
-                | null -> Some SetOperator.ExceptAll
-                | message -> fail cursor.Current message
+                requireSetAll ()
+                Some SetOperator.ExceptAll
             else
                 acceptKeyword "DISTINCT" cursor |> ignore
                 Some SetOperator.Except
+        elif isOracleMinusSet cursor then
+            cursor.Advance()
+            if acceptKeyword "ALL" cursor then
+                requireSetAll ()
+                Some SetOperator.ExceptAll
+            else Some SetOperator.Except
         else None
 
     and private parseQueryTail (cursor: Cursor) =
@@ -2270,7 +2466,15 @@ module internal RewriteParser =
 
                         and scanLowerBranches () =
                             if isKeyword "UNION" cursor.Current
-                               || isKeyword "EXCEPT" cursor.Current then
+                               || isKeyword "EXCEPT" cursor.Current
+                               || isOracleMinusSet cursor then
+                                // Oracle's left-to-right grammar and Core's
+                                // higher-INTERSECT-precedence grammar agree
+                                // when the INTERSECT chain appears on the
+                                // *left* of the lower-precedence operator.
+                                // A following unparenthesized INTERSECT on
+                                // the right must not be absorbed into an AST
+                                // subtree with different source semantics.
                                 match parseSetOperator cursor with
                                 | Some operator ->
                                     scheduleOperandWithIntersects (fun branch ->
@@ -2331,6 +2535,7 @@ module internal RewriteParser =
                 let name = identifier cursor
                 let alias =
                     if acceptKeyword "AS" cursor then Some(identifierPart cursor)
+                    elif isOracleMinusSet cursor then None
                     else
                         match cursor.Current.Kind with
                         | Identifier _ -> Some(identifierPart cursor)
@@ -2407,7 +2612,22 @@ module internal RewriteParser =
                         // JOIN LATERAL creates a Query→Source→Query boundary.
                         // Do not enter the old parseJoin→parseTableSource
                         // recursive callback path for this proven syntax.
-                        if isKeyword "JOIN" cursor.Current &&
+                        if (isKeyword "CROSS" cursor.Current || isKeyword "OUTER" cursor.Current)
+                           && isKeyword "APPLY" (cursor.Peek 1) then
+                            let kind =
+                                if isKeyword "CROSS" cursor.Current then ApplyKind.CrossApply
+                                else ApplyKind.OuterApply
+                            let token = cursor.Current
+                            cursor.Advance()
+                            cursor.Advance()
+                            requireSourceParseCapability token cursor.SourceApplyJoin
+                            scheduleSource (fun source ->
+                                match source with
+                                | DerivedTable _ when not (isKeyword "ON" cursor.Current || isKeyword "USING" cursor.Current) ->
+                                    joins.Add(ApplyJoin(kind, source))
+                                    push scanJoins
+                                | _ -> fail cursor.Current "APPLY requires a derived query without LATERAL, ON or USING")
+                        elif isKeyword "JOIN" cursor.Current &&
                            isKeyword "LATERAL" (cursor.Peek 1) then
                             cursor.Advance()
                             scheduleSource (fun source ->
@@ -2467,23 +2687,32 @@ module internal RewriteParser =
 
         and scheduleOperandWithIntersects (complete: Query -> unit) =
             scheduleOperand (fun baseQuery ->
-                let branches = ResizeArray<SetBranch>(baseQuery.SetOperations)
-                let rec scanIntersects () =
-                    if isKeyword "INTERSECT" cursor.Current then
-                        match parseSetOperator cursor with
-                        | Some(SetOperator.Intersect as operator)
-                        | Some(SetOperator.IntersectAll as operator) ->
-                            if not baseQuery.OrderBy.IsEmpty || baseQuery.Offset.IsSome then
-                                fail cursor.Current
-                                    "A parenthesized set operand with a local ORDER BY/OFFSET cannot be followed by INTERSECT without an explicit set-term wrapper"
-                            scheduleOperand (fun branch ->
-                                branches.Add { Operator = operator; Query = branch }
-                                push scanIntersects)
-                        | _ ->
+                if cursor.Dialect = SourceDialect.Oracle then
+                    // Oracle's native set operators associate from left to
+                    // right. Only parentheses consumed *inside* scheduleOperand
+                    // can create a nested right operand; do not absorb any
+                    // unparenthesized trailing INTERSECT into the right arm.
+                    // Leave that token for the outer parser to reject until
+                    // explicit left-grouping can be represented canonically.
+                    complete baseQuery
+                else
+                    let branches = ResizeArray<SetBranch>(baseQuery.SetOperations)
+                    let rec scanIntersects () =
+                        if isKeyword "INTERSECT" cursor.Current then
+                            match parseSetOperator cursor with
+                            | Some(SetOperator.Intersect as operator)
+                            | Some(SetOperator.IntersectAll as operator) ->
+                                if not baseQuery.OrderBy.IsEmpty || baseQuery.Offset.IsSome then
+                                    fail cursor.Current
+                                        "A parenthesized set operand with a local ORDER BY/OFFSET cannot be followed by INTERSECT without an explicit set-term wrapper"
+                                scheduleOperand (fun branch ->
+                                    branches.Add { Operator = operator; Query = branch }
+                                    push scanIntersects)
+                            | _ ->
+                                complete { baseQuery with SetOperations = branches |> Seq.toList }
+                        else
                             complete { baseQuery with SetOperations = branches |> Seq.toList }
-                    else
-                        complete { baseQuery with SetOperations = branches |> Seq.toList }
-                push scanIntersects)
+                    push scanIntersects)
 
         scheduleQuery (fun query -> parsed <- query)
         while pending.Count > 0 do
@@ -2785,9 +3014,25 @@ module internal RewriteParser =
         let parseAssignment () : Assignment =
             let targetColumn = identifier cursor
             let parts = Identifier.parts targetColumn
+            // Oracle allows target-qualified SET assignments, and real 26ai
+            // requires them when the FROM relation exposes the same column
+            // name (otherwise ORA-00918). Do not accept a FROM alias as an
+            // assignment destination, and do not change other dialects.
             if parts.Length <> 1 then
-                fail cursor.Current "UPDATE assignment columns must be unqualified"
-            let columnName = parts.Head.Value
+                let oracleIdentity (part: IdentifierPart) =
+                    if part.WasQuoted then part.Value
+                    else part.Value.ToUpperInvariant()
+                let targetQualifier =
+                    match targetAlias with
+                    | Some alias -> alias
+                    | None -> Identifier.parts target |> List.last
+                match parts with
+                | [ qualifier; _ ] when cursor.Dialect = SourceDialect.Oracle
+                                          && oracleIdentity qualifier = oracleIdentity targetQualifier ->
+                    ()
+                | _ ->
+                    fail cursor.Current "UPDATE assignment must name the unqualified target column or Oracle target qualifier"
+            let columnName = parts |> List.last |> fun part -> part.Value
             if not (seenAssignments.Add columnName) then
                 fail cursor.Current ("UPDATE assigns column '" + columnName + "' more than once")
             expectOperator "=" cursor
@@ -2800,7 +3045,8 @@ module internal RewriteParser =
                 requireSourceParseCapability cursor.Current cursor.SourceDml.UpdateFrom
                 parseNamedDmlSources cursor
             else []
-        { Target = target
+        { Ctes = []
+          Target = target
           TargetAlias = targetAlias
           AssignmentItems = assignments |> Seq.toList |> NonEmpty.ofList "assignments"
           From = from
@@ -2831,11 +3077,187 @@ module internal RewriteParser =
                 requireSourceParseCapability token cursor.SourceDml.DeleteUsing
                 parseNamedDmlSources cursor
             else []
-        { Target = target
+        { Ctes = []
+          Target = target
           TargetAlias = targetAlias
           Using = using
           Where = if acceptKeyword "WHERE" cursor then Some(parseExpression cursor) else None
           Returning = if output.IsEmpty then parseReturning cursor else output }
+
+    /// Route a proven WITH INSERT statement only after all complete CTE headers.
+    /// A CTE name or output alias may itself be a contextual INSERT keyword.
+    /// This is a bounded lexical preflight; parseCtes remains the sole owner
+    /// of actual grammar validation and Query construction.
+    let private readOnlyWithMutationHead (cursor: Cursor) =
+        let mutable offset = 1 // The first WITH has not been consumed.
+        let mutable invalid = false
+        let peek () = cursor.Peek(offset)
+        let consume () =
+            RewriteResourceBudget.checkpoint ()
+            let token = peek ()
+            offset <- offset + 1
+            token
+
+        let skipParenthesized () =
+            if not (isSymbol '(' (peek ())) then
+                invalid <- true
+            else
+                let mutable depth = 0
+                let mutable completed = false
+                while not invalid && not completed do
+                    match (consume ()).Kind with
+                    | Symbol '(' -> depth <- depth + 1
+                    | Symbol ')' ->
+                        depth <- depth - 1
+                        if depth = 0 then completed <- true
+                    | End -> invalid <- true
+                    | _ -> ()
+
+        if isKeyword "RECURSIVE" (peek ()) then
+            consume () |> ignore
+
+        let mutable foundHead = false
+        while not invalid && not foundHead do
+            // The full parser validates the name spelling, alias list and
+            // AS clause. This scanner only locates the physical CTE body.
+            match (consume ()).Kind with
+            | End -> invalid <- true
+            | _ -> ()
+            if not invalid && isSymbol '(' (peek ()) then
+                skipParenthesized ()
+            if not invalid && isKeyword "AS" (peek ()) then
+                consume () |> ignore
+            else
+                invalid <- true
+            if not invalid then skipParenthesized ()
+            if not invalid && isSymbol ',' (peek ()) then
+                consume () |> ignore
+            else
+                foundHead <- true
+        if invalid then None
+        else
+            match (peek ()).Kind with
+            | Keyword "INSERT" -> Some "INSERT"
+            | Keyword "UPDATE" -> Some "UPDATE"
+            | Keyword "DELETE" -> Some "DELETE"
+            | _ -> None
+
+    /// Read-only statement CTEs feeding INSERT SELECT retain the typed
+    /// QuerySource graph, proven for PostgreSQL, SQLite and SQL Server.
+    /// All three renderers emit the CTEs *before* INSERT; Mutation policy
+    /// remains unchanged and no opaque SQL text is spliced into the AST.
+    let private parseReadOnlyStatementCtes (cursor: Cursor) =
+        let pending = ResizeArray<unit -> unit>()
+        let mutable ctes: Cte list = []
+        let mutable completed = false
+        parseCtes cursor
+            (fun resume -> pending.Add(fun () -> resume (parseQuery cursor)))
+            (fun values ->
+                ctes <- values
+                completed <- true)
+        while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
+            let last = pending.Count - 1
+            let action = pending.[last]
+            pending.RemoveAt(last)
+            action ()
+        if not completed || ctes.IsEmpty then
+            fail cursor.Current "WITH INSERT requires one or more read-only CTEs"
+        if ctes |> List.exists (fun cte -> cte.RecursiveScope) then
+            fail cursor.Current "Recursive statement-level WITH mutation CTE is not yet proven"
+        ctes
+
+    /// SQL Server permits UPDATE/DELETE of a directly updatable CTE name.
+    /// That is *not* the physical table named by the unqualified target.
+    /// Until underlying write-target lineage is attested, fail closed:
+    /// otherwise a declared CTE alias could bypass the table allowlist.
+    let private requirePhysicalSqlServerMutationTarget (cursor: Cursor) (ctes: Cte list) (target: Identifier) =
+        match Identifier.parts target with
+        | [ part ] when ctes |> List.exists (fun cte ->
+            StringComparer.OrdinalIgnoreCase.Equals(part.Value, cte.Name.Value)) ->
+            fail cursor.Current
+                "SQL Server CTE name is not a verified physical mutation target; CTE-target writes require separate catalog lineage proof"
+        | _ -> ()
+
+    let private parseReadOnlyWithInsert (cursor: Cursor) =
+        if cursor.Dialect = SourceDialect.SqlServer then
+            requireSourceParseCapability cursor.Current cursor.SourceSqlServerWithMutationCte
+        let ctes = parseReadOnlyStatementCtes cursor
+        let insert = parseInsert cursor
+        if cursor.Dialect = SourceDialect.SqlServer then
+            requirePhysicalSqlServerMutationTarget cursor ctes insert.Target
+        // SQLite's INSERT SELECT with a FROM and an UPSERT clause is
+        // ambiguous without an explicit SELECT WHERE (even WHERE true).
+        // Reject rather than inserting a predicate or assuming PostgreSQL
+        // grammar/semantics are portable.
+        let sqliteUpsertAmbiguous =
+            match insert.Input with
+            | QuerySource query ->
+                cursor.Dialect = SourceDialect.SQLite
+                && insert.Conflict.IsSome
+                && query.Head.From.IsSome
+                && query.Head.Where.IsNone
+            | _ -> false
+        if sqliteUpsertAmbiguous then
+            fail cursor.Current
+                "SQLite INSERT SELECT with a FROM and ON CONFLICT requires an explicit SELECT WHERE clause"
+        match insert.Input with
+        | QuerySource query
+            when query.Head.Ctes.IsEmpty ->
+            InsertStatement
+                { insert with
+                    Input =
+                        QuerySource
+                            { query with
+                                Head = { query.Head with Ctes = ctes } } }
+        | _ ->
+            fail cursor.Current
+                "Statement-level WITH INSERT supports only read-only CTEs feeding INSERT SELECT without a nested input WITH"
+
+    /// Proven native PostgreSQL, SQLite and MySQL read-only statement CTEs
+    /// remain typed UPDATE nodes, never textual SQL prefixes.
+    let private parseReadOnlyWithUpdate (cursor: Cursor) =
+        if cursor.Dialect <> SourceDialect.PostgreSql
+           && cursor.Dialect <> SourceDialect.SQLite
+           && cursor.Dialect <> SourceDialect.MySql
+           && cursor.Dialect <> SourceDialect.SqlServer then
+            fail cursor.Current "Statement-level WITH UPDATE has no source dialect proof"
+        if cursor.Dialect = SourceDialect.SqlServer then
+            requireSourceParseCapability cursor.Current cursor.SourceSqlServerWithMutationCte
+        if cursor.Dialect = SourceDialect.SQLite then
+            requireSourceParseCapability cursor.Current cursor.SourceSqliteWithUpdateCte
+        if cursor.Dialect = SourceDialect.MySql then
+            requireSourceParseCapability cursor.Current cursor.SourceMySqlWithUpdateCte
+        let ctes = parseReadOnlyStatementCtes cursor
+        let update = parseUpdate cursor
+        if cursor.Dialect = SourceDialect.SqlServer then
+            requirePhysicalSqlServerMutationTarget cursor ctes update.Target
+        // Cardinality is proven from the *bound* CTE graph at compilation
+        // time. Source parsing recognizes native SQL Server JOIN grammar
+        // without declaring unverified multi-row matches safe.
+        UpdateStatement { update with Ctes = ctes }
+
+    /// Proven native PostgreSQL / SQLite / MySQL read-only statement CTEs
+    /// precede a typed DELETE, never an opaque source SQL prefix.
+    let private parseReadOnlyWithDelete (cursor: Cursor) =
+        if cursor.Dialect <> SourceDialect.PostgreSql
+           && cursor.Dialect <> SourceDialect.SQLite
+           && cursor.Dialect <> SourceDialect.MySql
+           && cursor.Dialect <> SourceDialect.SqlServer then
+            fail cursor.Current "Statement-level WITH DELETE has no source dialect proof"
+        if cursor.Dialect = SourceDialect.SqlServer then
+            requireSourceParseCapability cursor.Current cursor.SourceSqlServerWithMutationCte
+        if cursor.Dialect = SourceDialect.SQLite then
+            requireSourceParseCapability cursor.Current cursor.SourceSqliteWithDeleteCte
+        if cursor.Dialect = SourceDialect.MySql then
+            requireSourceParseCapability cursor.Current cursor.SourceMySqlWithDeleteCte
+        let ctes = parseReadOnlyStatementCtes cursor
+        let delete = parseDelete cursor
+        if cursor.Dialect = SourceDialect.SqlServer then
+            requirePhysicalSqlServerMutationTarget cursor ctes delete.Target
+        // The compiled SQL Server joined-delete renderer restates the
+        // physical target in its native FROM list after typed proof.
+        DeleteStatement { delete with Ctes = ctes }
 
     let parseForWith semantics dialect (sql: string) =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
@@ -2844,6 +3266,26 @@ module internal RewriteParser =
         let start = cursor.Current.Start
         let statement =
             match cursor.Current.Kind with
+            | Keyword "WITH" when dialect = SourceDialect.PostgreSql
+                                   || dialect = SourceDialect.SQLite
+                                   || dialect = SourceDialect.MySql
+                                   || dialect = SourceDialect.SqlServer ->
+                match readOnlyWithMutationHead cursor with
+                | Some "INSERT" when dialect = SourceDialect.PostgreSql
+                                       || dialect = SourceDialect.SQLite
+                                       || dialect = SourceDialect.SqlServer ->
+                    parseReadOnlyWithInsert cursor
+                | Some "UPDATE" when dialect = SourceDialect.PostgreSql
+                                       || dialect = SourceDialect.SQLite
+                                       || dialect = SourceDialect.MySql
+                                       || dialect = SourceDialect.SqlServer ->
+                    parseReadOnlyWithUpdate cursor
+                | Some "DELETE" when dialect = SourceDialect.PostgreSql
+                                       || dialect = SourceDialect.SQLite
+                                       || dialect = SourceDialect.MySql
+                                       || dialect = SourceDialect.SqlServer ->
+                    parseReadOnlyWithDelete cursor
+                | _ -> QueryStatement(parseQuery cursor)
             | Keyword "WITH" | Keyword "SELECT" -> QueryStatement(parseQuery cursor)
             | Keyword "INSERT" -> InsertStatement(parseInsert cursor)
             | Keyword "UPDATE" when isKeyword "OR" (cursor.Peek 1) && isKeyword "INSERT" (cursor.Peek 2) ->

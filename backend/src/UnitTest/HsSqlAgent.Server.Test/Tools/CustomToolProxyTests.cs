@@ -73,6 +73,83 @@ public class CustomToolProxyTests
             _typedQueryRuntimeMock.Object);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Execute_QueryTool_UntrustedProviderException_IsRedactedAtMcpBoundary(bool auditUnavailable)
+    {
+        const string secret = "Password=super-secret; SQL=SELECT * FROM internal.payments";
+        _toolServiceMock.Setup(x => x.GetPublishedToolByNameAsync(
+                "test_tool", 42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CustomSqlTool
+            {
+                Name = "test_tool",
+                Type = "Query",
+                SqlTemplate = "SELECT id FROM public.users"
+            });
+        SetupPostgresProvider();
+        if (auditUnavailable)
+            _auditServiceMock.Setup(x => x.WriteEventAsync(
+                    It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                    It.IsAny<AuditEventContext>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new IOException("Audit persistence failure: " + secret));
+        _typedQueryRuntimeMock.As<ITypedQueryRuntimeFacts>()
+            .Setup(x => x.ExecuteWithFactsAsync(
+                It.IsAny<ISqlProvider>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<SqlAgentToolType>(), It.IsAny<SecurityPolicyModel>(),
+                It.IsAny<IReadOnlySet<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException(secret));
+
+        var result = await _proxy.Execute(
+            JsonSerializer.SerializeToElement(new { }),
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Contains("execution.failed", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("super-secret", result);
+        Assert.DoesNotContain("payments", result);
+        Assert.DoesNotContain("execute_dml_sql", result, StringComparison.OrdinalIgnoreCase);
+        _auditServiceMock.Verify(x => x.WriteEventAsync(
+            "mcp.test_tool.executed", "test_tool", "failed",
+            It.IsAny<AuditEventContext>(), secret, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SaturatedCustomDmlPreflight_CannotOpenUnbudgetedProviderConnection(bool auditUnavailable)
+    {
+        _toolServiceMock.Setup(x => x.GetPublishedToolByNameAsync(
+                "test_tool", 42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CustomSqlTool
+            {
+                Name = "test_tool",
+                Type = "DML",
+                SqlTemplate = "INSERT INTO public.users (id) VALUES (7)"
+            });
+        var physicalConnections = new Mock<IDbConnectionFactory>(MockBehavior.Strict);
+        var provider = new Mock<ISqlProvider>();
+        provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
+        provider.SetupGet(x => x.Connections).Returns(physicalConnections.Object);
+        _providerFactoryMock.Setup(x => x.GetProvider(SqlAgentToolType.Postgres))
+            .Returns(provider.Object);
+        _sqlConcurrencyLimiterMock.Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IAsyncDisposable?)null);
+        if (auditUnavailable)
+            _auditServiceMock.Setup(x => x.WriteEventAsync(
+                    It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                    It.IsAny<AuditEventContext>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new IOException("Audit failure: Password=super-secret"));
+
+        var result = await _proxy.Execute(
+            JsonSerializer.SerializeToElement(new { }),
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Contains("server.busy", result, StringComparison.Ordinal);
+        physicalConnections.VerifyNoOtherCalls();
+        _sqlConcurrencyLimiterMock.Verify(
+            x => x.TryAcquireAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     [Fact]
     public async Task Execute_ShouldReturnError_WhenToolNotFound()
     {
@@ -381,6 +458,58 @@ public class CustomToolProxyTests
             "failed",
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Execute_QueryTool_RevokedLease_DiscardsLateProviderSuccess()
+    {
+        using var lostLease = new CancellationTokenSource();
+        _toolServiceMock.Setup(x => x.GetPublishedToolByNameAsync(
+                "test_tool", 42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CustomSqlTool
+            {
+                Name = "test_tool",
+                Type = "Query",
+                SqlTemplate = "SELECT id FROM public.users"
+            });
+        SetupPostgresProvider();
+        _sqlConcurrencyLimiterMock
+            .Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new RevocableTestLease(lostLease.Token));
+
+        _typedQueryRuntimeMock.As<ITypedQueryRuntimeFacts>()
+            .Setup(x => x.ExecuteWithFactsAsync(
+                It.IsAny<ISqlProvider>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<SqlAgentToolType>(), It.IsAny<SecurityPolicyModel>(),
+                It.IsAny<IReadOnlySet<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                // A provider may ignore the linked CancellationToken and still
+                // complete. A revoked admission must never release those rows.
+                lostLease.Cancel();
+                return new QueryExecutionWithFacts(
+                    new QueryExecutionResult(
+                        [new Dictionary<string, object?> { ["id"] = 98765 }],
+                        1, TimeSpan.Zero, []),
+                    SqlCoreInspection.GetQueryFacts("SELECT id FROM public.users", SqlAgentToolType.Postgres));
+            });
+
+        var result = await _proxy.Execute(
+            JsonSerializer.SerializeToElement(new { }),
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.StartsWith("Error:", result);
+        Assert.DoesNotContain("98765", result);
+        _auditServiceMock.Verify(x => x.WriteEventAsync(
+            "mcp.test_tool.executed", "test_tool", "success",
+            It.IsAny<AuditEventContext>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    private sealed class RevocableTestLease(CancellationToken revoked) : IRevocableSqlExecutionLease
+    {
+        public CancellationToken RevocationToken => revoked;
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private void SetupPostgresProvider()

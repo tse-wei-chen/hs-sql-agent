@@ -61,11 +61,11 @@ public class AdminDatabaseRegistrationTests
     private static HsSqlAgentServiceOptions CreateOptions(
         string provider,
         string connectionString = "Data Source=:memory:") => new()
-    {
-        AdminDatabaseProvider = provider,
-        AdminConnectionString = connectionString,
-        SecretProtection = Common.Services.TestSecrets.Create(),
-        HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes",
-        JwtSecretKey = "test-jwt-key-that-is-at-least-32-bytes"
-    };
+        {
+            AdminDatabaseProvider = provider,
+            AdminConnectionString = connectionString,
+            SecretProtection = Common.Services.TestSecrets.Create(),
+            HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes",
+            JwtSecretKey = "test-jwt-key-that-is-at-least-32-bytes"
+        };
 }

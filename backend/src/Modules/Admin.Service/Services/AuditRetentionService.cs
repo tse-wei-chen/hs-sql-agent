@@ -33,7 +33,10 @@ public class AuditRetentionService(
         var count = await context.AuditLogs.LongCountAsync(x => x.CreatedAt < cutoff, cancellationToken);
         var result = new AuditRetentionResult
         {
-            Cutoff = cutoff, MatchingCount = count, DryRun = dryRun, Mode = options.AuditRetentionMode
+            Cutoff = cutoff,
+            MatchingCount = count,
+            DryRun = dryRun,
+            Mode = options.AuditRetentionMode
         };
         if (dryRun || count == 0) return result;
 

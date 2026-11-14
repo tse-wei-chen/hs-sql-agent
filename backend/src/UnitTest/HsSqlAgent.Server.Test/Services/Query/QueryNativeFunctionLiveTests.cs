@@ -1,0 +1,1043 @@
+using System.Data;
+using System.Data.Common;
+using HsSqlAgent.Provider.Abstractions;
+using Admin.Service.Interfaces;
+using Admin.Service.Models;
+using Common.Models;
+using FirebirdSql.Data.FirebirdClient;
+using HsSqlAgent.Provider.Firebird;
+using HsSqlAgent.Provider.Oracle;
+using HsSqlAgent.Provider.SqlServer;
+using HsSqlAgent.Server.Services;
+using HsSqlAgent.Server.Tools;
+using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.Core.Compilation;
+using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.Models;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Data.SqlClient;
+using Moq;
+using MySql.Data.MySqlClient;
+using HsSqlAgent.Provider.MySql;
+using Oracle.ManagedDataAccess.Client;
+using SqlAgent.Service.Interfaces;
+using Xunit;
+
+namespace HsSqlAgent.Server.Test.Services;
+
+/// <summary>
+/// #575: live, independently measured hidden-table reads through native UDFs.
+/// Each provider's direct control reads the excluded relation from a real DB;
+/// the published MCP Query tool must then fail closed for the same function
+/// when only the visible users table is granted. No mocked SQL executor.
+/// </summary>
+public sealed class QueryNativeFunctionLiveTests
+{
+    private const string Secret = "SENTINEL_PRIVATE_VALUE";
+
+    [Fact]
+    public async Task SqlServer_QualifiedUdfReadsExcludedPhysicalTableButMcpRejects()
+    {
+        var connectionString = RequireConnection("TEST_SQLSERVER_CONNECTION", "SQL Server 2022");
+        var ct = TestContext.Current.CancellationToken;
+        var database = "hsqlq_" + Guid.NewGuid().ToString("N")[..15];
+        await using var admin = new SqlConnection(connectionString);
+        for (var attempt = 0; ; attempt++)
+        {
+            try { await admin.OpenAsync(ct); break; }
+            catch (SqlException) when (attempt < 24 && !ct.IsCancellationRequested)
+            { await Task.Delay(TimeSpan.FromSeconds(3), ct); }
+        }
+        await ExecuteAsync(admin, "CREATE DATABASE [" + database + "]", ct);
+        try
+        {
+            var target = new SqlConnectionStringBuilder(connectionString)
+            {
+                InitialCatalog = database,
+                Pooling = false
+            }.ConnectionString;
+            await using var setup = new SqlConnection(target);
+            await setup.OpenAsync(ct);
+            await ExecuteAsync(setup, "CREATE TABLE dbo.users (id INT PRIMARY KEY)", ct);
+            await ExecuteAsync(setup, "CREATE TABLE dbo.secrets (id INT PRIMARY KEY, secret NVARCHAR(64))", ct);
+            await ExecuteAsync(setup, "INSERT INTO dbo.users VALUES (1)", ct);
+            await ExecuteAsync(setup, "INSERT INTO dbo.secrets VALUES (1, N'" + Secret + "')", ct);
+            await ExecuteAsync(setup, """
+                CREATE FUNCTION dbo.leak_secret() RETURNS NVARCHAR(64)
+                AS
+                BEGIN
+                    DECLARE @value NVARCHAR(64);
+                    SELECT @value = secret FROM dbo.secrets WHERE id = 1;
+                    RETURN @value;
+                END
+                """, ct);
+
+            var sql = "SELECT dbo.leak_secret() AS leaked FROM dbo.users";
+            Assert.Equal(Secret, (await ScalarAsync(setup, sql, ct))?.ToString());
+            var before = await PhysicalCountAsync(setup, "dbo.users", "dbo.secrets", ct);
+
+            // The same opaque function must be denied at the compiler policy
+            // boundary even with no whitelist; the physical principal guard
+            // must not be the only reason this privileged login is rejected.
+            var provider = new MsSqlServerProvider();
+            var noWhitelist = Assert.Throws<UnauthorizedAccessException>(() =>
+                new TypedQueryRuntime().Compile(
+                    provider, sql, SqlAgentToolType.MsSqlServer, Policy(),
+                    allowedTables: null));
+            Assert.Equal("SQL_POLICY_NATIVE_QUERY_FUNCTION_NOT_PROVEN",
+                Assert.IsType<SqlDiagnostic>(
+                    noWhitelist.Data["HsSqlAgent.SqlCore.Diagnostic"]).Code);
+            var noWhitelistTool = await Tool(provider, SqlAgentToolType.MsSqlServer,
+                target, allowedTable: null).ExecuteQuerySql(sql, ct);
+            Assert.False(noWhitelistTool.Success);
+            Assert.Empty(noWhitelistTool.Rows);
+            Assert.DoesNotContain(Secret, noWhitelistTool.ToString());
+
+            await AssertMcpDeniesAsync(
+                provider, SqlAgentToolType.MsSqlServer,
+                target, "dbo.users", sql, "SELECT id FROM dbo.users", ct);
+            Assert.Equal(before, await PhysicalCountAsync(setup, "dbo.users", "dbo.secrets", ct));
+        }
+        finally
+        {
+            await ExecuteAsync(admin,
+                "ALTER DATABASE [" + database + "] SET SINGLE_USER WITH ROLLBACK IMMEDIATE",
+                CancellationToken.None);
+            await ExecuteAsync(admin, "DROP DATABASE [" + database + "]", CancellationToken.None);
+        }
+    }
+
+    // SQL Server has no MySQL-style transaction READ ONLY fence. A Query-only
+    // key without a table whitelist must not silently treat sa / db_owner or
+    // object-specific write grants as a read-only physical database principal.
+    // The restricted-login control is a real connection, not a mocked role.
+    [Fact]
+    public async Task SqlServer_QueryOnlyNoWhitelist_RequiresPhysicallyReadOnlyPrincipal()
+    {
+        var source = RequireConnection("TEST_SQLSERVER_CONNECTION", "SQL Server 2022");
+        var ct = TestContext.Current.CancellationToken;
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var database = "hsqlro_" + suffix;
+        var login = "hsqlread_" + suffix;
+        const string password = "HsqlOnlyRead_Aa2026!";
+        await using var admin = new SqlConnection(source);
+        for (var retry = 0; ; retry++)
+        {
+            try { await admin.OpenAsync(ct); break; }
+            catch (SqlException) when (retry < 24 && !ct.IsCancellationRequested)
+            { await Task.Delay(TimeSpan.FromSeconds(3), ct); }
+        }
+
+        await ExecuteAsync(admin, "CREATE DATABASE [" + database + "]", ct);
+        var loginCreated = false;
+        try
+        {
+            await ExecuteAsync(admin,
+                "CREATE LOGIN [" + login + "] WITH PASSWORD = '" + password
+                + "', CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF", ct);
+            loginCreated = true;
+            var elevated = new SqlConnectionStringBuilder(source)
+            {
+                InitialCatalog = database,
+                Pooling = false
+            }.ConnectionString;
+            await using var setup = new SqlConnection(elevated);
+            await setup.OpenAsync(ct);
+            await ExecuteAsync(setup, "CREATE TABLE dbo.allowed (id INT PRIMARY KEY)", ct);
+            await ExecuteAsync(setup, "CREATE TABLE dbo.secret (id INT PRIMARY KEY)", ct);
+            await ExecuteAsync(setup, "INSERT INTO dbo.allowed VALUES (3)", ct);
+            await ExecuteAsync(setup, "INSERT INTO dbo.secret VALUES (7)", ct);
+            await ExecuteAsync(setup,
+                "CREATE USER [" + login + "] FOR LOGIN [" + login + "]", ct);
+            await ExecuteAsync(setup,
+                "GRANT VIEW DEFINITION TO [" + login + "]", ct);
+            await ExecuteAsync(setup,
+                "GRANT SELECT ON OBJECT::dbo.allowed TO [" + login + "]", ct);
+
+            var reader = new SqlConnectionStringBuilder(elevated)
+            {
+                UserID = login,
+                Password = password,
+                Pooling = false
+            }.ConnectionString;
+            await using (var witness = new SqlConnection(reader))
+            {
+                await witness.OpenAsync(ct);
+                Assert.Equal(3, Convert.ToInt32(await ScalarAsync(
+                    witness, "SELECT id FROM dbo.allowed", ct)));
+            }
+
+            const string safeQuery = "SELECT id FROM dbo.allowed";
+            var provider = new MsSqlServerProvider();
+
+            // RED against the historical Host: the query compiles and SA is
+            // allowed to execute it despite possessing unrestricted DML powers.
+            var elevatedQuery = await Tool(provider, SqlAgentToolType.MsSqlServer,
+                elevated, "").ExecuteQuerySql(safeQuery, ct);
+            Assert.False(elevatedQuery.Success,
+                "Query-only SQL Server key accepted a sysadmin connection with no table whitelist.");
+            Assert.Empty(elevatedQuery.Rows);
+
+            // #575: SQL Server and F# Query policy must agree about an empty
+            // allowset. The F# facade treats Count==0 as no whitelist;
+            // the original Host checked only 'is null' for principal proof.
+            // These exercise BOTH physical CLR Query entrypoints using sa.
+            var emptyScope = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                new TypedQueryRuntime().ExecuteAsync(
+                    provider, elevated, safeQuery, SqlAgentToolType.MsSqlServer,
+                    Policy(), emptyScope, ct));
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                new TypedQueryRuntime().ExecuteWithFactsAsync(
+                    provider, elevated, safeQuery, SqlAgentToolType.MsSqlServer,
+                    Policy(), emptyScope, ct));
+
+            var limitedTool = Tool(provider, SqlAgentToolType.MsSqlServer, reader, "");
+            var allowed = await limitedTool.ExecuteQuerySql(safeQuery, ct);
+            Assert.True(allowed.Success, allowed.Error?.Message);
+            Assert.Equal(3, Convert.ToInt32(Assert.Single(allowed.Rows)["id"]));
+            // Empty and null scopes must be equivalent for both privileged
+            // rejection and the legitimate least-privilege reader positive.
+            var emptyReader = await new TypedQueryRuntime().ExecuteAsync(
+                provider, reader, safeQuery, SqlAgentToolType.MsSqlServer,
+                Policy(), emptyScope, ct);
+            Assert.Equal(3, Convert.ToInt32(Assert.Single(emptyReader.Rows)["id"]));
+            var emptyFactsReader = await new TypedQueryRuntime().ExecuteWithFactsAsync(
+                provider, reader, safeQuery, SqlAgentToolType.MsSqlServer,
+                Policy(), emptyScope, ct);
+            Assert.Equal(3, Convert.ToInt32(Assert.Single(emptyFactsReader.Execution.Rows)["id"]));
+            var denied = await limitedTool.ExecuteQuerySql(
+                "SELECT id FROM dbo.secret", ct);
+            Assert.False(denied.Success,
+                "A database login granted only SELECT on dbo.allowed read the secret table.");
+            Assert.Empty(denied.Rows);
+
+            // SQL Server T-SQL UDFs cannot normally mutate database state,
+            // but EXECUTE AS OWNER can still read tables inaccessible to the
+            // caller. An opaque module grant is not the caller's SELECT proof.
+            await ExecuteAsync(setup, """
+                CREATE FUNCTION dbo.owner_secret_reader() RETURNS INT
+                WITH EXECUTE AS OWNER AS
+                BEGIN
+                    DECLARE @value INT;
+                    SELECT @value = id FROM dbo.secret;
+                    RETURN @value;
+                END
+                """, ct);
+            await ExecuteAsync(setup,
+                "GRANT EXECUTE ON OBJECT::dbo.owner_secret_reader TO [" + login + "]", ct);
+            await using (var ownerControl = new SqlConnection(reader))
+            {
+                await ownerControl.OpenAsync(ct);
+                Assert.Equal(7, Convert.ToInt32(await ScalarAsync(
+                    ownerControl, "SELECT dbo.owner_secret_reader()", ct)));
+            }
+            var nativeGrant = await limitedTool.ExecuteQuerySql(safeQuery, ct);
+            Assert.False(nativeGrant.Success,
+                "An owner-context UDF EXECUTE grant bypassed SQL Server Query-only least privilege.");
+            Assert.Empty(nativeGrant.Rows);
+            await ExecuteAsync(setup,
+                "REVOKE EXECUTE ON OBJECT::dbo.owner_secret_reader FROM [" + login + "]", ct);
+
+            // Object-scoped DML permissions are not visible from checks of
+            // DATABASE-level permissions alone. They must fail the same guard.
+            await ExecuteAsync(setup,
+                "GRANT UPDATE ON OBJECT::dbo.allowed TO [" + login + "]", ct);
+            var nowWritable = await limitedTool.ExecuteQuerySql(safeQuery, ct);
+            Assert.False(nowWritable.Success,
+                "Object-scoped UPDATE permission bypassed SQL Server Query-only privilege proof.");
+            Assert.Empty(nowWritable.Rows);
+            await ExecuteAsync(setup,
+                "REVOKE UPDATE ON OBJECT::dbo.allowed FROM [" + login + "]", ct);
+            var restored = await limitedTool.ExecuteQuerySql(safeQuery, ct);
+            Assert.True(restored.Success, restored.Error?.Message);
+            Assert.Single(restored.Rows);
+
+            Assert.Equal(1, Convert.ToInt32(await ScalarAsync(
+                setup, "SELECT COUNT(*) FROM dbo.allowed", ct)));
+            Assert.Equal(1, Convert.ToInt32(await ScalarAsync(
+                setup, "SELECT COUNT(*) FROM dbo.secret", ct)));
+        }
+        finally
+        {
+            try
+            {
+                await ExecuteAsync(admin,
+                    "ALTER DATABASE [" + database
+                    + "] SET SINGLE_USER WITH ROLLBACK IMMEDIATE",
+                    CancellationToken.None);
+                await ExecuteAsync(admin,
+                    "DROP DATABASE [" + database + "]", CancellationToken.None);
+            }
+            finally
+            {
+                if (loginCreated)
+                    await ExecuteAsync(admin,
+                        "DROP LOGIN [" + login + "]", CancellationToken.None);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Oracle_QualifiedUdfReadsExcludedPhysicalTableButMcpRejects()
+    {
+        var connectionString = RequireConnection("TEST_ORACLE_CONNECTION", "Oracle 26ai");
+        var ct = TestContext.Current.CancellationToken;
+        var suffix = Guid.NewGuid().ToString("N")[..10].ToUpperInvariant();
+        var users = "QUSR_" + suffix;
+        var secrets = "QSEC_" + suffix;
+        var function = "QFN_" + suffix;
+        await using var setup = new OracleConnection(connectionString);
+        await setup.OpenAsync(ct);
+        var created = 0;
+        try
+        {
+            await ExecuteAsync(setup, "CREATE TABLE " + users + " (ID NUMBER(10) PRIMARY KEY)", ct);
+            created = 1;
+            await ExecuteAsync(setup, "CREATE TABLE " + secrets
+                + " (ID NUMBER(10) PRIMARY KEY, SECRET VARCHAR2(64))", ct);
+            created = 2;
+            await ExecuteAsync(setup, "INSERT INTO " + users + " VALUES (1)", ct);
+            await ExecuteAsync(setup, "INSERT INTO " + secrets + " VALUES (1, '" + Secret + "')", ct);
+            await ExecuteAsync(setup, "CREATE FUNCTION " + function + """
+                 RETURN VARCHAR2 IS
+                     secret_value VARCHAR2(64);
+                 BEGIN
+                     SELECT SECRET INTO secret_value FROM 
+                """ + secrets + """
+                 WHERE ID = 1;
+                     RETURN secret_value;
+                 END;
+                """, ct);
+            created = 3;
+
+            var table = "SQLCORE." + users;
+            await AwaitOracleReadOnlyDdlVisibilityAsync(connectionString, table, ct);
+            var sql = "SELECT SQLCORE." + function + "() AS LEAKED FROM " + table;
+            Assert.Equal(Secret, (await ScalarAsync(setup, sql, ct))?.ToString());
+            var before = await PhysicalCountAsync(setup, users, secrets, ct);
+            try
+            {
+                var direct = await new TypedQueryRuntime().ExecuteWithFactsAsync(
+                    new OracleProvider(), connectionString, "SELECT ID FROM " + table,
+                    SqlAgentToolType.Oracle, Policy(),
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase) { table }, ct);
+                Assert.Single(direct.Execution.Rows);
+            }
+            catch (ProviderExecutionException exception)
+            {
+                Assert.Fail("Oracle read-only compiled table Query failed: "
+                    + exception.Code + " / " + exception.InnerException?.GetType().Name);
+            }
+            await AssertMcpDeniesAsync(
+                new OracleProvider(), SqlAgentToolType.Oracle,
+                connectionString, table, sql, "SELECT ID FROM " + table, ct);
+            Assert.Equal(before, await PhysicalCountAsync(setup, users, secrets, ct));
+
+            // A read-only transaction is a physical engine property, not an
+            // inference from the SELECT AST or the MCP tool descriptor.
+            var provider = new OracleProvider();
+            await AssertPhysicalReadOnlyRejectsInsertAsync(
+                provider, connectionString, "INSERT INTO " + users + " VALUES (2)", ct);
+            var noWhitelist = await Tool(provider, SqlAgentToolType.Oracle,
+                connectionString, allowedTable: null).ExecuteQuerySql(
+                    "SELECT ID FROM " + table, ct);
+            Assert.True(noWhitelist.Success, noWhitelist.Error?.Message);
+            Assert.Single(noWhitelist.Rows);
+            Assert.Equal(before, await PhysicalCountAsync(setup, users, secrets, ct));
+        }
+        finally
+        {
+            if (created >= 3)
+                await ExecuteAsync(setup, "DROP FUNCTION " + function, CancellationToken.None);
+            if (created >= 2)
+                await ExecuteAsync(setup, "DROP TABLE " + secrets + " PURGE", CancellationToken.None);
+            if (created >= 1)
+                await ExecuteAsync(setup, "DROP TABLE " + users + " PURGE", CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task Oracle_PhysicalReadOnlyQueryTransaction_AllowsSelect()
+    {
+        var connectionString = RequireConnection("TEST_ORACLE_CONNECTION", "Oracle 26ai");
+        var ct = TestContext.Current.CancellationToken;
+        var provider = new OracleProvider();
+        await using var connection = provider.Connections.Create(connectionString);
+        await connection.OpenAsync(ct);
+        var source = Assert.IsAssignableFrom<IProviderDmlPreviewTransactionSource>(provider);
+        await using var transaction = await source.PreviewTransactions.BeginAsync(
+            connection, SqlAgentToolType.Oracle, IsolationLevel.ReadCommitted, ct);
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT 1 FROM DUAL";
+        Assert.Equal(1, Convert.ToInt32(await command.ExecuteScalarAsync(ct)));
+        await transaction.RollbackAsync(ct);
+
+        // Separately exercise the same native transaction through the
+        // production Dapper/compiled-Query path, not just a raw DbCommand.
+        try
+        {
+            var execution = await new TypedQueryRuntime().ExecuteAsync(
+                provider, connectionString, "SELECT 1 AS ID FROM DUAL",
+                SqlAgentToolType.Oracle, Policy(), allowedTables: null, ct);
+            Assert.Single(execution.Rows);
+        }
+        catch (ProviderExecutionException exception)
+        {
+            Assert.Fail("Oracle compiled Query native transaction failed: "
+                + exception.Code + " / " + exception.InnerException?.GetType().Name);
+        }
+    }
+
+    // #575: Oracle's PRAGMA AUTONOMOUS_TRANSACTION commits independently of
+    // an outer READ ONLY Query transaction and survives its ROLLBACK. Test
+    // both the physical native control and the published no-whitelist MCP.
+    [Fact]
+    public async Task Oracle_QueryOnlyNoWhitelist_RejectsAutonomousTransactionFunction()
+    {
+        var connectionString = RequireConnection("TEST_ORACLE_CONNECTION", "Oracle 26ai");
+        var ct = TestContext.Current.CancellationToken;
+        var suffix = Guid.NewGuid().ToString("N")[..10].ToUpperInvariant();
+        var users = "QAUSR_" + suffix;
+        var effects = "QAOUT_" + suffix;
+        var function = "QAFN_" + suffix;
+        var table = "SQLCORE." + users;
+        var unsafeSql = "SELECT SQLCORE." + function + "(ID) AS RESULT FROM " + table;
+        await using var setup = new OracleConnection(connectionString);
+        await setup.OpenAsync(ct);
+        var created = 0;
+        try
+        {
+            await ExecuteAsync(setup,
+                "CREATE TABLE " + users + " (ID NUMBER(10) PRIMARY KEY)", ct);
+            created = 1;
+            await ExecuteAsync(setup,
+                "CREATE TABLE " + effects + " (ID NUMBER(10) PRIMARY KEY)", ct);
+            created = 2;
+            await ExecuteAsync(setup,
+                "INSERT INTO " + users + " VALUES (1)", ct);
+            await ExecuteAsync(setup, "COMMIT", ct);
+            await ExecuteAsync(setup,
+                "CREATE FUNCTION " + function + "(P_ID NUMBER) RETURN NUMBER IS " +
+                "PRAGMA AUTONOMOUS_TRANSACTION; " +
+                "BEGIN " +
+                "INSERT INTO " + effects + "(ID) VALUES(P_ID); " +
+                "COMMIT; RETURN P_ID; END;", ct);
+            created = 3;
+            await AwaitOracleReadOnlyDdlVisibilityAsync(connectionString, table, ct);
+
+            var provider = new OracleProvider();
+            var nativeSource = Assert.IsAssignableFrom<IProviderDmlPreviewTransactionSource>(provider);
+            await using (var native = provider.Connections.Create(connectionString))
+            {
+                await native.OpenAsync(ct);
+                await using var readOnly = await nativeSource.PreviewTransactions.BeginAsync(
+                    native, SqlAgentToolType.Oracle, IsolationLevel.ReadCommitted, ct);
+                await using var command = native.CreateCommand();
+                command.Transaction = readOnly;
+                command.CommandText = unsafeSql;
+                Assert.Equal(1, Convert.ToInt32(await command.ExecuteScalarAsync(ct)));
+                await readOnly.RollbackAsync(ct);
+            }
+
+            // Independent connection proves durable physical COMMIT despite
+            // the outer read-only transaction and its successful rollback.
+            await using (var witness = new OracleConnection(connectionString))
+            {
+                await witness.OpenAsync(ct);
+                Assert.Equal(1, Convert.ToInt32(await ScalarAsync(
+                    witness, "SELECT COUNT(*) FROM " + effects, ct)));
+            }
+            await ExecuteAsync(setup, "DELETE FROM " + effects, ct);
+            await ExecuteAsync(setup, "COMMIT", ct);
+
+            // Query-only MCP without TableWhitelist must not be a shortcut
+            // to execute arbitrary schema-qualified native routines.
+            var denied = await Tool(provider, SqlAgentToolType.Oracle,
+                connectionString, allowedTable: null).ExecuteQuerySql(unsafeSql, ct);
+            Assert.False(denied.Success,
+                "Query-only Oracle executed an autonomous function and durably mutated the DB.");
+            Assert.Empty(denied.Rows);
+            await using (var witness = new OracleConnection(connectionString))
+            {
+                await witness.OpenAsync(ct);
+                Assert.Equal(0, Convert.ToInt32(await ScalarAsync(
+                    witness, "SELECT COUNT(*) FROM " + effects, ct)));
+            }
+
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                new TypedQueryRuntime().ExecuteAsync(
+                    provider, connectionString, unsafeSql, SqlAgentToolType.Oracle,
+                    Policy(), allowedTables: null, ct));
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                new TypedQueryRuntime().ExecuteWithFactsAsync(
+                    provider, connectionString, unsafeSql, SqlAgentToolType.Oracle,
+                    Policy(), allowedTables: null, ct));
+            var safe = await Tool(provider, SqlAgentToolType.Oracle,
+                connectionString, allowedTable: null).ExecuteQuerySql(
+                    "SELECT ABS(ID) AS POSITIVE FROM " + table, ct);
+            Assert.True(safe.Success, safe.Error?.Message);
+            Assert.Equal(1, Convert.ToInt32(Assert.Single(safe.Rows)["POSITIVE"]));
+        }
+        finally
+        {
+            if (created >= 3)
+                await ExecuteAsync(setup, "DROP FUNCTION " + function, CancellationToken.None);
+            if (created >= 2)
+                await ExecuteAsync(setup, "DROP TABLE " + effects + " PURGE", CancellationToken.None);
+            if (created >= 1)
+                await ExecuteAsync(setup, "DROP TABLE " + users + " PURGE", CancellationToken.None);
+        }
+    }
+
+    // Oracle resolves unqualified ABS as its built-in despite a schema UDF
+    // named ABS. The explicitly qualified UDF does reach excluded data and
+    // must remain rejected by F# Policy and published MCP Query.
+    [Fact]
+    public async Task Oracle_UnqualifiedAbsUsesNativeBuiltin_QualifiedUdfDenied()
+    {
+        var connectionString = RequireConnection("TEST_ORACLE_CONNECTION", "Oracle 26ai");
+        var ct = TestContext.Current.CancellationToken;
+        var suffix = Guid.NewGuid().ToString("N")[..10].ToUpperInvariant();
+        var users = "QUSR_" + suffix;
+        var secrets = "QSEC_" + suffix;
+        await using var setup = new OracleConnection(connectionString);
+        await setup.OpenAsync(ct);
+        var stage = 0;
+        try
+        {
+            await ExecuteAsync(setup, "CREATE TABLE " + users + " (ID NUMBER(10) PRIMARY KEY)", ct);
+            stage = 1;
+            await ExecuteAsync(setup, "CREATE TABLE " + secrets
+                + " (ID NUMBER(10) PRIMARY KEY, SECRET VARCHAR2(64))", ct);
+            stage = 2;
+            await ExecuteAsync(setup, "INSERT INTO " + users + " VALUES (1)", ct);
+            await ExecuteAsync(setup, "INSERT INTO " + secrets + " VALUES (1, '" + Secret + "')", ct);
+            await ExecuteAsync(setup, "CREATE FUNCTION ABS(P_ID NUMBER) RETURN VARCHAR2 IS "
+                + "V_SECRET VARCHAR2(64); BEGIN SELECT SECRET INTO V_SECRET FROM "
+                + secrets + " WHERE ID=P_ID; RETURN V_SECRET; END;", ct);
+            stage = 3;
+
+            var table = "SQLCORE." + users;
+            await AwaitOracleReadOnlyDdlVisibilityAsync(connectionString, table, ct);
+            var nativeSql = "SELECT ABS(ID) AS AMOUNT FROM " + table;
+            var nativeUdfSql = "SELECT SQLCORE.ABS(ID) AS LEAKED FROM " + table;
+            Assert.Equal(1, Convert.ToInt32(await ScalarAsync(setup, nativeSql, ct)));
+            Assert.Equal(Secret, (await ScalarAsync(setup, nativeUdfSql, ct))?.ToString());
+
+            var provider = new OracleProvider();
+            var tables = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { table };
+            var compiled = new TypedQueryRuntime().Compile(
+                provider, nativeSql, SqlAgentToolType.Oracle, Policy(), tables);
+            Assert.Contains("ABS(", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+            var before = await PhysicalCountAsync(setup, users, secrets, ct);
+            var normal = await Tool(provider, SqlAgentToolType.Oracle,
+                connectionString, table).ExecuteQuerySql(nativeSql, ct);
+            Assert.True(normal.Success, normal.Error?.Message);
+            Assert.Equal(1, Convert.ToInt32(Assert.Single(normal.Rows)["AMOUNT"]));
+            await AssertMcpDeniesAsync(provider, SqlAgentToolType.Oracle,
+                connectionString, table, nativeUdfSql, "SELECT ID FROM " + table, ct);
+            Assert.Equal(before, await PhysicalCountAsync(setup, users, secrets, ct));
+        }
+        finally
+        {
+            if (stage >= 3) await ExecuteAsync(setup, "DROP FUNCTION ABS", CancellationToken.None);
+            if (stage >= 2) await ExecuteAsync(setup, "DROP TABLE " + secrets + " PURGE", CancellationToken.None);
+            if (stage >= 1) await ExecuteAsync(setup, "DROP TABLE " + users + " PURGE", CancellationToken.None);
+        }
+    }
+
+    // MySQL 8.4 resolves the built-in name unqualified. A schema-qualified
+    // stored function with the same name can still read excluded relations.
+    [Fact]
+    public async Task MySql_UnqualifiedAbsUsesNativeBuiltin_QualifiedUdfDenied()
+    {
+        var connectionString = RequireConnection("TEST_MYSQL_CONNECTION", "MySQL 8.4");
+        var ct = TestContext.Current.CancellationToken;
+        var dbName = "hsqlq_" + Guid.NewGuid().ToString("N")[..14];
+        await using var admin = new MySqlConnection(connectionString);
+        await admin.OpenAsync(ct);
+        await ExecuteAsync(admin, "CREATE DATABASE " + dbName, ct);
+        try
+        {
+            var target = new MySqlConnectionStringBuilder(connectionString)
+            {
+                Database = dbName,
+                Pooling = false
+            }.ConnectionString;
+            await using var setup = new MySqlConnection(target);
+            await setup.OpenAsync(ct);
+            await ExecuteAsync(setup, "CREATE TABLE users (ID INT PRIMARY KEY)", ct);
+            await ExecuteAsync(setup, "CREATE TABLE secrets (ID INT PRIMARY KEY, SECRET VARCHAR(64))", ct);
+            await ExecuteAsync(setup, "INSERT INTO users VALUES (1)", ct);
+            await ExecuteAsync(setup, "INSERT INTO secrets VALUES (1, '" + Secret + "')", ct);
+            await ExecuteAsync(setup,
+                "CREATE FUNCTION `ABS`(P_ID INT) RETURNS VARCHAR(64) "
+                + "DETERMINISTIC READS SQL DATA "
+                + "RETURN (SELECT SECRET FROM secrets WHERE ID=P_ID)", ct);
+
+            var table = dbName + ".users";
+            var nativeSql = "SELECT ABS(ID) AS AMOUNT FROM " + table;
+            var nativeUdfSql = "SELECT " + dbName + ".ABS(ID) AS LEAKED FROM " + table;
+            Assert.Equal(1, Convert.ToInt32(await ScalarAsync(setup, nativeSql, ct)));
+            Assert.Equal(Secret, (await ScalarAsync(setup, nativeUdfSql, ct))?.ToString());
+
+            var provider = new MySqlProvider();
+            var before = await PhysicalCountAsync(setup, "users", "secrets", ct);
+            var normal = await Tool(provider, SqlAgentToolType.MySQL, target, table)
+                .ExecuteQuerySql(nativeSql, ct);
+            Assert.True(normal.Success, normal.Error?.Message);
+            Assert.Equal(1, Convert.ToInt32(Assert.Single(normal.Rows)["AMOUNT"]));
+            await AssertMcpDeniesAsync(provider, SqlAgentToolType.MySQL,
+                target, table, nativeUdfSql, "SELECT ID FROM " + table, ct);
+            Assert.Equal(before, await PhysicalCountAsync(setup, "users", "secrets", ct));
+        }
+        finally
+        {
+            await ExecuteAsync(admin, "DROP DATABASE " + dbName, CancellationToken.None);
+        }
+    }
+
+    // A query-only MCP key with no table whitelist is not a database-level
+    // read-only grant. This real stored function changes an unrelated InnoDB
+    // table even though the outer command is a single SELECT. The direct
+    // MySQL connection is a positive attack control, not a mocked function.
+    [Fact]
+    public async Task MySql_QueryOnlyKeyWithoutWhitelist_CannotPersistFunctionSideEffects()
+    {
+        var source = RequireConnection("TEST_MYSQL_CONNECTION", "MySQL 8.4");
+        var ct = TestContext.Current.CancellationToken;
+        var database = "hsqlro_" + Guid.NewGuid().ToString("N")[..12];
+        await using var admin = new MySqlConnection(source);
+        await admin.OpenAsync(ct);
+        await ExecuteAsync(admin, "CREATE DATABASE " + database, ct);
+        try
+        {
+            var target = new MySqlConnectionStringBuilder(source)
+            {
+                Database = database,
+                Pooling = false
+            }.ConnectionString;
+            await using var setup = new MySqlConnection(target);
+            await setup.OpenAsync(ct);
+            await ExecuteAsync(setup,
+                "CREATE TABLE visible_users (id INT PRIMARY KEY) ENGINE=InnoDB", ct);
+            await ExecuteAsync(setup,
+                "CREATE TABLE side_effects (id INT PRIMARY KEY) ENGINE=InnoDB", ct);
+            await ExecuteAsync(setup, "INSERT INTO visible_users VALUES(7)", ct);
+            await ExecuteAsync(setup,
+                "CREATE FUNCTION write_during_select(p_id INT) RETURNS INT " +
+                "DETERMINISTIC MODIFIES SQL DATA " +
+                "BEGIN INSERT INTO side_effects(id) VALUES (p_id); RETURN p_id; END", ct);
+
+            // Direct privileged-control SELECT really persists a separate
+            // table write. A compiler-only rejection would not prove the fence.
+            var unsafeSql = "SELECT " + database
+                + ".write_during_select(id) AS result FROM "
+                + database + ".visible_users";
+            Assert.Equal(7, Convert.ToInt32(await ScalarAsync(setup, unsafeSql, ct)));
+            Assert.Equal(1, Convert.ToInt32(await ScalarAsync(
+                setup, "SELECT COUNT(*) FROM side_effects", ct)));
+            await ExecuteAsync(setup, "DELETE FROM side_effects", ct);
+            Assert.Equal(0, Convert.ToInt32(await ScalarAsync(
+                setup, "SELECT COUNT(*) FROM side_effects", ct)));
+
+            // Empty TableWhitelist is deliberate: the generic F# SQL
+            // grammar still accepts qualified MySQL native functions.
+            // Only the physical Host Query runtime opts into the stricter
+            // side-effect policy; this must not be an accidental loss of
+            // generic SqlCore syntax/compiler support.
+            var provider = new MySqlProvider();
+            var compiled = SqlCoreFacade.CompileQuery(unsafeSql, SqlAgentToolType.MySQL, SqlAgentToolType.MySQL, new SqlPlanValidationContext("native-mysql-grammar"), new SqlExecutionPlanPolicy(Policy().QueryMaxRows), TestContext.Current.CancellationToken);
+            Assert.Equal(SqlStatementKind.Select, compiled.Kind);
+            var tool = Tool(provider, SqlAgentToolType.MySQL, target, "");
+            var blocked = await tool.ExecuteQuerySql(unsafeSql, ct);
+            Assert.False(blocked.Success,
+                "A Query-only key executed an effectful stored function without a table whitelist.");
+            Assert.Empty(blocked.Rows);
+            Assert.Equal(0, Convert.ToInt32(await ScalarAsync(
+                setup, "SELECT COUNT(*) FROM side_effects", ct)));
+
+            // The direct runtime ExecuteAsync fallback uses the same physical
+            // fence as the compiler-facts path used by published MCP.
+            await Assert.ThrowsAnyAsync<Exception>(() =>
+                new TypedQueryRuntime().ExecuteAsync(provider, target, unsafeSql,
+                    SqlAgentToolType.MySQL, Policy(), allowedTables: null, ct));
+            Assert.Equal(0, Convert.ToInt32(await ScalarAsync(
+                setup, "SELECT COUNT(*) FROM side_effects", ct)));
+
+            // Non-effectful Query with ordinary built-in functions must keep
+            // working on the same real InnoDB target with the same MCP key.
+            var safe = await tool.ExecuteQuerySql(
+                "SELECT ABS(id) AS safe_value FROM " + database + ".visible_users", ct);
+            Assert.True(safe.Success, safe.Error?.Message);
+            Assert.Equal(7, Convert.ToInt32(Assert.Single(safe.Rows)["safe_value"]));
+            Assert.Equal(0, Convert.ToInt32(await ScalarAsync(
+                setup, "SELECT COUNT(*) FROM side_effects", ct)));
+        }
+        finally
+        {
+            await ExecuteAsync(admin, "DROP DATABASE " + database, CancellationToken.None);
+        }
+    }
+
+    // #575: MySQL READ ONLY permits writes to an EXISTING TEMPORARY table.
+    // Connector/NET with ConnectionReset=false can pass that session-local
+    // object through a real pool to the production MCP Query connection.
+    [Fact]
+    public async Task MySql_QueryOnlyNoWhitelist_CannotInvokeTempTableWritingFunction()
+    {
+        var source = RequireConnection("TEST_MYSQL_CONNECTION", "MySQL 8.4");
+        var ct = TestContext.Current.CancellationToken;
+        var database = "hsqltmp_" + Guid.NewGuid().ToString("N")[..12];
+        await using var admin = new MySqlConnection(source);
+        await admin.OpenAsync(ct);
+        await ExecuteAsync(admin, "CREATE DATABASE " + database, ct);
+        try
+        {
+            var target = new MySqlConnectionStringBuilder(source)
+            {
+                Database = database,
+                Pooling = false
+            }.ConnectionString;
+            await using var setup = new MySqlConnection(target);
+            await setup.OpenAsync(ct);
+            await ExecuteAsync(setup,
+                "CREATE TABLE visible_users(id INT PRIMARY KEY) ENGINE=InnoDB", ct);
+            await ExecuteAsync(setup, "INSERT INTO visible_users VALUES(7)", ct);
+            await ExecuteAsync(setup,
+                "CREATE FUNCTION temp_side_effect(p_id INT) RETURNS INT " +
+                "DETERMINISTIC MODIFIES SQL DATA " +
+                "BEGIN " +
+                "INSERT INTO tmp_query_side_effects(id) VALUES(p_id); " +
+                "RETURN (SELECT COUNT(*) FROM tmp_query_side_effects); " +
+                "END", ct);
+
+            var unsafeSql = "SELECT " + database +
+                ".temp_side_effect(id) AS affected FROM " +
+                database + ".visible_users";
+            // Unqualified calls resolve to stored functions in the active
+            // database too. Unlike qualified names, today's native-identifier
+            // safety restriction does not inspect these opaque functions.
+            var unqualifiedSql =
+                "SELECT temp_side_effect(id) AS affected FROM " +
+                database + ".visible_users";
+            const string createTemp =
+                "CREATE TEMPORARY TABLE tmp_query_side_effects " +
+                "(id INT PRIMARY KEY) ENGINE=MEMORY";
+
+            // Independent physical positive control: native read-only
+            // transaction DOES allow a UDF to insert into a preexisting
+            // TEMPORARY MEMORY table. Its contents survive ROLLBACK.
+            await ExecuteAsync(setup, createTemp, ct);
+            await ExecuteAsync(setup, "SET TRANSACTION READ ONLY", ct);
+            await using (var transaction = await setup.BeginTransactionAsync(ct))
+            {
+                await using var command = setup.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = unqualifiedSql;
+                Assert.Equal(1, Convert.ToInt32(await command.ExecuteScalarAsync(ct)));
+                command.CommandText = "SELECT COUNT(*) FROM tmp_query_side_effects";
+                Assert.Equal(1, Convert.ToInt32(await command.ExecuteScalarAsync(ct)));
+                await transaction.RollbackAsync(ct);
+            }
+            Assert.Equal(1, Convert.ToInt32(await ScalarAsync(
+                setup, "SELECT COUNT(*) FROM tmp_query_side_effects", ct)));
+            await ExecuteAsync(setup, "DROP TEMPORARY TABLE tmp_query_side_effects", ct);
+
+            // Real production first-party MySqlProvider/Connector.NET pool.
+            // With session reset disabled, the next logical connection shares
+            // the same physical MySQL session, including its temporary table.
+            var pooled = new MySqlConnectionStringBuilder(target)
+            {
+                Pooling = true,
+                ConnectionReset = false,
+                MaximumPoolSize = 1
+            }.ConnectionString;
+            long sessionId;
+            await using (var warm = new MySqlConnection(pooled))
+            {
+                await warm.OpenAsync(ct);
+                sessionId = Convert.ToInt64(await ScalarAsync(
+                    warm, "SELECT CONNECTION_ID()", ct));
+                await ExecuteAsync(warm, createTemp, ct);
+            }
+            await using (var witness = new MySqlConnection(pooled))
+            {
+                await witness.OpenAsync(ct);
+                Assert.Equal(sessionId, Convert.ToInt64(await ScalarAsync(
+                    witness, "SELECT CONNECTION_ID()", ct)));
+                Assert.Equal(0, Convert.ToInt32(await ScalarAsync(
+                    witness, "SELECT COUNT(*) FROM tmp_query_side_effects", ct)));
+            }
+
+            // Query-only MCP, no whitelist. The compiled SELECT must not be
+            // treated as proof that its opaque function has no temp effects.
+            var provider = new MySqlProvider();
+            var tool = Tool(provider, SqlAgentToolType.MySQL, pooled, "");
+            var denied = await tool.ExecuteQuerySql(unsafeSql, ct);
+            Assert.False(denied.Success,
+                "Query-only MCP admitted a native function writing to a pooled session TEMPORARY table.");
+            Assert.Empty(denied.Rows);
+            // RED: an unqualified stored function is just as effectful in the
+            // real MySQL 8.4 Query-only pooled READ ONLY transaction. This
+            // must be rejected BEFORE execution, not merely rolled back.
+            var unqualifiedDenied = await tool.ExecuteQuerySql(unqualifiedSql, ct);
+            Assert.False(unqualifiedDenied.Success,
+                "Query-only MySQL admitted an unqualified stored function that mutates a pooled TEMPORARY table.");
+            Assert.Empty(unqualifiedDenied.Rows);
+            await using (var witness = new MySqlConnection(pooled))
+            {
+                await witness.OpenAsync(ct);
+                Assert.Equal(sessionId, Convert.ToInt64(await ScalarAsync(
+                    witness, "SELECT CONNECTION_ID()", ct)));
+                Assert.Equal(0, Convert.ToInt32(await ScalarAsync(
+                    witness, "SELECT COUNT(*) FROM tmp_query_side_effects", ct)));
+                await ExecuteAsync(witness,
+                    "DROP TEMPORARY TABLE tmp_query_side_effects", ct);
+            }
+
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                new TypedQueryRuntime().ExecuteAsync(
+                    provider, target, unsafeSql, SqlAgentToolType.MySQL,
+                    Policy(), allowedTables: null, ct));
+            // This is an existing *compiler* fail-closed guarantee, not a
+            // new Host Policy rejection: unknown unqualified function names
+            // cannot normalize to a modeled MySQL function. Verify both
+            // physical CLR entrypoints fail before reaching the database.
+            var directRejection = await Assert.ThrowsAsync<SqlCompilationException>(() =>
+                new TypedQueryRuntime().ExecuteAsync(
+                    provider, target, unqualifiedSql, SqlAgentToolType.MySQL,
+                    Policy(), allowedTables: null, ct));
+            Assert.Contains("not registered for source dialect MySQL",
+                directRejection.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.NotNull(directRejection.Diagnostic);
+            var factsRejection = await Assert.ThrowsAsync<SqlCompilationException>(() =>
+                new TypedQueryRuntime().ExecuteWithFactsAsync(
+                    provider, target, unqualifiedSql, SqlAgentToolType.MySQL,
+                    Policy(), allowedTables: null, ct));
+            Assert.Contains("not registered for source dialect MySQL",
+                factsRejection.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.NotNull(factsRejection.Diagnostic);
+
+            var safe = await tool.ExecuteQuerySql(
+                "SELECT ABS(id) AS safe_value FROM " + database + ".visible_users", ct);
+            Assert.True(safe.Success, safe.Error?.Message);
+            Assert.Equal(7, Convert.ToInt32(Assert.Single(safe.Rows)["safe_value"]));
+        }
+        finally
+        {
+            MySqlConnection.ClearAllPools();
+            await ExecuteAsync(admin, "DROP DATABASE " + database, CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task Firebird_QuotedUdfReadsExcludedPhysicalTableButMcpRejects()
+    {
+        var connectionString = RequireConnection("TEST_FIREBIRD_CONNECTION", "Firebird 5");
+        var ct = TestContext.Current.CancellationToken;
+        var suffix = Guid.NewGuid().ToString("N")[..10].ToUpperInvariant();
+        var users = "QUSR_" + suffix;
+        var secrets = "QSEC_" + suffix;
+        var function = "QFN_" + suffix;
+        await using var setup = new FbConnection(connectionString);
+        await setup.OpenAsync(ct);
+        var created = 0;
+        try
+        {
+            await ExecuteAsync(setup, "CREATE TABLE " + users + " (ID INTEGER PRIMARY KEY)", ct);
+            created = 1;
+            await ExecuteAsync(setup, "CREATE TABLE " + secrets
+                + " (ID INTEGER PRIMARY KEY, SECRET VARCHAR(64))", ct);
+            created = 2;
+            await ExecuteAsync(setup, "INSERT INTO " + users + " VALUES (1)", ct);
+            await ExecuteAsync(setup, "INSERT INTO " + secrets + " VALUES (1, '" + Secret + "')", ct);
+            await ExecuteAsync(setup, "CREATE FUNCTION " + function + """
+                 RETURNS VARCHAR(64) AS
+                 DECLARE VARIABLE secret_value VARCHAR(64);
+                 BEGIN
+                   SELECT SECRET FROM 
+                """ + secrets + """
+                 WHERE ID = 1 INTO :secret_value;
+                   RETURN secret_value;
+                 END
+                """, ct);
+            created = 3;
+
+            var sql = "SELECT \"" + function + "\"() AS LEAKED FROM " + users;
+            Assert.Equal(Secret, (await ScalarAsync(setup, sql, ct))?.ToString());
+            var before = await PhysicalCountAsync(setup, users, secrets, ct);
+            await AssertMcpDeniesAsync(
+                new FirebirdProvider(), SqlAgentToolType.Firebird,
+                connectionString, users, sql, "SELECT ID FROM " + users, ct);
+            Assert.Equal(before, await PhysicalCountAsync(setup, users, secrets, ct));
+
+            var provider = new FirebirdProvider();
+            await AssertPhysicalReadOnlyRejectsInsertAsync(
+                provider, connectionString, "INSERT INTO " + users + " VALUES (2)", ct);
+            var noWhitelist = await Tool(provider, SqlAgentToolType.Firebird,
+                connectionString, allowedTable: null).ExecuteQuerySql(
+                    "SELECT ID FROM " + users, ct);
+            Assert.True(noWhitelist.Success, noWhitelist.Error?.Message);
+            Assert.Single(noWhitelist.Rows);
+            Assert.Equal(before, await PhysicalCountAsync(setup, users, secrets, ct));
+        }
+        finally
+        {
+            if (created >= 3)
+                await ExecuteAsync(setup, "DROP FUNCTION " + function, CancellationToken.None);
+            if (created >= 2)
+                await ExecuteAsync(setup, "DROP TABLE " + secrets, CancellationToken.None);
+            if (created >= 1)
+                await ExecuteAsync(setup, "DROP TABLE " + users, CancellationToken.None);
+        }
+    }
+
+    // Oracle can report ORA-01466 for a freshly created/altered table in a
+    // read-only snapshot, even though a normal SELECT already sees the table.
+    // Synchronize the *test fixture* with physical DDL visibility; this is not
+    // a production retry or an unfenced fallback. Retry only Oracle's precise
+    // schema-snapshot error and remain bounded/fail-closed on other failures.
+    private static async Task AwaitOracleReadOnlyDdlVisibilityAsync(
+        string connectionString, string table, CancellationToken ct)
+    {
+        var provider = new OracleProvider();
+        for (var attempt = 0; attempt < 30; attempt++)
+        {
+            try
+            {
+                var ready = await new TypedQueryRuntime().ExecuteWithFactsAsync(
+                    provider, connectionString, "SELECT ID FROM " + table,
+                    SqlAgentToolType.Oracle, Policy(),
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase) { table }, ct);
+                Assert.Single(ready.Execution.Rows);
+                return;
+            }
+            catch (ProviderExecutionException ex)
+                when (ex.Code == "ORA-01466" && attempt < 29)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1), ct);
+            }
+        }
+    }
+
+    private static async Task AssertPhysicalReadOnlyRejectsInsertAsync(
+        ISqlProvider provider, string connectionString, string insertSql, CancellationToken ct)
+    {
+        var nativeSource = Assert.IsAssignableFrom<IProviderDmlPreviewTransactionSource>(provider);
+        await using var connection = provider.Connections.Create(connectionString);
+        await connection.OpenAsync(ct);
+        await using var transaction = await nativeSource.PreviewTransactions.BeginAsync(
+            connection, provider.Type, IsolationLevel.ReadCommitted, ct);
+        await using var write = connection.CreateCommand();
+        write.Transaction = transaction;
+        write.CommandText = insertSql;
+        await Assert.ThrowsAnyAsync<DbException>(() => write.ExecuteNonQueryAsync(ct));
+        await transaction.RollbackAsync(ct);
+    }
+
+    private static async Task AssertMcpDeniesAsync(
+        ISqlProvider provider, SqlAgentToolType dialect, string connectionString,
+        string allowedTable, string unsafeSql, string safeSql, CancellationToken ct)
+    {
+        var tables = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { allowedTable };
+        var rejection = Assert.Throws<UnauthorizedAccessException>(() =>
+            new TypedQueryRuntime().Compile(provider, unsafeSql, dialect, Policy(), tables));
+        var diagnostic = Assert.IsType<SqlDiagnostic>(
+            rejection.Data["HsSqlAgent.SqlCore.Diagnostic"]);
+        Assert.Equal("SQL_POLICY_NATIVE_QUERY_FUNCTION_NOT_PROVEN", diagnostic.Code);
+        Assert.Equal(SqlDiagnosticStage.Policy, diagnostic.Stage);
+
+        var tool = Tool(provider, dialect, connectionString, allowedTable);
+        var denied = await tool.ExecuteQuerySql(unsafeSql, ct);
+        Assert.False(denied.Success, "Opaque database UDF escaped the Query table whitelist.");
+        Assert.Empty(denied.Rows);
+        Assert.DoesNotContain(Secret, denied.ToString());
+
+        var allowed = await tool.ExecuteQuerySql(safeSql, ct);
+        Assert.True(allowed.Success, allowed.Error?.Message);
+        Assert.Single(allowed.Rows);
+    }
+
+    private static SecurityPolicyModel Policy() => new()
+    {
+        QueryMaxRows = 20,
+        QueryTimeoutSeconds = 10
+    };
+
+    private static SqlAgentTool Tool(
+        ISqlProvider provider, SqlAgentToolType dialect,
+        string connectionString, string? allowedTable)
+    {
+        var context = new DefaultHttpContext();
+        context.Items[McpContextItemKeys.SqlProvider] = dialect.ToString();
+        context.Items[McpContextItemKeys.SqlConnectionString] = connectionString;
+        context.Items[McpContextItemKeys.AllowedTools] = "execute_query_sql";
+        // An explicitly empty whitelist is unrestricted; a missing context key is
+        // an authorization error, even in the test harness.
+        context.Items[McpContextItemKeys.TableWhitelist] = allowedTable ?? string.Empty;
+        context.Items[McpContextItemKeys.AccessKeyId] = 7;
+        context.Items[McpContextItemKeys.DbManagementId] = 11;
+        context.Items[McpContextItemKeys.DatabaseName] = "native-function-live-test";
+
+        var http = new Mock<IHttpContextAccessor>();
+        http.SetupGet(x => x.HttpContext).Returns(context);
+        var providers = new Mock<ISqlProviderFactory>(MockBehavior.Strict);
+        providers.Setup(x => x.GetProvider(dialect)).Returns(provider);
+        var audit = new Mock<IAuditService>();
+        audit.Setup(x => x.WriteEventAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<AuditEventContext>(), It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var security = new Mock<ISecurityPolicyRuntimeState>();
+        security.Setup(x => x.GetCurrent()).Returns(Policy());
+        var limiter = new Mock<ISqlExecutionConcurrencyLimiter>();
+        limiter.Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Mock.Of<IAsyncDisposable>());
+
+        return new SqlAgentTool(http.Object, providers.Object, audit.Object,
+            Mock.Of<IDbSemanticService>(), security.Object, limiter.Object,
+            typedQueryRuntime: new TypedQueryRuntime());
+    }
+
+    private static string RequireConnection(string variable, string provider)
+    {
+        var value = Environment.GetEnvironmentVariable(variable);
+        if (!string.IsNullOrWhiteSpace(value)) return value;
+        if (string.Equals(Environment.GetEnvironmentVariable("CI"), "true",
+                StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(provider
+                + " native-function live proof requires " + variable + ".");
+        Assert.Skip("Requires real " + provider + ".");
+        throw new InvalidOperationException("Unreachable");
+    }
+
+    private static async Task<object?> ScalarAsync(
+        DbConnection connection, string sql, CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        return await command.ExecuteScalarAsync(ct);
+    }
+
+    private static async Task ExecuteAsync(
+        DbConnection connection, string sql, CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        await command.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task<(int Users, int Secrets)> PhysicalCountAsync(
+        DbConnection connection, string users, string secrets, CancellationToken ct)
+    {
+        var userRows = Convert.ToInt32(await ScalarAsync(
+            connection, "SELECT COUNT(*) FROM " + users, ct));
+        var secretRows = Convert.ToInt32(await ScalarAsync(
+            connection, "SELECT COUNT(*) FROM " + secrets, ct));
+        return (userRows, secretRows);
+    }
+}

@@ -131,7 +131,7 @@ public class McpAccessKeyService(
 
         entity.Name = request.Name.Trim();
         entity.ExpiresAt = request.ExpiresAt;
-        entity.AllowedTools = NormalizeNullable(request.AllowedTools);
+        entity.AllowedTools = McpBuiltInTools.NormalizeExplicitAllowedTools(request.AllowedTools);
         entity.CorsAllowedOrigins = NormalizeCorsAllowedOrigins(request.CorsAllowedOrigins);
         entity.DbManagementId = request.DbManagementId;
         entity.TableWhitelist = NormalizeNullable(request.TableWhitelist);
@@ -198,7 +198,7 @@ public class McpAccessKeyService(
             RateLimitMode = oldKey.RateLimitMode,
             PermitLimitOverride = oldKey.PermitLimitOverride,
             WindowSecondsOverride = oldKey.WindowSecondsOverride
-        }, plaintext, actorId);
+        }, plaintext, actorId, preserveLegacyUnrestrictedGrant: true);
         _context.McpAccessKeys.Add(replacement);
 
         if (request.GracePeriodMinutes == 0)
@@ -247,7 +247,7 @@ public class McpAccessKeyService(
             RateLimitMode = source.RateLimitMode,
             PermitLimitOverride = source.PermitLimitOverride,
             WindowSecondsOverride = source.WindowSecondsOverride
-        }, plaintext, actorId);
+        }, plaintext, actorId, preserveLegacyUnrestrictedGrant: true);
         _context.McpAccessKeys.Add(clone);
         await _context.SaveChangesAsync(cancellationToken);
         return CreateIssueResult(clone, plaintext);
@@ -368,7 +368,8 @@ public class McpAccessKeyService(
     private McpAccessKey CreateEntity(
         IssueMcpAccessKeyModel request,
         string plaintext,
-        string? actorId)
+        string? actorId,
+        bool preserveLegacyUnrestrictedGrant = false)
     {
         var prefixLength = Math.Min(KeyPrefixLength, plaintext.Length);
         return new McpAccessKey
@@ -377,7 +378,9 @@ public class McpAccessKeyService(
             KeyPrefix = plaintext[..prefixLength],
             KeyHash = HashKey(plaintext, _hmacSecret),
             ExpiresAt = request.ExpiresAt,
-            AllowedTools = NormalizeNullable(request.AllowedTools),
+            AllowedTools = preserveLegacyUnrestrictedGrant
+                ? NormalizeNullable(request.AllowedTools)
+                : McpBuiltInTools.NormalizeExplicitAllowedTools(request.AllowedTools),
             CorsAllowedOrigins = NormalizeCorsAllowedOrigins(request.CorsAllowedOrigins),
             DbManagementId = request.DbManagementId,
             TableWhitelist = NormalizeNullable(request.TableWhitelist),

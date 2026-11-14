@@ -168,7 +168,7 @@ public class SqlAgentToolDmlStructuredResultTests
             "Host=prod.example;Database=payments;Username=service;Password=super-secret";
         var httpContextAccessor = new Mock<IHttpContextAccessor>();
         var context = new DefaultHttpContext();
-        context.Items[McpContextItemKeys.AllowedTools] = string.Empty;
+        context.Items[McpContextItemKeys.AllowedTools] = "execute_dml_sql";
         context.Items[McpContextItemKeys.SqlProvider] = "NotAProvider";
         context.Items[McpContextItemKeys.SqlConnectionString] = secretConnectionString;
         httpContextAccessor.Setup(x => x.HttpContext).Returns(context);

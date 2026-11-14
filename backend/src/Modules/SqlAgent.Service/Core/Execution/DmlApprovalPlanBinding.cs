@@ -20,8 +20,13 @@ internal static class DmlApprovalPlanBinding
 
         Append(hash, "dml-approval-plan-binding-v1");
         Append(hash, plan.PlanFingerprint);
+        var mutationFingerprintPolicy =
+            plan.SqlServerCteUniqueKeyAssurance?.TargetKeyColumn is not null
+                ? plan.PolicyVersion + "|live-sqlserver-cte-exact-integer=" +
+                  plan.SqlServerCteUniqueKeyAssurance.ProofIdentity
+                : plan.PolicyVersion;
         Append(hash, DmlFingerprintService.ComputePlanFingerprint(
-            plan.MutationCommand, plan.PolicyVersion));
+            plan.MutationCommand, mutationFingerprintPolicy));
         Append(hash, plan.Operation.ToString());
         Append(hash, plan.TableName);
         Append(hash, plan.PolicyVersion);
@@ -30,6 +35,84 @@ internal static class DmlApprovalPlanBinding
         Append(hash, plan.MaxAffectedRows.ToString(CultureInfo.InvariantCulture));
         Append(hash, plan.ApprovalTtl.Ticks.ToString(CultureInfo.InvariantCulture));
         Append(hash, plan.SchemaSnapshot?.Sha256 ?? "no-schema-snapshot");
+
+        // Only opt-in SQL Server plans gain a new binding component. Preserve
+        // the existing challenge hash for all other DML and previous plans.
+        // The proof is live-minted and includes source/target identity, index
+        // fingerprint, physical database and pinned schema SHA256.
+        if (plan.SqlServerCteUniqueKeyAssurance is { } proof)
+        {
+            Append(hash, "sqlserver-cte-live-key-proof-v1");
+            Append(hash, proof.ProofIdentity);
+        }
+
+        if (plan.NativeConflictDoNothingProof is { } conflictProof)
+        {
+            Append(hash, "native-single-conflict-skip-sole-key-v3");
+            Append(hash, conflictProof.PhysicalTarget);
+            Append(hash, conflictProof.UniqueKeyColumn);
+            Append(hash, conflictProof.MutationFingerprint);
+            Append(hash, conflictProof.TargetQueryFingerprint);
+            Append(hash, conflictProof.SchemaSha256);
+        }
+
+        if (plan.NativeConflictDoUpdateProof is { } updateProof)
+        {
+            Append(hash, "native-postgres-conflict-update-typed-null-v3");
+            Append(hash, updateProof.PhysicalTarget);
+            Append(hash, updateProof.UniqueKeyColumn);
+            Append(hash, updateProof.UpdatedColumns.Length.ToString(CultureInfo.InvariantCulture));
+            foreach (var column in updateProof.UpdatedColumns)
+                Append(hash, column);
+            Append(hash, updateProof.MutationFingerprint);
+            Append(hash, updateProof.TargetQueryFingerprint);
+            Append(hash, updateProof.SchemaSha256);
+        }
+
+        if (plan.SqlServerMergeMatchedDeleteProof is { } mergeProof)
+        {
+            Append(hash, "native-sqlserver-merge-matched-delete-v1");
+            Append(hash, mergeProof.PhysicalTarget);
+            Append(hash, mergeProof.UniqueKeyColumn);
+            Append(hash, mergeProof.KeyValue.ToString(CultureInfo.InvariantCulture));
+            Append(hash, mergeProof.MutationFingerprint);
+            Append(hash, mergeProof.TargetQueryFingerprint);
+            Append(hash, mergeProof.SchemaSha256);
+        }
+
+        if (plan.SqlServerMergeMatchedUpdateProof is { } mergeUpdateProof)
+        {
+            Append(hash, "native-sqlserver-merge-matched-update-v1");
+            Append(hash, mergeUpdateProof.PhysicalTarget);
+            Append(hash, mergeUpdateProof.UniqueKeyColumn);
+            Append(hash, mergeUpdateProof.KeyValue.ToString(CultureInfo.InvariantCulture));
+            Append(hash, mergeUpdateProof.UpdatedColumns.Length.ToString(CultureInfo.InvariantCulture));
+            for (var i = 0; i < mergeUpdateProof.UpdatedColumns.Length; i++)
+            {
+                Append(hash, mergeUpdateProof.UpdatedColumns[i]);
+                Append(hash, mergeUpdateProof.ProposedValues[i].ToString(CultureInfo.InvariantCulture));
+            }
+            Append(hash, mergeUpdateProof.MutationFingerprint);
+            Append(hash, mergeUpdateProof.TargetQueryFingerprint);
+            Append(hash, mergeUpdateProof.SchemaSha256);
+        }
+
+        if (plan.SqlServerMergeNotMatchedInsertProof is { } mergeInsert)
+        {
+            Append(hash, "native-sqlserver-merge-not-matched-insert-v1");
+            Append(hash, mergeInsert.PhysicalTarget);
+            Append(hash, mergeInsert.UniqueKeyColumn);
+            Append(hash, mergeInsert.KeyValue.ToString(CultureInfo.InvariantCulture));
+            Append(hash, mergeInsert.InsertColumns.Length.ToString(CultureInfo.InvariantCulture));
+            for (var i = 0; i < mergeInsert.InsertColumns.Length; i++)
+            {
+                Append(hash, mergeInsert.InsertColumns[i]);
+                Append(hash, mergeInsert.InsertValues[i].ToString(CultureInfo.InvariantCulture));
+            }
+            Append(hash, mergeInsert.MutationFingerprint);
+            Append(hash, mergeInsert.TargetQueryFingerprint);
+            Append(hash, mergeInsert.SchemaSha256);
+        }
 
         if (plan.MatchQueryCommand is { } match)
         {

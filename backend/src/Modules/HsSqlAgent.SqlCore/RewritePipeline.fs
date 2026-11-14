@@ -1,10 +1,12 @@
 namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
+open HsSqlAgent.SqlCore.Core.Pipeline
 open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Core.Pipeline
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
+open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.RewriteParser
 open HsSqlAgent.SqlCore.Rewrite.RewritePolicy
 open HsSqlAgent.SqlCore.Rewrite.RewriteRenderer
@@ -66,15 +68,19 @@ module internal RewritePipeline =
               ConflictProofs: ConflictProofs
               Policy: ExecutionPolicy
               AllowedTables: string list option
-              SchemaSnapshot: SqlSchemaSnapshot option }
+              SchemaSnapshot: SqlSchemaSnapshot option
+              SqliteUpdateFromKeyAssurance: SqliteUpdateFromKeyAssurance option
+              SqlServerCteUniqueKeyAssurance: SqlServerCteUniqueKeyAssurance option }
 
-    let internal createOptions source target conflictProofs policy allowedTables (schemaSnapshot: SqlSchemaSnapshot | null) =
+    let internal createOptions source target conflictProofs policy allowedTables (schemaSnapshot: SqlSchemaSnapshot | null) (liveKeyAssurance: SqliteUpdateFromKeyAssurance | null) (sqlServerLiveProof: SqlServerCteUniqueKeyAssurance | null) =
         { Source = source
           Target = target
           ConflictProofs = conflictProofs
           Policy = policy
           AllowedTables = allowedTables
-          SchemaSnapshot = Option.ofObj schemaSnapshot }
+          SchemaSnapshot = Option.ofObj schemaSnapshot
+          SqliteUpdateFromKeyAssurance = Option.ofObj liveKeyAssurance
+          SqlServerCteUniqueKeyAssurance = Option.ofObj sqlServerLiveProof }
 
     let private sourceProvider = function
         | SourceDialect.PostgreSql -> SqlAgentToolType.Postgres
@@ -131,43 +137,98 @@ module internal RewritePipeline =
             RewriteResourceBudget.withStage "SchemaType" SqlDiagnosticStage.SemanticValidation (fun () ->
                 RewriteSchemaTypeValidation.verify sourceProviderType snapshot schemaChecked)
 
-    let private finishBound options bound =
+    /// Shared semantic engine, but without family-agnostic authorization.
+    /// Domain wrappers verify kind at Parse, Bind, Canonical and Validated
+    /// transitions; no Query policy can consume a Mutation stage (or vice versa).
+    let private normalize options bound =
         let source = options.Source
         let target = options.Target
         let sourceDialect = VerifiedSource.dialect source
         let sourceSemantics = VerifiedSource.semantics source
         let targetRuntime = VerifiedTarget.runtime target
+        RewriteResourceBudget.withStage "Normalization" SqlDiagnosticStage.SemanticValidation (fun () ->
+            RewriteStages.normalize
+                sourceSemantics.EnforceDialectSyntax
+                sourceDialect targetRuntime
+                sourceSemantics.Expressions.RegexMatch
+                sourceSemantics.Ordering
+                sourceSemantics.MySqlPipes
+                (VerifiedSource.profile source)
+                (VerifiedTarget.profile target)
+                (options.SqliteUpdateFromKeyAssurance |> Option.toObj)
+                (options.SqlServerCteUniqueKeyAssurance |> Option.toObj)
+                (options.SchemaSnapshot |> Option.toObj)
+                bound)
 
-        let canonical =
-            RewriteResourceBudget.withStage "Normalization" SqlDiagnosticStage.SemanticValidation (fun () ->
-                RewriteStages.normalize
-                    sourceSemantics.EnforceDialectSyntax
-                    sourceDialect targetRuntime
-                    sourceSemantics.Expressions.RegexMatch
-                    sourceSemantics.Ordering
-                    sourceSemantics.MySqlPipes
-                    (VerifiedSource.profile source)
-                    (VerifiedTarget.profile target)
-                    bound)
-        let validated =
-            RewriteResourceBudget.withStage "Validation" SqlDiagnosticStage.SemanticValidation (fun () ->
-                RewriteStages.validate
-                    options.AllowedTables targetRuntime
-                    sourceSemantics.Expressions (VerifiedTarget.expressions target)
-                    sourceSemantics.Joins (VerifiedTarget.joins target)
-                    (VerifiedTarget.ordering target)
-                    sourceSemantics.Dml (VerifiedTarget.dml target)
-                    options.ConflictProofs canonical)
-        let executable =
+    let private validate options canonical =
+        let sourceSemantics = VerifiedSource.semantics options.Source
+        let target = options.Target
+        RewriteResourceBudget.withStage "Validation" SqlDiagnosticStage.SemanticValidation (fun () ->
+            RewriteStages.validate
+                options.AllowedTables (VerifiedTarget.runtime target)
+                (VerifiedTarget.profile target)
+                sourceSemantics.Expressions (VerifiedTarget.expressions target)
+                sourceSemantics.Joins (VerifiedTarget.joins target)
+                (VerifiedTarget.ordering target)
+                sourceSemantics.Dml (VerifiedTarget.dml target)
+                options.ConflictProofs canonical)
+
+    let private finishQueryBound options (bound: RewriteQueryPipeline.BoundQuery) =
+        let canonical = RewriteQueryPipeline.normalize (normalize options) bound
+        let validated = RewriteQueryPipeline.validate (validate options) canonical
+        let authorized =
             RewriteResourceBudget.withStage "Policy" SqlDiagnosticStage.Policy (fun () ->
-                RewritePolicy.authorize options.Policy validated)
+                let functionSafety =
+                    let runtime = VerifiedTarget.runtime options.Target
+                    match options.AllowedTables, runtime, options.Policy.NativeFunctionPolicy with
+                    | Some _, TargetRuntime.PostgreSqlRuntime, _ ->
+                        RewriteQueryPolicy.ProvenPostgresFunctions
+                    | Some _, other, _ ->
+                        // A whitelist cannot inspect opaque native function bodies.
+                        RewriteQueryPolicy.RejectOpaqueNativeFunctions(TargetRuntime.provider other)
+                    | None, other, SqlQueryNativeFunctionPolicy.RejectOpaqueQualifiedOrQuoted ->
+                        // Opt-in narrow restriction; generic compiler grammar
+                        // remains available. No claim about unqualified UDFs.
+                        RewriteQueryPolicy.RejectOpaqueNativeFunctions(TargetRuntime.provider other)
+                    | None, _, _ ->
+                        RewriteQueryPolicy.UnrestrictedFunctions
+                RewriteQueryPipeline.authorize options.Policy.QueryRows functionSafety validated)
         RewriteResourceBudget.withStage "Rendering" SqlDiagnosticStage.RenderingInvariant (fun () ->
-            renderWithDiagnostic executable)
+            RewriteQueryPipeline.render renderWithDiagnostic authorized)
+
+    let private finishMutationBound options (bound: RewriteMutationPipeline.BoundMutation) =
+        let canonical = RewriteMutationPipeline.normalize (normalize options) bound
+        let validated = RewriteMutationPipeline.validate (validate options) canonical
+        let authorized =
+            RewriteResourceBudget.withStage "Policy" SqlDiagnosticStage.Policy (fun () ->
+                RewriteMutationPipeline.authorize
+                    options.Policy.UpdateSafety
+                    options.Policy.DeleteSafety
+                    validated)
+        RewriteResourceBudget.withStage "Rendering" SqlDiagnosticStage.RenderingInvariant (fun () ->
+            RewriteMutationPipeline.render renderWithDiagnostic authorized)
+
+    /// Compatibility entry for the Query Inspection path, which has already
+    /// bound the AST to collect facts before running normalization/validation.
+    let private finishBound options bound =
+        match (Bound.value bound).Statement with
+        | QueryStatement _ ->
+            RewriteQueryPipeline.fromBound bound
+            |> finishQueryBound options
+        | InsertStatement _ | UpdateStatement _ | DeleteStatement _ | MergeStatement _ ->
+            RewriteMutationPipeline.fromBound bound
+            |> finishMutationBound options
 
     let private finish options parsed =
-        parsed
-        |> bind options
-        |> finishBound options
+        match (Parsed.value parsed).Statement with
+        | QueryStatement _ ->
+            RewriteQueryPipeline.fromParsed parsed
+            |> RewriteQueryPipeline.bind (bind options)
+            |> finishQueryBound options
+        | InsertStatement _ | UpdateStatement _ | DeleteStatement _ | MergeStatement _ ->
+            RewriteMutationPipeline.fromParsed parsed
+            |> RewriteMutationPipeline.bind (bind options)
+            |> finishMutationBound options
 
     let private parse options sql =
         let source = options.Source

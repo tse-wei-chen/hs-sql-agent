@@ -404,16 +404,32 @@ module internal RewriteLegacyAstAdapter =
                         match frame.Unit with
                         | HsSqlAgent.SqlCore.Core.Ast.WindowFrameUnitKind.Rows -> WindowFrameUnit.Rows
                         | HsSqlAgent.SqlCore.Core.Ast.WindowFrameUnitKind.Range -> WindowFrameUnit.Range
+                        | HsSqlAgent.SqlCore.Core.Ast.WindowFrameUnitKind.Groups -> WindowFrameUnit.Groups
                         | value -> raise (SqlCompilationException("Unsupported window frame unit '" + string value + "'."))
                     let start = frameBound frame.Start
                     let extent =
                         match Option.ofObj frame.End with
                         | None -> WindowFrameExtent.SingleBound start
                         | Some finish -> WindowFrameExtent.BetweenBounds(start, frameBound finish)
-                    { WindowFrame.Unit = unit; Extent = extent })
+                    let exclusion =
+                        match frame.Exclusion with
+                        | HsSqlAgent.SqlCore.Core.Ast.WindowFrameExclusionKind.Unspecified -> None
+                        | HsSqlAgent.SqlCore.Core.Ast.WindowFrameExclusionKind.CurrentRow -> Some WindowFrameExclusion.ExcludeCurrentRow
+                        | HsSqlAgent.SqlCore.Core.Ast.WindowFrameExclusionKind.Group -> Some WindowFrameExclusion.ExcludeGroup
+                        | HsSqlAgent.SqlCore.Core.Ast.WindowFrameExclusionKind.Ties -> Some WindowFrameExclusion.ExcludeTies
+                        | HsSqlAgent.SqlCore.Core.Ast.WindowFrameExclusionKind.NoOthers -> Some WindowFrameExclusion.ExcludeNoOthers
+                        | value -> raise (SqlCompilationException("Unsupported window frame exclusion '" + string value + "'."))
+                    { WindowFrame.Unit = unit; Extent = extent; Exclusion = exclusion })
+            let treatment =
+                match window.NullTreatment with
+                | HsSqlAgent.SqlCore.Core.Ast.WindowNullTreatmentKind.Unspecified -> WindowNullTreatment.DefaultNullTreatment
+                | HsSqlAgent.SqlCore.Core.Ast.WindowNullTreatmentKind.IgnoreNulls -> WindowNullTreatment.IgnoreNulls
+                | HsSqlAgent.SqlCore.Core.Ast.WindowNullTreatmentKind.RespectNulls -> WindowNullTreatment.RespectNulls
+                | value -> raise (SqlCompilationException("Unsupported window null treatment '" + string value + "'."))
             { WindowSpec.PartitionBy = window.PartitionBy |> Seq.map exprOf |> Seq.toList
               OrderBy = window.OrderBy |> Seq.map orderByOf |> Seq.toList
-              Frame = frame }
+              Frame = frame
+              NullTreatment = treatment }
 
         and tableSourceOf (source: HsSqlAgent.SqlCore.Core.Ast.TableSource) : TableSource =
             match source with
@@ -431,27 +447,36 @@ module internal RewriteLegacyAstAdapter =
             let usingColumns =
                 if join.UsingColumns.IsDefaultOrEmpty then []
                 else join.UsingColumns |> Seq.map (singlePart "JOIN USING column") |> Seq.toList
-            let parsedKind = joinKind join.Kind
-            if join.IsNatural then
-                match parsedKind, Option.ofObj join.Predicate, usingColumns with
-                | Choice1Of2 kind, None, [] -> NaturalJoin(kind, source)
-                | Choice2Of2 (), _, _ ->
-                    raise (SqlCompilationException("NATURAL CROSS JOIN is not represented by the Core join model."))
-                | _, _, _ ->
-                    raise (SqlCompilationException("NATURAL JOIN cannot carry ON or USING predicates."))
-            else
-                match parsedKind, Option.ofObj join.Predicate, usingColumns with
-                | Choice2Of2 (), None, [] -> CrossJoin source
-                | Choice2Of2 (), _, _ ->
-                    raise (SqlCompilationException("CROSS JOIN cannot carry ON or USING predicates."))
-                | Choice1Of2 kind, Some predicate, [] -> OnJoin(kind, source, exprOf predicate)
-                | Choice1Of2 kind, None, head :: tail ->
-                    UsingJoin(kind, source, NonEmpty.create head tail)
-                | Choice1Of2 _, Some _, _ :: _ ->
-                    raise (SqlCompilationException(join.Kind + " JOIN cannot carry both ON and USING predicates."))
-                | Choice1Of2 _, None, [] ->
-                    raise (SqlCompilationException(join.Kind + " JOIN requires an ON or USING predicate."))
-
+            match join.Kind with
+            | "CROSS APPLY" | "OUTER APPLY" as apply ->
+                match source, Option.ofObj join.Predicate, usingColumns with
+                | DerivedTable _, None, [] when not join.IsNatural ->
+                    ApplyJoin((if apply = "CROSS APPLY" then ApplyKind.CrossApply else ApplyKind.OuterApply), source)
+                | _ ->
+                    raise (SqlCompilationException(
+                        "APPLY requires a derived SELECT without LATERAL, ON, USING or NATURAL."))
+            | _ ->
+                let parsedKind = joinKind join.Kind
+                if join.IsNatural then
+                    match parsedKind, Option.ofObj join.Predicate, usingColumns with
+                    | Choice1Of2 kind, None, [] -> NaturalJoin(kind, source)
+                    | Choice2Of2 (), _, _ ->
+                        raise (SqlCompilationException("NATURAL CROSS JOIN is not represented by the Core join model."))
+                    | _, _, _ ->
+                        raise (SqlCompilationException("NATURAL JOIN cannot carry ON or USING predicates."))
+                else
+                    match parsedKind, Option.ofObj join.Predicate, usingColumns with
+                    | Choice2Of2 (), None, [] -> CrossJoin source
+                    | Choice2Of2 (), _, _ ->
+                        raise (SqlCompilationException("CROSS JOIN cannot carry ON or USING predicates."))
+                    | Choice1Of2 kind, Some predicate, [] -> OnJoin(kind, source, exprOf predicate)
+                    | Choice1Of2 kind, None, head :: tail ->
+                        UsingJoin(kind, source, NonEmpty.create head tail)
+                    | Choice1Of2 _, Some _, _ :: _ ->
+                        raise (SqlCompilationException(join.Kind + " JOIN cannot carry both ON and USING predicates."))
+                    | Choice1Of2 _, None, [] ->
+                        raise (SqlCompilationException(join.Kind + " JOIN requires an ON or USING predicate."))
+    
         and selectItemOf (item: HsSqlAgent.SqlCore.Core.Ast.SelectItem) =
             { SelectItem.Expression = exprOf item.Expression
               Alias = Option.ofObj item.Alias |> Option.map partOf }
@@ -663,6 +688,7 @@ module internal RewriteLegacyAstAdapter =
             | :? HsSqlAgent.SqlCore.Core.Ast.UpdateStatement as update ->
                 Statement.UpdateStatement
                     { Update.Target = identifierOf update.Target.Name
+                      Ctes = update.Ctes |> Seq.map cteOf |> Seq.toList
                       TargetAlias = Option.ofObj update.Target.Alias |> Option.map partOf
                       AssignmentItems =
                         update.Assignments
@@ -743,6 +769,7 @@ module internal RewriteLegacyAstAdapter =
             | :? HsSqlAgent.SqlCore.Core.Ast.DeleteStatement as delete ->
                 Statement.DeleteStatement
                     { Delete.Target = identifierOf delete.Target.Name
+                      Ctes = delete.Ctes |> Seq.map cteOf |> Seq.toList
                       TargetAlias = Option.ofObj delete.Target.Alias |> Option.map partOf
                       Using =
                         (if delete.UsingSources.IsDefaultOrEmpty then

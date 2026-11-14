@@ -685,6 +685,57 @@ module internal SqlJoinCapabilityRules =
         elif provider = SqlAgentToolType.Sqlite && (kind = "RIGHT" || kind = "FULL") then sqliteError kind targetProfile "target"
         else null
 
+/// Native SQL Server CTE-prefixed mutations entered the language in
+/// SQL Server 2005. Explicit older source/target versions must fail closed.
+module internal SqlSqlServerWithMutationCteCapabilityRules =
+    let MinimumVersion = Version(9, 0)
+
+    let private validationError (provider: SqlAgentToolType)
+                                (profile: SqlProviderCapabilityProfile | null)
+                                (side: string) : string | null =
+        if provider <> SqlAgentToolType.MsSqlServer then null
+        else
+            match profile with
+            | null -> null
+            | p when isNull p.ServerVersion -> null
+            | p when (nonNull p.ServerVersion).CompareTo(MinimumVersion) >= 0 -> null
+            | p ->
+                "SQL capability 'sqlserver.with_mutation_cte' requires SQL Server "
+                + side + " ServerVersion " + string MinimumVersion
+                + "+; declared version is " + string p.ServerVersion + "."
+
+    let SourceValidationError(provider, sourceProfile) =
+        validationError provider sourceProfile "source"
+
+    let TargetValidationError(provider, targetProfile) =
+        validationError provider targetProfile "target"
+
+/// An explicit MySQL version must never silently turn an unsupported ordinary
+/// CTE into a parsed/compiled statement. Missing profiles retain the legacy
+/// permissive contract; declaring a version below 8.0.1 rejects the syntax.
+module internal SqlMySqlOrdinaryCteCapabilityRules =
+    let MinimumVersion = Version(8, 0, 1)
+
+    let private validationError (provider: SqlAgentToolType)
+                                (profile: SqlProviderCapabilityProfile | null)
+                                (side: string) : string | null =
+        if provider <> SqlAgentToolType.MySQL then null
+        else
+            match profile with
+            | null -> null
+            | p when isNull p.ServerVersion -> null
+            | p when (nonNull p.ServerVersion).CompareTo(MinimumVersion) >= 0 -> null
+            | p ->
+                "SQL capability 'select.cte' requires MySQL " + side
+                + " ServerVersion " + string MinimumVersion
+                + "+; declared version is " + string p.ServerVersion + "."
+
+    let SourceValidationError(provider, sourceProfile) =
+        validationError provider sourceProfile "source"
+
+    let TargetValidationError(provider, targetProfile) =
+        validationError provider targetProfile "target"
+
 module internal SqlRecursiveCteCapabilityRules =
     let PostgresMinimumVersion = Version(8,4)
     let MySqlMinimumVersion = Version(8,0,1)
@@ -784,26 +835,76 @@ module internal SqlUsingJoinCapabilityRules =
         else
             "SQL capability 'join.using' is not supported by provider MsSqlServer because Transact-SQL has no native JOIN ... USING form and Core does not lower named-column join semantics to ON without a proven merged-column equivalence."
 
+/// Plain Oracle EXCEPT (distinct) is a 21c SQL grammar feature, unlike
+/// pre-21c MINUS. Source grammar proof does not imply a matching target
+/// version, and ordinary DISTINCT semantics do not need the stricter
+/// NLS_SORT=BINARY premise required by duplicate-preserving Set ALL.
+module internal SqlOracleExceptSourceCapabilityRules =
+    let MinimumVersion = Version(21, 0)
+
+    let SourceValidationError(
+        provider: SqlAgentToolType,
+        profile: SqlProviderCapabilityProfile | null) : string | null =
+        if provider <> SqlAgentToolType.Oracle then null
+        else
+            match profile with
+            | null -> "SQL capability 'set.except_source' requires explicit Oracle source ServerVersion 21.0+; use MINUS with older Oracle versions."
+            | value when value.Provider <> SqlAgentToolType.Oracle ->
+                "SQL capability 'set.except_source' requires Oracle source ServerVersion 21.0+ and a matching Oracle capability profile."
+            | value when isNull value.ServerVersion
+                         || (nonNull value.ServerVersion).CompareTo(MinimumVersion) < 0 ->
+                "SQL capability 'set.except_source' requires Oracle source ServerVersion 21.0+; use MINUS for Oracle 19c and earlier."
+            | _ -> null
+
 module internal SqlSetAllCapabilityRules =
+    let OracleMinimumVersion = Version(21, 0)
+
     let private capabilityId (operatorName: string) =
         match operatorName.Trim().ToUpperInvariant() with
         | "INTERSECT" -> "set.intersect_all"
-        | "EXCEPT" -> "set.except_all"
+        | "EXCEPT" | "MINUS" -> "set.except_all"
         | value -> "set." + value.ToLowerInvariant() + "_all"
 
-    let private validationError (operatorName: string) (provider: SqlAgentToolType) (side: string) : string | null =
-        if provider = SqlAgentToolType.Postgres then null
+    // Oracle documents that BINARY_CI/BINARY_AI can substitute equivalent
+    // character values under Set ALL. NLS_SORT=BINARY is a required
+    // explicitly declared session invariant for cross-provider equivalence.
+    let private hasBinarySort (profile: SqlProviderCapabilityProfile) =
+        let settings = profile.SessionSettings
+        not (isNull settings)
+        && (nonNull settings
+            |> Seq.exists (fun entry ->
+                String.Equals(entry.Key, "NLS_SORT", StringComparison.OrdinalIgnoreCase)
+                && String.Equals(entry.Value, "BINARY", StringComparison.OrdinalIgnoreCase)))
+
+    let private oracleProven (profile: SqlProviderCapabilityProfile | null) =
+        match profile with
+        | null -> false
+        | value when value.Provider <> SqlAgentToolType.Oracle -> false
+        | value when isNull value.ServerVersion
+                     || (nonNull value.ServerVersion).CompareTo(OracleMinimumVersion) < 0 -> false
+        | value -> hasBinarySort value
+
+    let private validationError operatorName provider profile (side: string) : string | null =
+        if provider = SqlAgentToolType.Postgres
+           || (provider = SqlAgentToolType.Oracle && oracleProven profile) then null
+        elif provider = SqlAgentToolType.Oracle then
+            "SQL capability '" + capabilityId operatorName
+            + "' requires an explicit Oracle " + side
+            + " capability profile with ServerVersion 21.0+ and NLS_SORT=BINARY "
+            + "to preserve duplicates, NULL cardinality and original character values."
         else
             "SQL capability '" + capabilityId operatorName + "' is not supported by " + side
             + " provider " + string provider
             + "; duplicate-preserving " + operatorName.Trim().ToUpperInvariant()
             + " ALL remains fail-closed until a provider/version-specific semantic contract is declared."
 
-    let SourceValidationError(operatorName: string, provider: SqlAgentToolType) : string | null =
-        validationError operatorName provider "source"
+    let SourceValidationError(operatorName: string, provider: SqlAgentToolType,
+                              profile: SqlProviderCapabilityProfile | null) : string | null =
+        validationError operatorName provider profile "source"
 
-    let TargetValidationError(operatorName: string, provider: SqlAgentToolType) : string | null =
-        validationError operatorName provider "target"
+    let TargetValidationError(operatorName: string, provider: SqlAgentToolType,
+                              profile: SqlProviderCapabilityProfile | null) : string | null =
+        validationError operatorName provider profile "target"
 
 module internal SqlDistinctOnCapabilityRules =
     let SourceValidationError(provider: SqlAgentToolType) : string | null =
@@ -877,15 +978,58 @@ module internal SqlFetchWithTiesCapabilityRules =
     let TargetValidationError(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile | null) : string | null =
         validationError provider targetProfile "target"
 
-module internal SqlLateralDerivedTableCapabilityRules =
-    let PostgresMinimumVersion = Version(9,3)
+/// APPLY is a dedicated Join case, not a rewritten ON TRUE JOIN.
+module internal SqlApplyJoinCapabilityRules =
+    let OracleMinimumVersion = Version(12,1)
 
     let private validationError provider (profile: SqlProviderCapabilityProfile | null) side : string | null =
-        if provider <> SqlAgentToolType.Postgres then
-            "SQL capability 'select.lateral_derived' is not supported by " + side
-            + " provider " + string provider
-            + "; LATERAL derived-table correlation remains fail-closed."
-        else
+        match provider with
+        | SqlAgentToolType.MsSqlServer ->
+            match profile with
+            | null -> null
+            | p when isNull p.ServerVersion -> null
+            | p when (nonNull p.ServerVersion).CompareTo(Version(9,0)) < 0 ->
+                "SQL capability 'select.apply_join' requires SQL Server " + side
+                + " ServerVersion 9.0+; declared version is " + string p.ServerVersion + "."
+            | _ -> null
+        | SqlAgentToolType.Oracle ->
+            match profile with
+            | null -> "SQL capability 'select.apply_join' requires explicit Oracle " + side + " ServerVersion 12.1+."
+            | p when isNull p.ServerVersion ->
+                "SQL capability 'select.apply_join' requires explicit Oracle " + side + " ServerVersion 12.1+."
+            | p when (nonNull p.ServerVersion).CompareTo(OracleMinimumVersion) < 0 ->
+                "SQL capability 'select.apply_join' requires Oracle " + side
+                + " ServerVersion 12.1+; declared version is " + string p.ServerVersion + "."
+            | _ -> null
+        | _ -> "SQL capability 'select.apply_join' is not supported by " + side
+               + " provider " + string provider + "; provider-specific APPLY syntax remains fail-closed."
+
+    let SourceValidationError(provider, profile) = validationError provider profile "source"
+    let TargetValidationError(provider, profile) = validationError provider profile "target"
+
+    let TargetSyntaxValidationError provider : string | null =
+        match provider with
+        | SqlAgentToolType.MsSqlServer | SqlAgentToolType.Oracle -> null
+        | _ -> "SQL capability 'select.apply_join' is not supported by target provider " + string provider + "."
+
+module internal SqlLateralDerivedTableCapabilityRules =
+    let PostgresMinimumVersion = Version(9,3)
+    let MySqlMinimumVersion = Version(8,0,14)
+    let OracleMinimumVersion = Version(12,1)
+
+    /// After source/target runtime proof, emission needs only a native
+    /// dialect check. Never infer a runtime version from the renderer.
+    let SyntaxEmissionValidationError(provider: SqlAgentToolType) : string | null =
+        match provider with
+        | SqlAgentToolType.Postgres | SqlAgentToolType.MySQL
+        | SqlAgentToolType.Oracle -> null
+        | _ ->
+            "SQL capability 'select.lateral_derived' is not supported by target provider "
+            + string provider + "; LATERAL derived-table correlation remains fail-closed."
+
+    let private validationError provider (profile: SqlProviderCapabilityProfile | null) side : string | null =
+        match provider with
+        | SqlAgentToolType.Postgres ->
             match profile with
             | null -> null
             | value ->
@@ -895,12 +1039,86 @@ module internal SqlLateralDerivedTableCapabilityRules =
                     "SQL capability 'select.lateral_derived' requires PostgreSQL " + side
                     + " ServerVersion 9.3+; declared version is " + version.ToString() + "."
                 | _ -> null
+        | SqlAgentToolType.MySQL ->
+            match profile with
+            | null ->
+                "SQL capability 'select.lateral_derived' requires an explicit MySQL "
+                + side + " ServerVersion 8.0.14+."
+            | value ->
+                match value.ServerVersion with
+                | null ->
+                    "SQL capability 'select.lateral_derived' requires an explicit MySQL "
+                    + side + " ServerVersion 8.0.14+."
+                | version when version.CompareTo(MySqlMinimumVersion) < 0 ->
+                    "SQL capability 'select.lateral_derived' requires MySQL " + side
+                    + " ServerVersion 8.0.14+; declared version is " + version.ToString() + "."
+                | _ -> null
+        | SqlAgentToolType.Oracle ->
+            // 12c introduced native left-correlated inline views. Runtime
+            // 11g and missing profiles cannot prove the source or target.
+            match profile with
+            | null ->
+                "SQL capability 'select.lateral_derived' requires an explicit Oracle "
+                + side + " ServerVersion 12.1+."
+            | value ->
+                match value.ServerVersion with
+                | null ->
+                    "SQL capability 'select.lateral_derived' requires an explicit Oracle "
+                    + side + " ServerVersion 12.1+."
+                | version when version.CompareTo(OracleMinimumVersion) < 0 ->
+                    "SQL capability 'select.lateral_derived' requires Oracle " + side
+                    + " ServerVersion 12.1+; declared version is " + version.ToString() + "."
+                | _ -> null
+        | _ ->
+            "SQL capability 'select.lateral_derived' is not supported by " + side
+            + " provider " + string provider
+            + "; LATERAL derived-table correlation remains fail-closed."
 
     let SourceValidationError(provider: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile | null) : string | null =
         validationError provider sourceProfile "source"
 
     let TargetValidationError(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile | null) : string | null =
         validationError provider targetProfile "target"
+
+module internal SqlWindowNullTreatmentCapabilityRules =
+    let ValidationError(provider: SqlAgentToolType, profile: SqlProviderCapabilityProfile | null, side: string) : string | null =
+        let minimum =
+            match provider with
+            | SqlAgentToolType.MsSqlServer -> Some(Version(16, 0))
+            | SqlAgentToolType.Oracle -> Some(Version(12, 1))
+            | _ -> None
+        match minimum, profile with
+        | None, _ ->
+            "SQL capability 'window.null_treatment' is not proven for " + side
+            + " provider " + string provider + "."
+        | Some min, null ->
+            "SQL capability 'window.null_treatment' requires an explicit " + side
+            + " profile for " + string provider + " ServerVersion " + string min + "+."
+        | Some min, value when (nonNull value).Provider <> provider ->
+            "SQL capability 'window.null_treatment' requires a matching " + side
+            + " profile for " + string provider + "."
+        | Some min, value ->
+            match (nonNull value).ServerVersion with
+            | null ->
+                "SQL capability 'window.null_treatment' requires an explicit " + side
+                + " ServerVersion " + string min + "+."
+            | declared when declared.CompareTo(min) < 0 ->
+                "SQL capability 'window.null_treatment' requires " + side
+                + " ServerVersion " + string min + "+; declared " + string declared + "."
+            | _ -> null
+
+    // SQL Server 2022 LAG/LEAD IGNORE NULLS was corrected in CU4.
+    // Explicit RESPECT NULLS still needs only the original 16.0 syntax gate.
+    let IgnoreNullsValidationError(provider: SqlAgentToolType, profile: SqlProviderCapabilityProfile | null, side: string) : string | null =
+        let error = ValidationError(provider, profile, side)
+        if not (isNull error) || provider <> SqlAgentToolType.MsSqlServer then error
+        else
+            let fixedBuild = Version(16, 0, 4035, 4)
+            let declared = nonNull (nonNull profile).ServerVersion
+            if declared.Major = 16 && declared.CompareTo(fixedBuild) < 0 then
+                "SQL capability 'window.null_treatment' IGNORE NULLS requires " + side
+                + " SQL Server 2022 CU4 (16.0.4035.4)+; declared " + string declared + "."
+            else null
 
 module internal SqlAggregateFilterCapabilityRules =
     let private pg = Version(9,4)

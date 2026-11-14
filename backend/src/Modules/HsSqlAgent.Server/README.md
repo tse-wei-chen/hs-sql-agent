@@ -5,6 +5,51 @@ Secret protection now requires independent Base64-encoded random 32-byte keys fo
 
 Embeddable MCP SQL Agent components for ASP.NET Core. New applications compose capabilities explicitly; each capability owns only the options it needs. The aggregate `AddHsSqlAgent()` / `UseHsSqlAgent()` pair remains as a compatibility path for existing consumers.
 
+## PostgreSQL Query execution: transaction-enforced read-only
+
+`execute_query_sql` is a read-only MCP tool, but a PostgreSQL `SELECT` alone is not a
+write-prevention boundary: a `VOLATILE` function can update tables or advance a sequence.
+When the selected provider is PostgreSQL, Host now wraps the **compiled** Query command
+in a real database transaction and runs `SET TRANSACTION READ ONLY` before executing
+the command on that same transaction. The result set is fully buffered before rolling
+back. The database, rather than a function-name blacklist, enforces persistent
+write restrictions. Read-only transaction failures surface as failed Query operations,
+not as successful empty results.
+
+For PostgreSQL Query compilation with a nonempty table whitelist, the F# Query
+policy also restricts function calls to reviewed pg_catalog built-ins (plus
+non-overloadable SQL expressions such as COALESCE). Allowed functions are rendered
+as explicitly pg_catalog-qualified calls, so a custom UDF cannot shadow LOWER,
+COUNT and similar names through search_path or overload selection. Unknown,
+quoted and non-catalog functions are rejected at the Query policy stage, rather
+than trying to detect dangerous function names with a blacklist. This restriction
+applies only to whitelisted PostgreSQL Query compilation, not to the six-dialect
+Parser or DML/DDL tools. It may reject previously accepted unproven native
+functions; those require an explicit security capability decision.
+
+PostgreSQL operator resolution is a separate boundary from named SQL functions.
+A connection can explicitly place an untrusted schema ahead of `pg_catalog`
+and shadow built-in operators such as integer `=`, letting a seemingly
+allowed SELECT invoke hidden SQL against excluded tables. For PostgreSQL
+Query only, the same `READ ONLY` transaction now also uses transaction-local
+`pg_catalog.set_config` to put `pg_catalog` first in `search_path` while
+retaining the caller's remaining schema order for ordinary relation lookup.
+Rollback restores the prior session setting, including pooled connections;
+both query entrypoints share the single Host gate. The PostgreSQL 16 physical
+attack/regression and no-pool-reset rollback control are in
+`Services/Query/PHYSICAL-INJECTION.md` under the Host tests. This is not
+a complete sandbox for arbitrary user-defined operators or types; database
+roles must still have least-privilege relation and CREATE permissions.
+
+The F# SqlCore compiler stays driver-free and retains the original SQL authorization
+and single-statement gates. DML/DDL and other five providers are unaffected by
+this provider-specific Host enforcement. Read-only transactions are not an all-purpose
+sandbox for locks, resource exhaustion, or arbitrary external function effects;
+limit database privileges and retain timeout/concurrency/audit controls.
+The real PostgreSQL 16 Host/UDF/sequence/no-side-effect tests are documented in
+`backend/src/UnitTest/HsSqlAgent.Server.Test/Services/Query/PHYSICAL-INJECTION.md`.
+
+
 ## Install
 
 ```bash
@@ -297,3 +342,498 @@ Do not commit production keys. Supply HMAC/JWT keys and database credentials thr
 
 Full project documentation:
 https://github.com/tse-wei-chen/hs-sql-agent
+
+## G3: PostgreSQL-only transactional DDL, explicit opt-in
+
+The single MCP tool `execute_ddl_sql` is **disabled and hidden by default**
+and is never automatically selected or granted by DML permissions. Existing
+four metadata/Query tools remain selected; DML and DDL remain unselected.
+
+## G5 MySQL 8.4 LTS — implicit-commit CREATE TABLE Host (opt-in)
+
+MySQL InnoDB atomic DDL is **not** user-transactional DDL. Only one
+unqualified CREATE TABLE (1–16 simple signed INT columns; no constraints,
+defaults, temporary tables or CTAS) can be approved through the already
+existing execute_ddl_sql MCP tool. All other MySQL Host DDL remains denied.
+
+```csharp
+using HsSqlAgent.Server.Extensions;
+using HsSqlAgent.Server.Services;
+
+services.AddHsSqlAgentMySqlDdl(new MySqlDdlExecutionOptions
+{
+    Enabled = true,
+    AllowCreateTable = true,
+    AllowedDatabases = new HashSet<string>(StringComparer.Ordinal) { "app_database" },
+    PolicyRevision = "mysql84-ddl-governance-v1"
+});
+services.AddSingleton<IDdlApprovalProvider, MyIndependentDdlApprovalProvider>();
+// Separately grant execute_ddl_sql on the intended MCP access key.
+```
+
+Requires real MySQL 8.4 (not MariaDB/Percona), a valid server UUID,
+the exact selected non-system database matching the access key and allowlist,
+case-sensitive table names mode 0, session default engine InnoDB, and complete
+read access to information_schema. A released preview connection never
+authorizes execution. The new execution connection obtains a cooperative
+session named lock (not a cross-client CAS), rechecks physical identity,
+policy, table absence and approval expiry, executes only the immutable
+compiled SQL **once**, and verifies exact InnoDB columns afterward.
+
+No BEGIN, COMMIT or ROLLBACK are issued by this Host. The single CREATE
+statement implicitly commits and cannot be undone by user ROLLBACK.
+When a native statement may have run but no conclusive response/postcondition
+can be proven, the result is outcome_unknown, NEVER a safe-to-retry failure.
+External clients are not prevented from altering schema by GET_LOCK. DML
+approval never authorizes DDL, startup opt-in alone does not expose the tool,
+and the four default read-only selections remain unchanged.
+
+A Hosting application must independently enable it, allowlist schema(s) and
+operations, and register its own DDL approval provider *before building DI*:
+
+```csharp
+using HsSqlAgent.Server.Extensions;
+using HsSqlAgent.Server.Services;
+services.AddHsSqlAgentPostgresDdl(new PostgresDdlExecutionOptions
+{
+    Enabled = true,
+    AllowedSchemas = new HashSet<string>(StringComparer.Ordinal) { "app" },
+    AllowCreateTable = true,
+    AllowAddColumn = true,
+    AllowCreateIndex = true,
+    PolicyRevision = "ddl-governance-2026-10"
+});
+services.AddSingleton<IDdlApprovalProvider, MyIndependentDdlApprovalProvider>();
+// Implement the provider to obtain independent human approval; return
+// the exact request ID, evidence fingerprint and approver identity.
+// The MCP access key must separately grant "execute_ddl_sql".
+```
+
+Without this opt-in, an explicit key grant, valid PostgreSQL context and a
+separately configured `IDdlApprovalProvider`, execution is denied. The
+provider is **not** `IDmlApprovalProvider`; no DML consent or session is
+reused. `previewOnly=true` captures live metadata without execution or
+approval. Pending approvals cannot be resumed to execute: request a new
+preview and approval. The result distinguishes `preview`, `committed`,
+`rejected`, `pending`, `failed` (confirmed rollback) and
+`outcome_unknown` (commit/rollback reply unverified).
+
+Supported: PostgreSQL 12+ with **explicit qualified schema.table** and
+independently enabled operation: ordinary CREATE TABLE, nullable ADD COLUMN,
+nonunique simple-column CREATE INDEX. Cross-provider, unqualified
+search_path, IF EXISTS, CASCADE, DROP, TRUNCATE, CONCURRENTLY, dynamic
+SQL and multi-statement requests are unsupported. The PG account must read
+physical metadata and `pg_control_system()` for physical cluster identity
+(e.g. explicit pg_monitor privilege); unproven metadata fails closed.
+
+The Host verifies actual server/database/cluster identity, table OID,
+column types, nullability, index keys and schema namespace collisions.
+Approval fingerprints bind native G1 compiled SQL, typed effects, physical
+before-snapshot, principal/key, database, policy revision, request ID and
+expiry, plus a human-readable Before/ExpectedAfter diff. A fresh connection
+re-verifies the target under a PostgreSQL transaction, with a table lock for
+ALTER/INDEX, executes only the immutable compiled native SQL once and
+checks actual post-DDL metadata before COMMIT. The DDL attempt requires a
+durable pre-execution AuditLog write; outcome is audited separately.
+Unknown commit or rollback outcomes must be reconciled, never auto-retried.
+
+Exclusive locks, external DDL event triggers and the complete dependency
+graph are not magically proven by the table-local metadata snapshot.
+The Host does not claim global cross-client atomic CAS, known lock duration
+or affected row counts; other database adapters require independent G4/G5
+transaction/capability proofs. SqlCore remains driver-free.
+
+## G4 SQLite — independent, file-backed transactional DDL adapter
+
+SQLite DDL shares **the same** existing `execute_ddl_sql` MCP tool and
+independent `IDdlApprovalProvider` interface, but **not** PostgreSQL's
+physical OID, schema-lock or runtime proof. It must be explicitly opted in:
+
+```csharp
+services.AddHsSqlAgentSqliteDdl(new SqliteDdlExecutionOptions
+{
+    Enabled = true,
+    AllowCreateTable = true,
+    AllowAddColumn = true,
+    AllowCreateIndex = true,
+    PolicyRevision = "sqlite-ddl-policy-2026-10"
+});
+services.AddSingleton<IDdlApprovalProvider, MyIndependentDdlApprovalProvider>();
+// Also grant execute_ddl_sql explicitly on the MCP access key.
+```
+
+Only **file-backed SQLite 3.35+**, no attached DB, no `:memory:`, no
+TEMP and **explicit `main.table`** target. The authenticated database
+identity must be the target's absolute file path; the public preview
+provides only its SHA-256 identity, schema cookie, typed columns/indexes
+and Before/ExpectedAfter. Qualified `CREATE INDEX` must render
+`CREATE INDEX "main"."index" ON "table" (...)` (SQLite forbids a
+schema-qualified ON table). No second parser and no user SQL execution.
+
+The SQLite-specific adapter checks file identity, `PRAGMA main.schema_version`,
+the complete target table SQL, table columns and physical index keys.
+It releases the preview connection before human approval, binds the
+physical snapshot and actor/policy into an expiring single-request
+fingerprint, then starts a **BEGIN IMMEDIATE** transactional writer
+reservation before rechecking metadata. Only the F# compiled command
+is executed, with expected schema-cookie delta and typed postcondition
+verification before COMMIT; failed or uncertain rollbacks are not
+reported as committed, and an unknown COMMIT is **OutcomeUnknown**.
+
+No DML permission or consent is inherited. Startup opt-in,
+`execute_ddl_sql` key grant, separate DDL approval provider and durable
+pre-execution audit are all required. Only the G1 additive operations
+are executable; unknown operations, expression/partial indexes,
+unmodeled virtual targets, schema drift and implicit name resolution
+fail closed. SQL Server and Firebird have separately opt-in, restricted Host adapters described below.
+
+## G4 SQL Server 2022 — restricted transactional DDL (independent opt-in)
+
+The existing **single** `execute_ddl_sql` MCP tool has a separate SQL
+Server adapter. Installation and ordinary Query/DML rights never enable it.
+Only a qualified `dbo.table` (or another explicitly allowlisted user schema)
+with **1–16 simple INT columns**, no constraints/defaults/identity, is in the
+initial SQL Server Host executable subset. `ALTER TABLE`, `CREATE INDEX`,
+`DROP`, conditional/batch DDL, unsupported types or effects are rejected.
+SQL Server parser / Catalog support is not evidence of Host execution support.
+
+```csharp
+using HsSqlAgent.Server.Extensions;
+using HsSqlAgent.Server.Services;
+services.AddHsSqlAgentSqlServerDdl(new SqlServerDdlExecutionOptions
+{
+    Enabled = true,
+    AllowedSchemas = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "dbo" },
+    AllowCreateTable = true,
+    PolicyRevision = "sqlserver-ddl-approval-v1"
+});
+services.AddSingleton<IDdlApprovalProvider, MyIndependentDdlApprovalProvider>();
+// Separately grant execute_ddl_sql to the intended MCP access key.
+```
+
+The SQL Server 2022+ adapter is distinct from the PostgreSQL/SQLite runtimes.
+An enabled Host requires an actual non-system database, SQL Server 2022+
+version, proven case-insensitive database collation, existing schema ID,
+complete permission to inspect DDL triggers, and an absent target object.
+Preview reads physical `sys.*` metadata without mutations; an expiring,
+one-time independent approval binds database/server identity, schema/object
+snapshot, actor, compiled native plan, policy and readable Before/After.
+The approval connection is released before the human review. At execution,
+a new connection takes a transaction-owned application lock, rechecks live
+metadata inside a SERIALIZABLE transaction, executes **only** the SqlCore
+compiled native command, verifies actual column types/nullability before
+commit, then records the committed result. A failure with proven rollback
+is not success; uncertain COMMIT/rollback returns `outcome_unknown` and
+must be reconciled, **never automatically retried**.
+
+Transaction application locks coordinate this Host's requests; they are not
+a global compare-and-swap against unrelated external SQL Server DDL.
+External schema changes or triggers without sufficient evidence fail closed.
+No public SQL Core DTO can authorize physical execution; the separate MCP
+grant, DDL approval, and durable pre-execution audit remain mandatory.
+The four default read-only tools remain selected; DML and DDL are not.
+
+## G4 Firebird 5 — CREATE TABLE-only transactional DDL (independent opt-in)
+
+The existing `execute_ddl_sql` tool also supports an **independently
+configured Firebird 5** Host. The first executable slice permits one
+**unqualified** `CREATE TABLE name (...)` with **1–16 simple INT/INTEGER
+columns**. No constraints, defaults, ALTER, INDEX, DROP, implicit schema,
+dynamic SQL, or batch statements are executable through this adapter.
+
+```csharp
+using HsSqlAgent.Server.Extensions;
+using HsSqlAgent.Server.Services;
+// Provision this GUID from an authenticated Firebird DBA session:
+// SELECT MON$GUID FROM MON$DATABASE
+services.AddHsSqlAgentFirebirdDdl(new FirebirdDdlExecutionOptions
+{
+    Enabled = true,
+    AllowCreateTable = true,
+    AllowedDatabaseGuids = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "<approved-physical-firebird-database-guid>"
+    },
+    PolicyRevision = "firebird-ddl-governance-v1"
+});
+services.AddSingleton<IDdlApprovalProvider, MyIndependentDdlApprovalProvider>();
+// Grant execute_ddl_sql explicitly on the intended MCP access key.
+```
+
+The Host requires verifiable Firebird 5 engine identity, SQL dialect 3,
+physical `MON$GUID` / `MON$FILE_ID` / database creation metadata,
+the configured database GUID allowlist, reliable system catalog reads,
+an absent target, and **no active user database/DDL triggers**. Physical
+identifiers and paths are hashed before exposure to MCP. The preview is
+read-only and releases its connection before requesting a separately
+authorized human decision with an expiring, single-request fingerprint.
+
+A new connection starts a Firebird transaction, rechecks the same physical
+identity, policy, target absence and trigger boundary, executes **only**
+the compiled SqlCore native command, and compares exact physical columns
+before committing. A verified rollback cannot be reported as success;
+an uncertain COMMIT or rollback returns `outcome_unknown`, not an
+automatic retry. This does not promise a global compare-and-swap against
+unrelated Firebird DDL writers. The startup opt-in, explicit key grant,
+durable pre-execution audit, and independent `IDdlApprovalProvider`
+are mandatory. The four default read-only tools are unchanged; DML and
+DDL remain unselected.
+
+
+## G5 Oracle 26ai — independently approved, implicit-commit CREATE TABLE
+
+This Host feature reuses the same disabled-by-default `execute_ddl_sql`
+MCP tool and F# `CompileDdl` native SQL renderer. The initial executable
+subset is **one unqualified CREATE TABLE with 1–16 simple INTEGER columns**
+in the exact current user schema. It excludes custom constraints, defaults,
+indexes, CTAS, ALTER, DROP, dynamic SQL, batch SQL and other Oracle versions.
+
+```csharp
+using HsSqlAgent.Server.Extensions;
+using HsSqlAgent.Server.Services;
+
+services.AddHsSqlAgentOracleDdl(new OracleDdlExecutionOptions
+{
+    Enabled = true,
+    AllowCreateTable = true,
+    AllowedPdbNames = new HashSet<string>(StringComparer.Ordinal) { "FREEPDB1" },
+    AllowedSchemas = new HashSet<string>(StringComparer.Ordinal) { "SQLCORE" },
+    PolicyRevision = "oracle-ddl-independent-governance-v1"
+});
+services.AddSingleton<IDdlApprovalProvider, MyIndependentDdlApprovalProvider>();
+// Separately grant execute_ddl_sql to this MCP key.
+// All four default read-only tools remain selected; DML/DDL are not.
+```
+
+The designated Oracle Host account must be a **non-system user** with
+`CURRENT_SCHEMA = SESSION_USER`, connecting to an explicitly allowlisted,
+writable, primary Oracle 26ai (23.26+) PDB. Provision only the necessary
+dictionary and cooperative-lock privileges, using a DBA-owned deployment
+step (not an LLM-created or auto-granted privilege):
+
+```sql
+GRANT SELECT ON SYS.V_$DATABASE TO SQLCORE;
+GRANT SELECT ON SYS.V_$PDBS TO SQLCORE;
+GRANT SELECT ON SYS.DBA_TRIGGERS TO SQLCORE;
+GRANT EXECUTE ON SYS.DBMS_LOCK TO SQLCORE;
+```
+
+These `SELECT` grants are required to prove CDB/PDB identity and complete
+visibility of active schema/database DDL triggers. Missing access is a
+hard denial, not a fallback to `ALL_TRIGGERS`. The read-only Preview
+releases the first connection prior to separate human approval. A fresh
+connection takes a session-held cooperative `DBMS_LOCK` (which survives
+DDL implicit COMMIT), rechecks physical metadata, plan/policy/expiration,
+then executes only the typed compiled statement and verifies actual
+`USER_OBJECTS` / `USER_TAB_COLS` state.
+
+**Oracle DDL performs an implicit COMMIT before and after the statement.**
+This Host never uses `BeginTransaction`, never promises rollback, and
+never automatically retries an unknown outcome. After native execution
+starts, a lost response or postcondition mismatch is `outcome_unknown`
+and requires live DBA reconciliation. The Host's cooperative session
+lock does **not** prevent unrelated Oracle clients from changing objects.
+Independent access-key grant, DDL approval, pre-execution durable audit,
+and DB permission checks are all required; install alone enables nothing.
+
+## G6 PostgreSQL — separately approved high-risk DROP of an empty table
+
+The existing `execute_ddl_sql` can now **optionally** accept a single
+`DROP TABLE schema.table RESTRICT`. This is a destructive operation and
+is **not enabled** by `AllowCreateTable`, ordinary DML permission,
+or a default DDL installation. Enable it only for an isolated, dedicated
+PostgreSQL 12+ application schema, and explicitly grant `execute_ddl_sql`
+to the intended MCP access key.
+
+```csharp
+using HsSqlAgent.Server.Extensions;
+using HsSqlAgent.Server.Services;
+
+services.AddHsSqlAgentPostgresDdl(new PostgresDdlExecutionOptions
+{
+    Enabled = true,
+    AllowedSchemas = new HashSet<string>(StringComparer.Ordinal) { "staging_cleanup" },
+    AllowDropEmptyTable = true, // false by default, independent from additive DDL
+    AllowedDropPrincipals = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "mcp-key:123" // authenticated ID of the separately authorized MCP key
+    },
+    PolicyRevision = "postgres-g6-drop-empty-governance-v1"
+});
+services.AddSingleton<IDdlApprovalProvider, MyIndependentDdlApprovalProvider>();
+// Separately grant execute_ddl_sql to the desired MCP key.
+```
+
+The Host also requires that the authenticated MCP key principal match
+`AllowedDropPrincipals`. Merely granting `execute_ddl_sql` to a key does
+**not** authorize destructive DROP; changing this allowlist invalidates
+outstanding approvals.
+
+The MCP preview exposes `Risk=Destructive`, `MayLoseData=true`, and the
+human-readable Before/After impact summary. None of these is an execution grant.
+
+**This is not a general DROP TABLE permission.** Preview and execution
+both demand an actual **empty** ordinary PostgreSQL table with 1–16
+INTEGER columns, direct owner privilege, no secondary indexes,
+constraints, dependent views, triggers, defaults/identity,
+inherited/partitioned tables, RLS, publication or unproven schema
+effects. Preview is read-only; any change in those properties before
+execution is rejected. The approved statement, schema identity,
+physical PostgreSQL cluster, actor, policy and short-lived nonce are
+bound to one independent human approval challenge.
+
+Execution acquires an `ACCESS EXCLUSIVE` lock inside a real
+PostgreSQL transaction, rechecks the exact table OID, permissions,
+dependencies and zero-row condition, issues the **F#-compiled native
+RESTRICT command only once**, checks that the table is absent, then
+commits. A confirmed rollback prevents reported success. Lost COMMIT
+or rollback outcomes are `outcome_unknown`; **never retry automatically**.
+The risk warning explicitly states that after COMMIT the schema
+definition is permanently deleted. No nonempty tables, CASCADE,
+`IF EXISTS`, multi-table DROP, or MySQL/Oracle DROP are enabled.
+
+The four default read-only MCP tools remain selected. DML and DDL
+remain unselected by default. Rollback of the feature switch means
+disabling `AllowDropEmptyTable`; it does not restore a table already
+committed as deleted.
+
+## G6 S16 — PostgreSQL atomic 2–4 statement CREATE TABLE Batch (opt-in)
+
+The existing `execute_ddl_sql` MCP tool now recognizes an intentionally
+limited **single-schema PostgreSQL 16 atomic batch**: 2–4 independently
+compiled `CREATE TABLE schema.name (…)` statements, each with a different
+table name. There are **no cross-statement dependencies** in this first
+proven subset. No new MCP tools, SQL parsers, DML approval or inferred
+permissions are introduced. The F# batch plan is not a promise of
+atomicity until PostgreSQL actually commits the transaction.
+
+```csharp
+using HsSqlAgent.Server.Extensions;
+using HsSqlAgent.Server.Services;
+
+services.AddHsSqlAgentPostgresDdl(new PostgresDdlExecutionOptions
+{
+    Enabled = true,
+    AllowCreateTable = true,
+    AllowCreateTableBatch = true,  // false by default, distinct from single DDL
+    AllowedBatchPrincipals = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "mcp-key:123" // authenticated MCP key ID, not caller SQL
+    },
+    AllowedSchemas = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "staging_cleanup"
+    },
+    PolicyRevision = "postgres-g6-atomic-batch-v1"
+});
+services.AddSingleton<IDdlApprovalProvider, MyIndependentDdlApprovalProvider>();
+// Also separately grant execute_ddl_sql to the designated MCP access key.
+// Do not select DML/DDL tools by default.
+```
+
+Example input for the **same existing** `execute_ddl_sql` tool:
+
+```sql
+CREATE TABLE staging_cleanup.import_a (id INTEGER NOT NULL);
+CREATE TABLE staging_cleanup.import_b (id INTEGER NOT NULL);
+```
+
+`previewOnly=true` returns the ordered compiled SQL statements, one
+batch plan fingerprint, every physical Before observation and every
+hypothetical After plus a human-readable whole-batch diff. Preview
+never executes SQL or obtains approval. On `previewOnly=false`, the
+The entire batch execution transaction shares one configured `ExecutionTimeout`
+(maximum 15 seconds), including all statements and physical checks; an
+uncertain COMMIT remains `outcome_unknown`.
+
+Host first requires the **batch-only key allowlist**, then one independent
+human approval bound to the **entire ordered plan**. A new PostgreSQL
+connection rechecks the original server, schema identity, object absence,
+approval expiry and policy. Every compiled native CREATE and its physical
+postcondition execute under **one PostgreSQL transaction**; the Host
+confirms every final table before COMMIT. A confirmed rollback restores
+the state when execution fails. A lost COMMIT or uncertain rollback
+returns `outcome_unknown`, not a false success/failure, and must **never
+be retried automatically**.
+
+Cross-schema targets, repeated table names, statement counts outside
+2–4, ALTER/INDEX/DROP, dependencies between statements, data-writing
+CTAS, DML, `GO` and other Provider DDL batches remain blocked. In
+particular, MySQL and Oracle **implicit commits prohibit claiming this
+PostgreSQL atomic batch contract**. This Host opt-in does not change
+the four default read-only tool selections or the default-unselected
+DML/DDL choices. Disable `AllowCreateTableBatch` to stop *future*
+batches; already-committed schema changes are not undone.
+
+### G6/S16 dependent DDL Batch (PostgreSQL 16 only; additional opt-in)
+
+In addition to the existing **independent CREATE-only batch**, the same
+`execute_ddl_sql` tool can optionally execute a **single new empty table's
+dependent chain** under one approval and one PostgreSQL transaction:
+
+```sql
+CREATE TABLE staging_cleanup.new_data (id INTEGER NOT NULL);
+ALTER TABLE staging_cleanup.new_data ADD COLUMN count INTEGER NULL;
+CREATE INDEX ix_new_data_count ON staging_cleanup.new_data(count);
+```
+
+Enable it only for designated MCP keys and schema(s), in addition to the
+previous Batch grants:
+
+```csharp
+services.AddHsSqlAgentPostgresDdl(new PostgresDdlExecutionOptions
+{
+    Enabled = true,
+    AllowCreateTable = true,
+    AllowAddColumn = true,
+    AllowCreateIndex = true,
+    AllowCreateTableBatch = true,
+    AllowDependentDdlBatch = true, // default false; separately reviewed
+    AllowedBatchPrincipals = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "mcp-key:123"
+    },
+    AllowedSchemas = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "staging_cleanup"
+    },
+    PolicyRevision = "g6-dependent-create-chain-v1"
+});
+services.AddSingleton<IDdlApprovalProvider, MyIndependentDdlApprovalProvider>();
+// Also grant execute_ddl_sql to this authenticated MCP key; no DML inheritance.
+```
+
+This capability **cannot ALTER or index an existing table**: the root
+CREATE must be the first operation of the same approved batch. Preview
+reads only actual physical metadata and explicitly labels all
+intermediate projections as **hypothetical**, not observed tables.
+All ordered effects are bound to the same short-lived approval,
+including the optional index name and columns. In the single transaction,
+the Host rechecks root absence and schema identity, then verifies actual
+physical columns, table OID and index metadata after each operation and
+at the end before COMMIT. Existing relations, index collisions,
+unapproved schemas/keys or policy/approval drift must fail closed;
+confirmed rollback cannot leave an intermediate table. Lost COMMIT or
+unproven rollback stays `outcome_unknown` and is **never automatically
+retried**.
+
+The existing independent CREATE batches remain available without this
+new gate. Other providers, arbitrary ALTER, multiple-target dependency
+graphs, DEFAULT/NOT NULL column additions, concurrent indexes and
+destructive DDL Batch are still not allowed. The front end still
+preselects four read-only tools and leaves DML/DDL unselected.
+
+## Explicit DML MCP permission gate
+
+The `execute_dml_sql` mutating tool requires an explicit, exact
+`execute_dml_sql` entry in the MCP access key's `AllowedTools` authorization
+context. Missing, empty, whitespace-only, substring and delimiter-smuggled
+tool lists are denied **before** provider lookup, preview, or approval. It is
+not enabled by the four default read-only tools; a DDL grant does not imply a
+DML grant. Existing read-only Query/metadata behavior for a present empty
+`AllowedTools` list is unchanged for backwards compatibility. DML additionally
+requires its independent approval and live row-set/commit proof.
+
+The regression campaign lives in
+`backend/src/UnitTest/HsSqlAgent.Server.Test/Tools/HostAdversarialMutationAuthorizationTests.cs`
+and `Services/TypedDmlRuntimeTests.cs`.

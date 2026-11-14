@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# A filtered dotnet test runs all target frameworks. Require the exact corpus
+# for each TFM instead of accidentally comparing the combined total to one TFM.
+expected="${1:?expected succeeded case count per framework}"
+project="${2:?test project path}"
+filter="${3:?fully qualified test filter}"
+if [[ ! "$expected" =~ ^[1-9][0-9]*$ ]]; then
+  echo "::error::Physical test case count must be a positive integer." >&2
+  exit 2
+fi
+
+frameworks="$(dotnet msbuild "$project" -getProperty:TargetFrameworks -nologo | tail -n 1)"
+if [[ -z "$frameworks" ]]; then
+  frameworks="$(dotnet msbuild "$project" -getProperty:TargetFramework -nologo | tail -n 1)"
+fi
+IFS=';' read -r -a tfms <<< "$frameworks"
+if (( ${#tfms[@]} == 0 )); then
+  echo "::error::Could not determine test frameworks: $project" >&2
+  exit 1
+fi
+
+output="$(mktemp)"
+clean="$(mktemp)"
+trap 'rm -f "$output" "$clean"' EXIT
+for tfm in "${tfms[@]}"; do
+  dotnet test --project "$project" --framework "$tfm" --filter "$filter" | tee -a "$output"
+done
+sed -E $'s/\033\\[[0-9;]*[[:alpha:]]//g' "$output" > "$clean"
+
+for tfm in "${tfms[@]}"; do
+  # MTP prints an identical assembly result once on completion and once
+  # in the final summary; deduplicate those lines before asserting per-TFM.
+  mapfile -t results < <(grep -F "($tfm|" "$clean" | grep -F " passed [" | sort -u || true)
+  if (( ${#results[@]} != 1 )); then
+    echo "::error::Expected one physical result for $tfm, got ${#results[@]}: $filter" >&2
+    exit 1
+  fi
+  compact="$(printf '%s' "${results[0]}" | tr -d '[:space:]')"
+  if [[ "$compact" != *"passed[+$expected/x0/?0]"* ]]; then
+    echo "::error::Physical $tfm must pass exactly $expected with no skips or failures: $filter" >&2
+    exit 1
+  fi
+done
+
+total=$(( expected * ${#tfms[@]} ))
+echo "Verified $expected physical cases per TFM (${tfms[*]}), $total total, 0 failed, 0 skipped: $filter"

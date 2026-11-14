@@ -2,6 +2,7 @@ using System.Text;
 using Admin.Service.Data.Entites;
 using Admin.Service.Models;
 using Common.Interfaces;
+using Common.Models;
 using HsSqlAgent.Server.Middleware;
 using HsSqlAgent.Server.Models;
 using Microsoft.EntityFrameworkCore;
@@ -440,7 +441,17 @@ public static class HsSqlAgentApplicationExtensions
                 }
                 managedKey.Name = string.IsNullOrWhiteSpace(keyConfig.Name) ? keyBootstrapId : keyConfig.Name.Trim();
                 managedKey.DbManagementId = dbEntity.Id;
-                managedKey.AllowedTools = Normalize(keyConfig.AllowedTools);
+                // Historical bootstrap keys retain their configured grant, including
+                // legacy null/wildcard semantics. Only newly provisioned keys gain
+                // the explicit read-only default when tool selection is omitted.
+                var declaredTools = Normalize(keyConfig.AllowedTools);
+                if (isNew)
+                    managedKey.AllowedTools = McpBuiltInTools.NormalizeExplicitAllowedTools(declaredTools);
+                else if (declaredTools is not null)
+                    managedKey.AllowedTools = declaredTools;
+                // An omitted grant on subsequent bootstrap runs preserves the
+                // stored authorization: legacy wildcard stays legacy, while a
+                // newly defaulted key never silently broadens to wildcard.
                 managedKey.IsActive = true;
                 managedKey.RevokedAt = null;
                 managedKey.RevokedBy = null;

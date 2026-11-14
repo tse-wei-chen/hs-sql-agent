@@ -43,8 +43,14 @@ public sealed class DurableDmlReconciliationService(
             .Take(limit)
             .Select(x => new
             {
-                x.RequestId, x.Status, x.Reason, x.UpdatedAt, x.CreatedAt,
-                x.DbManagementId, x.DatabaseProvider, x.DatabaseIdentity,
+                x.RequestId,
+                x.Status,
+                x.Reason,
+                x.UpdatedAt,
+                x.CreatedAt,
+                x.DbManagementId,
+                x.DatabaseProvider,
+                x.DatabaseIdentity,
                 x.StatementCount
             })
             .ToListAsync(cancellationToken);

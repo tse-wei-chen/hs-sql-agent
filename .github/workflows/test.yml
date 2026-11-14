@@ -2,9 +2,8 @@ name: Tests
 
 on:
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+    branches: [main, develop]
+  pull_request: {}
   release:
     types: [published]
 
@@ -13,6 +12,42 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  common-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Run Common.Test with real test and coverage evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/Common.Test/Common.Test.csproj --framework "$framework" \
+              --report-xunit-trx --report-xunit-trx-filename run.trx \
+              --coverlet --coverlet-output-format cobertura \
+              --results-directory artifacts/test-evidence/common-test/"$framework"
+          done
+      - name: Require nonempty xUnit TRX and production-code coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          for framework in net10.0 net8.0; do
+            dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/common-test/"$framework" --suite Common.Test --require-complete
+          done
+      - name: Upload Common.Test TRX and instrumented source coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-evidence-common-test
+          path: artifacts/test-evidence/common-test/
+          if-no-files-found: warn
+
   infrastructure-test:
     runs-on: ubuntu-latest
     permissions:
@@ -24,7 +59,88 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - run: dotnet test --project backend/src/UnitTest/Infrastructure.Test/Infrastructure.Test.csproj
+      - name: Enforce Python-free tracked files and GitHub Actions
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$(git ls-files -- '*.py')" ]; then
+            echo "Python source files are not allowed in the repository:" >&2
+            git ls-files -- '*.py' >&2
+            exit 1
+          fi
+          if grep -RnE '[p]ython[0-9]*[[:space:]]|[<]<.PY.' .github/workflows; then
+            echo "Inline Python or Python interpreter invocations are not allowed in CI." >&2
+            exit 1
+          fi
+      - name: Audit test project ownership and evidence contracts
+        run: |
+          dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- audit --root .
+      - name: Verify 3.1.0 publication blocker while issue 575 is open
+        run: bash .github/scripts/test-release-security-gate.sh
+      - name: Verify exact release-head Tests gate rejects missing or failed CI
+        run: bash .github/scripts/test-release-head-ci-gate.sh
+      - name: Verify develop-only candidate gate rejects stale or incomplete evidence
+        shell: bash
+        run: bash .github/scripts/test-develop-release-candidate.sh
+      - name: Require executable SQL syntax-parity on develop and main push
+        shell: bash
+        run: bash .github/scripts/test-release-push-parity.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Activate pinned frontend package manager
+        run: corepack enable pnpm
+      - name: Record production Host and F# compiler warning baseline on exact HEAD
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/security
+          dotnet restore backend/src/ToolBox/ToolBox.csproj --verbosity quiet
+          dotnet build backend/src/ToolBox/ToolBox.csproj --no-restore --configuration Release --verbosity minimal \
+            2>&1 | tee artifacts/security/compiler-build.log
+          grep -E '(warning (CS|FS|NU)[0-9]+:)' artifacts/security/compiler-build.log \
+            | sort -u > artifacts/security/compiler-warnings.txt || true
+          count="$(wc -l < artifacts/security/compiler-warnings.txt)"
+          printf '{"warnings":%s,"scope":"ToolBox Release plus referenced CSharp and FSharp modules","source":"exact CI HEAD"}\n' "$count" \
+            > artifacts/security/compiler-warning-summary.json
+          echo "Compiler warnings for this release evidence run: $count"
+      - name: Prove dependency advisory parser fails closed against missing and high-risk results
+        shell: bash
+        run: bash .github/scripts/test-dependency-security-audit.sh
+      - name: Verify current NuGet and production pnpm dependency advisories
+        shell: bash
+        run: bash .github/scripts/audit-dependency-security.sh
+      - name: Upload exact-head NuGet and pnpm advisory evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-dependency-advisory-evidence
+          path: artifacts/security/
+          if-no-files-found: error
+      - name: Run Infrastructure.Test with real test and coverage evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/Infrastructure.Test/Infrastructure.Test.csproj --framework "$framework" \
+              --report-xunit-trx --report-xunit-trx-filename run.trx \
+              --coverlet --coverlet-output-format cobertura \
+              --results-directory artifacts/test-evidence/infrastructure-test/"$framework"
+          done
+      - name: Require nonempty xUnit TRX and production-code coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          for framework in net10.0 net8.0; do
+            dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/infrastructure-test/"$framework" --suite Infrastructure.Test --require-complete
+          done
+      - name: Upload Infrastructure.Test TRX and instrumented source coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-evidence-infrastructure-test
+          path: artifacts/test-evidence/infrastructure-test/
+          if-no-files-found: warn
 
   auth-test:
     runs-on: ubuntu-latest
@@ -37,7 +153,30 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - run: dotnet test --project backend/src/UnitTest/Auth.Test/Auth.Test.csproj
+      - name: Run Auth.Test with real test and coverage evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/Auth.Test/Auth.Test.csproj --framework "$framework" \
+              --report-xunit-trx --report-xunit-trx-filename run.trx \
+              --coverlet --coverlet-output-format cobertura \
+              --results-directory artifacts/test-evidence/auth-test/"$framework"
+          done
+      - name: Require nonempty xUnit TRX and production-code coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          for framework in net10.0 net8.0; do
+            dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/auth-test/"$framework" --suite Auth.Test --require-complete
+          done
+      - name: Upload Auth.Test TRX and instrumented source coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-evidence-auth-test
+          path: artifacts/test-evidence/auth-test/
+          if-no-files-found: warn
 
   admin-test:
     runs-on: ubuntu-latest
@@ -50,7 +189,30 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - run: dotnet test --project backend/src/UnitTest/Admin.Test/Admin.Test.csproj
+      - name: Run Admin.Test with real test and coverage evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/Admin.Test/Admin.Test.csproj --framework "$framework" \
+              --report-xunit-trx --report-xunit-trx-filename run.trx \
+              --coverlet --coverlet-output-format cobertura \
+              --results-directory artifacts/test-evidence/admin-test/"$framework"
+          done
+      - name: Require nonempty xUnit TRX and production-code coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          for framework in net10.0 net8.0; do
+            dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/admin-test/"$framework" --suite Admin.Test --require-complete
+          done
+      - name: Upload Admin.Test TRX and instrumented source coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-evidence-admin-test
+          path: artifacts/test-evidence/admin-test/
+          if-no-files-found: warn
 
   server-test:
     runs-on: ubuntu-latest
@@ -63,11 +225,70 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - name: Guard domain-organized test layout
+        run: |
+          dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- layout --root .
+      - name: Verify Server integration ownership audit rejects seven silent-test-loss regressions
+        shell: bash
+        run: bash .github/scripts/test-server-integration-ownership-audit.sh
+      - name: Audit mandatory Server integration suite ownership and exclusions
+        shell: bash
+        run: bash .github/scripts/audit-server-integration-ownership.sh
       - name: Verify released v2.0.6 Admin Store migration baseline is immutable
         shell: bash
         run: bash .github/scripts/verify-v2-admin-migration-baseline.sh
-      - name: Run server unit tests (excluding explicit Redis integration suite)
-        run: dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName!~RedisDmlApprovalIntegrationTests'
+      - name: Run Server unit shard from audited integration ownership manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          filter="$(bash .github/scripts/audit-server-integration-ownership.sh --default-filter)"
+          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter "$filter"
+
+      - name: Require PostgreSQL 16 physical Query least-privilege and native UDF guard (11 cases, no skips)
+        run: |
+          timeout --signal=INT --kill-after=10s 180s bash .github/scripts/require-physical-test-cases.sh 11 \
+            backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
+            'FullyQualifiedName~PostgresPhysicalHostInjectionTests'
+
+      - name: Require file-backed SQLite physical Query and callback guard (11 cases, no skips)
+        run: |
+          timeout --signal=INT --kill-after=10s 180s bash .github/scripts/require-physical-test-cases.sh 11 \
+            backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
+            'FullyQualifiedName~SqlitePhysicalHostInjectionTests'
+
+      - name: Verify real PostgreSQL native faults and Redis process outage including legacy FailOpen hardening
+        run: |
+          timeout --signal=INT --kill-after=10s 180s bash .github/scripts/require-physical-test-cases.sh 5 \
+            backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
+            'FullyQualifiedName~PostgresNativeFaultTestcontainersTests|FullyQualifiedName~RedisProcessOutageTestcontainersTests'
+
+      - name: Require physical Redis split-brain counterexample (unsupported quorum guarantee)
+        run: |
+          timeout --signal=INT --kill-after=10s 150s bash .github/scripts/require-physical-test-cases.sh 1 \
+            backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
+            'FullyQualifiedName~RedisIndependentPrimariesTestcontainersTests'
+
+      - name: Prepull dedicated TCP-fault proxy image
+        run: timeout --signal=INT --kill-after=10s 90s docker pull ghcr.io/shopify/toxiproxy:2.12.0
+
+      - name: Verify actual PostgreSQL Query TCP cut through a proxy
+        run: |
+          timeout --signal=INT --kill-after=10s 90s bash .github/scripts/require-physical-test-cases.sh 1 \
+            backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
+            'FullyQualifiedName~NetworkFaultTestcontainersTests.Postgres_QueryNativeSocketCut'
+
+      - name: Verify Redis lease revocation under real TCP partition
+        run: |
+          timeout --signal=INT --kill-after=10s 90s bash .github/scripts/require-physical-test-cases.sh 1 \
+            backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
+            'FullyQualifiedName~NetworkFaultTestcontainersTests.Redis_TcpPartition'
+
+      - name: Show physical fixture stage and Docker status on failure
+        if: failure()
+        run: |
+          cat /tmp/hsql-network-fault-trace.log || true
+          docker ps -a --format 'table {{.Image}}\t{{.Status}}\t{{.Names}}'
+
 
   redis-approval-integration:
     runs-on: ubuntu-latest
@@ -90,12 +311,41 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - name: Verify real Redis and run cross-instance approval races
+      - name: Verify Redis 7 approval and cross-instance SQL concurrency races
         run: |
           test -n "${HS_SQL_AGENT_REDIS_INTEGRATION_CONNECTION:?Redis service is required}"
-          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName~RedisDmlApprovalIntegrationTests'
+          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName~RedisDmlApprovalIntegrationTests|FullyQualifiedName~RedisSqlConcurrencyIntegrationTests'
         env:
           HS_SQL_AGENT_REDIS_INTEGRATION_CONNECTION: "localhost:6379,abortConnect=true,connectTimeout=5000"
+
+  sqlagent-capability-stack:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Gate six-provider 256 KiB capability and DML stacks (Debug)
+        run: >
+          dotnet run -c Debug
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --capability-stack-probe --output artifacts/sqlcore-capability-stack-debug.json
+      - name: Gate six-provider 256 KiB capability and DML stacks (Release)
+        run: >
+          dotnet run -c Release
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --capability-stack-probe --output artifacts/sqlcore-capability-stack-release.json
+      - name: Upload isolated stack evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sqlcore-capability-stack-evidence
+          path: artifacts/sqlcore-capability-stack-*.json
+          if-no-files-found: warn
 
   sqlagent-syntax-matrix:
     runs-on: ubuntu-latest
@@ -108,6 +358,19 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - name: Gate observed six-provider SQL coverage ledger (3.1)
+        shell: bash
+        run: |
+          dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- sql-corpus \
+            --manifest backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sqlcore-coverage-manifest.json \
+            --output artifacts/sqlcore-coverage-ledger.json
+      - name: Upload observed SQL coverage evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sqlcore-observed-coverage-ledger
+          path: artifacts/sqlcore-coverage-ledger.json
+          if-no-files-found: warn
       - name: Run generated SQL grammar matrices
         run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter '(FullyQualifiedName~GrammarMatrixTests|FullyQualifiedName~MutationMatrixTests|FullyQualifiedName~NegativeBindingPolicyMatrixTests|FullyQualifiedName~NegativeTargetCapabilityMatrixTests|FullyQualifiedName~NegativeTablePolicyMatrixTests|FullyQualifiedName~SqlGrammarBombardmentCoverageTests)'
       - name: Validate SQL compiler benchmark harness (smoke only)
@@ -129,16 +392,7 @@ jobs:
             echo "Depth report missing; preceding step failed." >&2
             exit 1
           fi
-          python3 - <<'PY'
-          import json
-          with open("artifacts/sqlcore-depth-pr.json", encoding="utf-8") as src:
-              report = json.load(src)
-          print(f"Depth probe: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
-          for item in report["observations"]:
-              worker = item.get("worker") or {}
-              status = "ok" if worker.get("success") else "FAILED"
-              print(f"{item['dialect']:12} {item['shape']:23} depth={item['depth']:4} status={status:6} allocatedBytes={worker.get('allocatedBytes')} elapsedUs={worker.get('elapsedMicroseconds')} exitCode={item['processExitCode']}")
-          PY
+          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile depth --file artifacts/sqlcore-depth-pr.json
       - name: Characterize mixed Expr/EXISTS Query nesting (isolated, observational)
         run: >
           dotnet run -c Release --no-build
@@ -154,33 +408,7 @@ jobs:
             echo "Mixed Query depth report missing; preceding step failed." >&2
             exit 1
           fi
-          python3 - <<'PY'
-          import json
-          with open("artifacts/sqlcore-mixed-depth-pr.json", encoding="utf-8") as source:
-              report = json.load(source)
-          print(f"Mixed Query depth: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
-          for item in report["observations"]:
-              worker = item.get("worker") or {}
-              status = "ok" if worker.get("success") else "FAILED"
-              print(f"{item['dialect']:12} depth={item['depth']:4} status={status:6} allocatedBytes={worker.get('allocatedBytes')} exitCode={item['processExitCode']} code={worker.get('diagnosticCode')} error={worker.get('error')}")
-          # This guard does not claim arbitrary-depth SQL support. It
-          # locks in the measured improvement for one deterministic shape,
-          # with >4x headroom for runtime/JIT variance. The previous
-          # quadratic implementation allocated >269 MB at 2,048 layers.
-          if report["samples"] != 6 or report["failures"] != 0 or report["crashesOrTimeouts"] != 0:
-              raise SystemExit("Mixed Query depth floor regressed: all six probes must compile.")
-          for item in report["observations"]:
-              worker = item.get("worker") or {}
-              if not worker.get("success") or item["processExitCode"] != 0:
-                  raise SystemExit("Mixed Query probe must compile: "
-                                   + str((item["dialect"], item["depth"])))
-              if item["depth"] == 2048 and (
-                  not isinstance(worker.get("allocatedBytes"), int)
-                  or worker["allocatedBytes"] > 120_000_000
-              ):
-                  raise SystemExit("Mixed Query 2,048-depth allocation exceeded 120 MB: "
-                                   + str((item["dialect"], worker.get("allocatedBytes"))))
-          PY
+          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile mixed-depth --file artifacts/sqlcore-mixed-depth-pr.json
       - name: Profile nested derived and CTE query phases (isolated, observational)
         run: >
           dotnet run -c Release --no-build
@@ -196,39 +424,7 @@ jobs:
             echo "Nested Query phase report missing." >&2
             exit 1
           fi
-          python3 - <<'PY'
-          import json
-          with open("artifacts/sqlcore-query-phases-pr.json", encoding="utf-8") as src:
-              report = json.load(src)
-          print(f"Nested Query stages: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
-          required = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
-          for item in report["observations"]:
-              worker = item.get("worker") or {}
-              metrics = worker.get("stageMetrics") or []
-              phases = {phase.get("Stage") for phase in metrics if phase.get("Success")}
-              print(f"{item['shape']:23} depth={item['depth']:4} code={worker.get('diagnosticCode')} allocated={worker.get('allocatedBytes')} status={worker.get('success')}")
-              for phase in metrics:
-                  print(f"  {phase['Stage']:18} us={phase['ElapsedMicroseconds']} allocated={phase['AllocatedBytes']} work={phase['WorkUnits']} ok={phase['Success']}")
-                  if any(phase[field] < 0 for field in ("ElapsedMicroseconds", "AllocatedBytes", "WorkUnits")):
-                      raise SystemExit("Negative stage resource measurements.")
-              if worker.get("success") and not required.issubset(phases):
-                  raise SystemExit("Successful compilation omitted required stage telemetry.")
-          # Lock in both measured 2,048-depth Query shapes. Before the
-          # streaming CTE change this shape allocated >500 MB.
-          if report["samples"] != 9 or report["failures"] != 0 or report["crashesOrTimeouts"] != 0:
-              raise SystemExit("Nested derived/CTE/typed-CTE depth floor regressed.")
-          for item in report["observations"]:
-              worker = item.get("worker") or {}
-              if not worker.get("success") or item["processExitCode"] != 0:
-                  raise SystemExit("Nested Query probe must compile: "
-                                   + str((item["shape"], item["depth"])))
-              if item["depth"] == 2048 and (
-                  not isinstance(worker.get("allocatedBytes"), int)
-                  or worker["allocatedBytes"] > 120_000_000
-              ):
-                  raise SystemExit("Nested Query 2048 allocation exceeded 120 MB: "
-                                   + str((item["shape"], worker.get("allocatedBytes"))))
-          PY
+          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile query-phases --file artifacts/sqlcore-query-phases-pr.json
       - name: Characterize alternating CTE/derived parser resource threshold
         run: >
           dotnet run -c Release --no-build
@@ -240,36 +436,7 @@ jobs:
         if: always()
         shell: bash
         run: |
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          path = Path("artifacts/sqlcore-mixed-cte-derived-pr.json")
-          if not path.exists():
-              raise SystemExit("Mixed CTE/derived profiling report missing")
-          report = json.loads(path.read_text(encoding="utf-8"))
-          print(f"Mixed CTE/derived: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
-          if report["samples"] != 6 or report["failures"] or report["crashesOrTimeouts"]:
-              raise SystemExit("Mixed CTE/derived probe must compile at all three depths")
-          required = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
-          for item in report["observations"]:
-              worker = item.get("worker") or {}
-              phases = [p["Stage"] for p in worker.get("stageMetrics", []) if p["Success"]]
-              print(f"  depth={item['depth']} success={worker.get('success')} code={worker.get('diagnosticCode')} phases={phases} bytes={worker.get('allocatedBytes')}")
-              needed = required | ({"SchemaBinding", "SchemaType"}
-                  if item["shape"] == "mixed-cte-derived-typed-schema" else set())
-              if not worker.get("success") or item["processExitCode"] != 0 or not needed.issubset(phases):
-                  raise SystemExit("Mixed CTE/derived compile or telemetry regressed: " + str(item["depth"]))
-              if item["depth"] == 2048 and (
-                  not isinstance(worker.get("allocatedBytes"), int)
-                  or worker["allocatedBytes"] > 120_000_000
-              ):
-                  raise SystemExit("Mixed CTE/derived 2048 exceeded 120MB total allocated; streaming path regressed")
-              for phase in worker.get("stageMetrics", []):
-                  if phase["Stage"] == "Rendering" and item["depth"] == 2048 and (
-                      phase["AllocatedBytes"] > 60_000_000
-                  ):
-                      raise SystemExit("Mixed CTE/derived 2048 rendering exceeded 60MB allocation")
-          PY
+          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile mixed-cte-derived --file artifacts/sqlcore-mixed-cte-derived-pr.json
       - name: Characterize nested SET branch stack and allocations (isolated, observational)
         run: >
           dotnet run -c Release --no-build
@@ -285,36 +452,7 @@ jobs:
             echo "Nested SET probe report missing." >&2
             exit 1
           fi
-          python3 - <<'PY'
-          import json
-          with open("artifacts/sqlcore-nested-set-pr.json", encoding="utf-8") as source:
-              report = json.load(source)
-          print(f"Nested SET: samples={report['samples']} failures={report['failures']} crashOrTimeout={report['crashesOrTimeouts']}")
-          if report["samples"] != 6 or report["failures"] != 0 or report["crashesOrTimeouts"] != 0:
-              raise SystemExit("Nested SET regression: all six subprocess probes must compile safely.")
-          required = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
-          for item in report["observations"]:
-              worker = item.get("worker") or {}
-              print(f"{item['shape']:25} depth={item['depth']:4} success={worker.get('success')} code={worker.get('diagnosticCode')} allocated={worker.get('allocatedBytes')} exit={item['processExitCode']}")
-              if not worker.get("success") or item["processExitCode"] != 0:
-                  raise SystemExit("Nested SET worker must compile: "
-                                   + str((item["shape"], item["depth"], worker.get("diagnosticCode"))))
-              samples = worker.get("stageMetrics") or []
-              stages = {stage["Stage"] for stage in samples if stage.get("Success")}
-              expected = required | ({"SchemaBinding", "SchemaType"} if item["shape"] == "nested-set-typed-schema" else set())
-              if not expected.issubset(stages):
-                  raise SystemExit("Nested SET compilation omitted required phase metrics.")
-              for phase in samples:
-                  print(f"  {phase['Stage']:18} allocated={phase['AllocatedBytes']} elapsedUs={phase['ElapsedMicroseconds']} work={phase['WorkUnits']} ok={phase['Success']}")
-                  if any(phase[key] < 0 for key in ("AllocatedBytes", "ElapsedMicroseconds", "WorkUnits")):
-                      raise SystemExit("Negative nested SET phase resource measurement.")
-              if item["depth"] == 2048 and (
-                  not isinstance(worker.get("allocatedBytes"), int)
-                  or worker["allocatedBytes"] > 120_000_000
-              ):
-                  raise SystemExit("Nested SET 2048 allocation exceeded 120 MB: "
-                                   + str((item["shape"], worker.get("allocatedBytes"))))
-          PY
+          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile nested-set --file artifacts/sqlcore-nested-set-pr.json
       - name: Verify iterative nested SET parsing on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -326,25 +464,7 @@ jobs:
       - name: Gate 256 KiB nested SET successful compilation and phases
         shell: bash
         run: |
-          python3 - <<'PY'
-          import json
-          with open("artifacts/sqlcore-set-small-stack-pr.json", encoding="utf-8") as src:
-              report = json.load(src)
-          print(f"SET small stack: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
-          if report["samples"] != 4 or report["failures"] or report["crashesOrTimeouts"]:
-              raise SystemExit("Iterative nested SET on 256 KiB must compile successfully, not merely fail closed.")
-          for item in report["observations"]:
-              worker = item.get("worker") or {}
-              stages = {stage["Stage"] for stage in worker.get("stageMetrics", []) if stage.get("Success")}
-              required = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
-              if item["shape"] == "nested-set-typed-schema":
-                  required |= {"SchemaBinding", "SchemaType"}
-              if (not worker.get("success") or item["processExitCode"] != 0
-                      or not required.issubset(stages)):
-                  raise SystemExit("SET stack regression: " + str(
-                      (item["shape"], item["depth"], worker.get("diagnosticCode"), stages)))
-              print(f"  {item['shape']:25} depth={item['depth']} allocated={worker.get('allocatedBytes')} stages={len(stages)}")
-          PY
+          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile set-small --file artifacts/sqlcore-set-small-stack-pr.json
       - name: Verify heap CTE parsing and typed proof on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -356,24 +476,7 @@ jobs:
       - name: Gate 256 KiB nested CTE successful compilation
         shell: bash
         run: |
-          python3 - <<'PY'
-          import json
-          with open("artifacts/sqlcore-cte-small-stack-pr.json", encoding="utf-8") as src:
-              report = json.load(src)
-          print(f"CTE small stack: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
-          if report["samples"] != 4 or report["failures"] or report["crashesOrTimeouts"]:
-              raise SystemExit("Nested CTE must compile successfully on a 256 KiB stack.")
-          for item in report["observations"]:
-              worker = item.get("worker") or {}
-              stages = {sample["Stage"] for sample in worker.get("stageMetrics", []) if sample.get("Success")}
-              required = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
-              if item["shape"] == "nested-cte-typed-schema":
-                  required |= {"SchemaBinding", "SchemaType"}
-              if not worker.get("success") or item["processExitCode"] != 0 or not required.issubset(stages):
-                  raise SystemExit("CTE small stack did not succeed: " + str(
-                      (item["shape"], item["depth"], worker.get("diagnosticCode"), worker.get("error"), stages)))
-              print(f"  {item['shape']:25} depth={item['depth']} bytes={worker['allocatedBytes']} stages={len(stages)}")
-          PY
+          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile cte-small --file artifacts/sqlcore-cte-small-stack-pr.json
       - name: Require alternating CTE-derived full compilation on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -385,29 +488,7 @@ jobs:
       - name: Gate mixed CTE-derived stack success and phase completeness
         shell: bash
         run: |
-          python3 - <<'PY'
-          import json
-          with open("artifacts/sqlcore-mixed-cte-derived-small-stack-pr.json", encoding="utf-8") as source:
-              report = json.load(source)
-          print(f"Mixed CTE/derived 256 KiB: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
-          if report["samples"] != 4 or report["failures"] or report["crashesOrTimeouts"]:
-              raise SystemExit("Mixed CTE/derived must fully compile on 256 KiB, not merely fail closed.")
-          expected = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
-          for item in report["observations"]:
-              worker = item.get("worker") or {}
-              stages = {stage["Stage"] for stage in worker.get("stageMetrics", []) if stage.get("Success")}
-              needed = expected | ({"SchemaBinding", "SchemaType"}
-                  if item["shape"] == "mixed-cte-derived-typed-schema" else set())
-              if not worker.get("success") or item["processExitCode"] != 0 or not needed.issubset(stages):
-                  raise SystemExit("Mixed Query stack success/telemetry regressed: " + str(
-                      (item["depth"], worker.get("diagnosticCode"), worker.get("error"), stages)))
-              if item["depth"] == 2048 and (
-                  not isinstance(worker.get("allocatedBytes"), int)
-                  or worker["allocatedBytes"] > 120_000_000
-              ):
-                  raise SystemExit("Mixed CTE/derived 2048 depth exceeds the existing 120 MB allocation ceiling")
-              print(f"  depth={item['depth']} bytes={worker['allocatedBytes']} stages={len(stages)}")
-          PY
+          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile mixed-small --file artifacts/sqlcore-mixed-cte-derived-small-stack-pr.json
       - name: Verify primary FROM LATERAL proof on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -419,33 +500,7 @@ jobs:
       - name: Gate LATERAL rendering and scoped type proof
         shell: bash
         run: |
-          python3 - <<'PY'
-          import json
-          with open("artifacts/sqlcore-lateral-small-stack-pr.json", encoding="utf-8") as source:
-              report = json.load(source)
-          print(f"LATERAL 256 KiB: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
-          if report["samples"] != 4 or report["failures"] or report["crashesOrTimeouts"]:
-              raise SystemExit("Primary LATERAL source must compile at 512/2048 on 256 KiB.")
-          required = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
-          for item in report["observations"]:
-              worker = item.get("worker") or {}
-              present = {m["Stage"] for m in worker.get("stageMetrics", []) if m.get("Success")}
-              expected = required | ({"SchemaBinding", "SchemaType"}
-                  if item["shape"] == "nested-lateral-derived-typed-schema" else set())
-              if not worker.get("success") or item["processExitCode"] != 0 or not expected.issubset(present):
-                  raise SystemExit("LATERAL source stack/type regression: " + str(
-                      (item["shape"], item["depth"], worker.get("diagnosticCode"), worker.get("error"), present)))
-              for stage in worker.get("stageMetrics", []):
-                  if any(stage[field] < 0 for field in ("ElapsedMicroseconds", "AllocatedBytes", "WorkUnits")):
-                      raise SystemExit("Negative LATERAL phase telemetry.")
-              if item["depth"] == 2048:
-                  if not isinstance(worker.get("allocatedBytes"), int) or worker["allocatedBytes"] > 120_000_000:
-                      raise SystemExit("2,048-level LATERAL total allocation exceeded 120 MB.")
-                  rendering = [p for p in worker.get("stageMetrics", []) if p["Stage"] == "Rendering"]
-                  if len(rendering) != 1 or rendering[0]["AllocatedBytes"] > 60_000_000:
-                      raise SystemExit("2,048-level LATERAL streaming allocation exceeded 60 MB.")
-              print(f"  {item['shape']:34} depth={item['depth']} allocated={worker.get('allocatedBytes')} stages={len(present)}")
-          PY
+          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile lateral --file artifacts/sqlcore-lateral-small-stack-pr.json
       - name: Verify correlated JOIN LATERAL and WHERE EXISTS scope on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -457,40 +512,7 @@ jobs:
       - name: Gate correlated mixed Query graphs without crashes or silent validation bypass
         shell: bash
         run: |
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          path = Path("artifacts/sqlcore-correlated-small-stack-pr.json")
-          with path.open(encoding="utf-8") as source:
-              report = json.load(source)
-          if (report["samples"] != 12 or report["crashesOrTimeouts"] or
-              report["failures"] or report["resourceRejections"]):
-              raise SystemExit("Correlated Query/Expr/Source must compile all 12 cases on 256 KiB: " + str(
-                  (report["samples"], report["failures"], report["resourceRejections"], report["crashesOrTimeouts"])))
-          full = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
-          succeeded = rejected = 0
-          for item in report["observations"]:
-              worker = item.get("worker") or {}
-              typed = item["shape"].endswith("-typed-schema")
-              stages = {s["Stage"] for s in worker.get("stageMetrics", []) if s.get("Success")}
-              if worker.get("success"):
-                  succeeded += 1
-                  required = full | ({"SchemaBinding", "SchemaType"} if typed else set())
-                  if item["processExitCode"] != 0 or not required.issubset(stages):
-                      raise SystemExit("Compilation skipped required proof stages: " + str(
-                          (item["shape"], item["depth"], stages)))
-              else:
-                  raise SystemExit("Correlated SQL must compile rather than fail closed: " + str(
-                      (item["shape"], item["depth"], worker.get("diagnosticCode"), worker.get("error"))))
-              if item["depth"] == 2048:
-                  if not isinstance(worker.get("allocatedBytes"), int) or worker["allocatedBytes"] > 120_000_000:
-                      raise SystemExit("Correlated 2048 total allocation exceeded 120 MB: " + item["shape"])
-                  rendering = [s for s in worker.get("stageMetrics", []) if s["Stage"] == "Rendering"]
-                  if len(rendering) != 1 or rendering[0]["AllocatedBytes"] > 60_000_000:
-                      raise SystemExit("Correlated 2048 render allocation exceeded 60 MB: " + item["shape"])
-              print(f"  {item['shape']:39} depth={item['depth']:4} success={worker.get('success')} allocated={worker.get('allocatedBytes')}")
-          print(f"Correlated 256 KiB: compiled={succeeded}/12, no resource refusals or crashes")
-          PY
+          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile correlated --file artifacts/sqlcore-correlated-small-stack-pr.json
       - name: Verify prefixed second JOIN LATERAL correlation on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -502,33 +524,7 @@ jobs:
       - name: Gate second JOIN LATERAL full compilation and typed scope
         shell: bash
         run: |
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          with Path("artifacts/sqlcore-prefixed-join-lateral-pr.json").open(encoding="utf-8") as stream:
-              report = json.load(stream)
-          if (report["samples"] != 6 or report["crashesOrTimeouts"]
-              or report["failures"] or report["resourceRejections"]):
-              raise SystemExit("Prefixed second JOIN LATERAL must compile all 6/6 on 256 KiB: " + str(
-                  (report["samples"], report["crashesOrTimeouts"], report["failures"], report["resourceRejections"])))
-          stages = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
-          for item in report["observations"]:
-              worker = item.get("worker") or {}
-              typed = item["shape"].endswith("-typed-schema")
-              expected = stages | ({"SchemaBinding", "SchemaType"} if typed else set())
-              succeeded = {s["Stage"] for s in worker.get("stageMetrics", []) if s.get("Success")}
-              if not worker.get("success") or item["processExitCode"] != 0 or not expected.issubset(succeeded):
-                  raise SystemExit("Prefixed LATERAL skipped a required proof: " + str(
-                      (item["shape"], item["depth"], worker.get("diagnosticCode"), succeeded)))
-              if item["depth"] == 2048:
-                  render = [s for s in worker.get("stageMetrics", []) if s["Stage"] == "Rendering"]
-                  if (not isinstance(worker.get("allocatedBytes"), int)
-                      or worker["allocatedBytes"] > 180_000_000
-                      or len(render) != 1 or render[0]["AllocatedBytes"] > 60_000_000):
-                      raise SystemExit("Prefixed LATERAL 2048 allocation regression: " + item["shape"])
-              print(f"  {item['shape']:42} depth={item['depth']:4} bytes={worker.get('allocatedBytes')}")
-          print("Prefixed second JOIN LATERAL 256 KiB: compiled=6/6")
-          PY
+          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile prefixed --file artifacts/sqlcore-prefixed-join-lateral-pr.json
       - name: Verify two dependent JOIN LATERALs on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -540,33 +536,7 @@ jobs:
       - name: Gate dependent JOIN LATERAL scope and real deep compilation
         shell: bash
         run: |
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          with Path("artifacts/sqlcore-double-joined-lateral-pr.json").open(encoding="utf-8") as stream:
-              report = json.load(stream)
-          if (report["samples"] != 6 or report["crashesOrTimeouts"]
-              or report["failures"] or report["resourceRejections"]):
-              raise SystemExit("Two dependent LATERAL sources must compile 6/6 at 256 KiB: " + str(
-                  (report["samples"], report["crashesOrTimeouts"], report["failures"], report["resourceRejections"])))
-          base = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
-          for item in report["observations"]:
-              worker = item.get("worker") or {}
-              typed = item["shape"].endswith("-typed-schema")
-              required = base | ({"SchemaBinding", "SchemaType"} if typed else set())
-              completed = {s["Stage"] for s in worker.get("stageMetrics", []) if s.get("Success")}
-              if not worker.get("success") or item["processExitCode"] != 0 or not required.issubset(completed):
-                  raise SystemExit("Double LATERAL missing proof or compilation: " + str(
-                      (item["shape"], item["depth"], worker.get("diagnosticCode"), completed)))
-              if item["depth"] == 2048:
-                  render = [s for s in worker.get("stageMetrics", []) if s["Stage"] == "Rendering"]
-                  if (not isinstance(worker.get("allocatedBytes"), int)
-                      or worker["allocatedBytes"] > 220_000_000
-                      or len(render) != 1 or render[0]["AllocatedBytes"] > 90_000_000):
-                      raise SystemExit("Double LATERAL 2048 allocation regression: " + item["shape"])
-              print(f"  {item['shape']:42} depth={item['depth']:4} bytes={worker.get('allocatedBytes')}")
-          print("Double dependent JOIN LATERAL 256 KiB: compiled=6/6")
-          PY
+          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile double --file artifacts/sqlcore-double-joined-lateral-pr.json
       - name: Require three dependent JOIN LATERALs on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -578,33 +548,7 @@ jobs:
       - name: Gate sequential JOIN prefix heap scope and stages
         shell: bash
         run: |
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          with Path("artifacts/sqlcore-triple-joined-lateral-pr.json").open(encoding="utf-8") as stream:
-              report = json.load(stream)
-          if (report["samples"] != 6 or report["crashesOrTimeouts"]
-              or report["failures"] or report["resourceRejections"]):
-              raise SystemExit("Three dependent LATERAL sources must compile 6/6 at 256 KiB: " + str(
-                  (report["samples"], report["crashesOrTimeouts"], report["failures"], report["resourceRejections"])))
-          required = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
-          for item in report["observations"]:
-              worker = item.get("worker") or {}
-              typed = item["shape"].endswith("-typed-schema")
-              expected = required | ({"SchemaBinding", "SchemaType"} if typed else set())
-              completed = {s["Stage"] for s in worker.get("stageMetrics", []) if s.get("Success")}
-              if not worker.get("success") or item["processExitCode"] != 0 or not expected.issubset(completed):
-                  raise SystemExit("Triple LATERAL skipped validation or compilation: " + str(
-                      (item["shape"], item["depth"], worker.get("diagnosticCode"), completed)))
-              if item["depth"] == 2048:
-                  rendering = [s for s in worker.get("stageMetrics", []) if s["Stage"] == "Rendering"]
-                  if (not isinstance(worker.get("allocatedBytes"), int)
-                      or worker["allocatedBytes"] > 310_000_000
-                      or len(rendering) != 1 or rendering[0]["AllocatedBytes"] > 120_000_000):
-                      raise SystemExit("Triple LATERAL 2048 allocation regression: " + item["shape"])
-              print(f"  {item['shape']:42} depth={item['depth']:4} bytes={worker.get('allocatedBytes')}")
-          print("Triple dependent JOIN LATERAL 256 KiB: compiled=6/6")
-          PY
+          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile triple --file artifacts/sqlcore-triple-joined-lateral-pr.json
       - name: Probe two independently deep LATERAL sibling Queries on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -616,34 +560,7 @@ jobs:
       - name: Gate two deep LATERAL sibling proofs and resource isolation
         shell: bash
         run: |
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          with Path("artifacts/sqlcore-two-deep-sibling-lateral-pr.json").open(encoding="utf-8") as source:
-              report = json.load(source)
-          if (report["samples"] != 6 or report["crashesOrTimeouts"]
-              or report["failures"] or report["resourceRejections"]):
-              raise SystemExit("Both independent LATERAL sibling Queries must compile 6/6 on 256 KiB: " + str(
-                  (report["samples"], report["crashesOrTimeouts"], report["failures"], report["resourceRejections"])))
-          for item in report["observations"]:
-              worker = item.get("worker") or {}
-              typed = item["shape"].endswith("-typed-schema")
-              required = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
-              if typed:
-                  required.update({"SchemaBinding", "SchemaType"})
-              stages = {s["Stage"] for s in worker.get("stageMetrics", []) if s.get("Success")}
-              if not worker.get("success") or item["processExitCode"] != 0 or not required.issubset(stages):
-                  raise SystemExit("Sibling LATERAL omitted proof stage: " + str(
-                      (item["shape"], item["depth"], worker.get("diagnosticCode"), stages)))
-              if item["depth"] == 2048:
-                  render = [s for s in worker.get("stageMetrics", []) if s["Stage"] == "Rendering"]
-                  if (not isinstance(worker.get("allocatedBytes"), int)
-                      or worker["allocatedBytes"] > 260_000_000
-                      or len(render) != 1 or render[0]["AllocatedBytes"] > 100_000_000):
-                      raise SystemExit("Sibling LATERAL 2048 allocation budget exceeded: " + item["shape"])
-              print(f"  {item['shape']:43} depth={item['depth']:4} bytes={worker.get('allocatedBytes')}")
-          print("Two independently deep sibling LATERALs 256 KiB: compiled=6/6")
-          PY
+          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile siblings --file artifacts/sqlcore-two-deep-sibling-lateral-pr.json
       - name: Verify mixed Source and WHERE EXISTS lateral comb on 256 KiB
         run: >
           dotnet run -c Release --no-build
@@ -655,33 +572,7 @@ jobs:
       - name: Gate mixed Query Source Expr comb branches and typed safety
         shell: bash
         run: |
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          with Path("artifacts/sqlcore-lateral-exists-comb-pr.json").open(encoding="utf-8") as source:
-              report = json.load(source)
-          if (report["samples"] != 6 or report["crashesOrTimeouts"]
-              or report["failures"] or report["resourceRejections"]):
-              raise SystemExit("Mixed LATERAL/EXISTS comb must compile 6/6 on 256 KiB: " + str(
-                  (report["samples"], report["crashesOrTimeouts"], report["failures"], report["resourceRejections"])))
-          base = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
-          for item in report["observations"]:
-              worker = item.get("worker") or {}
-              typed = item["shape"].endswith("-typed-schema")
-              required = base | ({"SchemaBinding", "SchemaType"} if typed else set())
-              stages = {s["Stage"] for s in worker.get("stageMetrics", []) if s.get("Success")}
-              if not worker.get("success") or item["processExitCode"] != 0 or not required.issubset(stages):
-                  raise SystemExit("Comb Query crossed stage without proof: " + str(
-                      (item["shape"], item["depth"], worker.get("diagnosticCode"), stages)))
-              if item["depth"] == 2048:
-                  rendering = [s for s in worker.get("stageMetrics", []) if s["Stage"] == "Rendering"]
-                  if (not isinstance(worker.get("allocatedBytes"), int)
-                      or worker["allocatedBytes"] > 280_000_000
-                      or len(rendering) != 1 or rendering[0]["AllocatedBytes"] > 120_000_000):
-                      raise SystemExit("LATERAL/EXISTS comb allocation regression: " + item["shape"])
-              print(f"  {item['shape']:44} depth={item['depth']:4} bytes={worker.get('allocatedBytes')}")
-          print("LATERAL / EXISTS mixed comb 256 KiB: compiled=6/6")
-          PY
+          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile comb --file artifacts/sqlcore-lateral-exists-comb-pr.json
       - name: Verify public Query Facts inspection on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -693,39 +584,7 @@ jobs:
       - name: Gate Inspection phase work accounting and deep Query Facts
         shell: bash
         run: |
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          with Path("artifacts/sqlcore-facts-small-stack-pr.json").open(encoding="utf-8") as src:
-              report = json.load(src)
-          if (report["samples"] != 6 or report["crashesOrTimeouts"]
-              or report["failures"] or report["resourceRejections"]):
-              raise SystemExit("Public Query Facts inspection must compile 6/6 on 256 KiB: " + str(
-                  (report["samples"], report["crashesOrTimeouts"], report["failures"], report["resourceRejections"])))
-          baseline = {"Parsing", "Binding", "Inspection", "Normalization", "Validation", "Policy", "Rendering"}
-          for sample in report["observations"]:
-              worker = sample.get("worker") or {}
-              stages = worker.get("stageMetrics", [])
-              ok = {x["Stage"] for x in stages if x.get("Success")}
-              typed = sample["shape"].endswith("-typed-schema")
-              required = baseline | ({"SchemaBinding", "SchemaType"} if typed else set())
-              inspection = [x for x in stages if x["Stage"] == "Inspection"]
-              if (not worker.get("success") or sample["processExitCode"] != 0
-                  or not required.issubset(ok) or len(inspection) != 1):
-                  raise SystemExit("Facts stage omitted proof: " + str(
-                      (sample["shape"], sample["depth"], worker.get("diagnosticCode"), ok)))
-              phase = inspection[0]
-              if phase["WorkUnits"] < sample["depth"] or phase["AllocatedBytes"] < 0:
-                  raise SystemExit("Facts inspection work is not accounted per Query node.")
-              if sample["depth"] == 2048:
-                  if (not isinstance(worker.get("allocatedBytes"), int)
-                      or worker["allocatedBytes"] > 180_000_000
-                      or phase["AllocatedBytes"] > 40_000_000):
-                      raise SystemExit("2048 Query Facts allocation regression: " + sample["shape"])
-              print(f"  {sample['shape']:39} depth={sample['depth']:4} "
-                    f"inspectionWork={phase['WorkUnits']} bytes={worker.get('allocatedBytes')}")
-          print("Query Facts Inspection 256 KiB: compiled=6/6, metered all frames")
-          PY
+          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile facts --file artifacts/sqlcore-facts-small-stack-pr.json
       - name: Verify correlated IN Query heap continuation on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -737,31 +596,7 @@ jobs:
       - name: Gate correlated IN actual compilation, typed proof and allocations
         shell: bash
         run: |
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          with Path("artifacts/sqlcore-in-small-stack-pr.json").open(encoding="utf-8") as src:
-              report = json.load(src)
-          if report["samples"] != 6 or report["failures"] or report["resourceRejections"] or report["crashesOrTimeouts"]:
-              raise SystemExit("Correlated IN must compile 6/6 on 256 KiB, not merely fail closed: " + str(
-                  (report["samples"], report["failures"], report["resourceRejections"], report["crashesOrTimeouts"])))
-          required = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
-          for item in report["observations"]:
-              worker = item.get("worker") or {}
-              typed = item["shape"] == "nested-correlated-in-typed-schema"
-              expected = required | ({"SchemaBinding", "SchemaType"} if typed else set())
-              phases = {entry["Stage"] for entry in worker.get("stageMetrics", []) if entry.get("Success")}
-              if not worker.get("success") or item["processExitCode"] != 0 or not expected.issubset(phases):
-                  raise SystemExit("Correlated IN skipped proof stage: " + str(
-                      (item["shape"], item["depth"], worker.get("diagnosticCode"), phases)))
-              if item["depth"] == 2048:
-                  allocated = worker.get("allocatedBytes")
-                  render = [entry for entry in worker.get("stageMetrics", []) if entry["Stage"] == "Rendering"]
-                  if not isinstance(allocated, int) or allocated > 120_000_000 or len(render) != 1 or render[0]["AllocatedBytes"] > 60_000_000:
-                      raise SystemExit("Correlated IN 2048 allocation regression: " + item["shape"])
-              print(f"  {item['shape']:36} depth={item['depth']:4} bytes={worker.get('allocatedBytes')}")
-          print("Correlated IN small-stack: compiled 6/6, no stack reserve or crash")
-          PY
+          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile correlated-in --file artifacts/sqlcore-in-small-stack-pr.json
       - name: Diagnose projection ScalarSubquery and CASE Query crossings on small stacks
         run: >
           dotnet run -c Release --no-build
@@ -773,44 +608,7 @@ jobs:
       - name: Report projection Query crossings, preserving refusal versus success
         shell: bash
         run: |
-          python3 - <<'PY'
-          import json
-          with open("artifacts/sqlcore-scalar-case-small-stack-pr.json", encoding="utf-8") as source:
-              report = json.load(source)
-          if (report["samples"] != 12 or report["crashesOrTimeouts"]
-              or report["failures"] or report["resourceRejections"]):
-              raise SystemExit("CASE and scalar Query must compile all 12/12 on 256 KiB: " + str(
-                  (report["samples"], report["failures"], report["resourceRejections"], report["crashesOrTimeouts"])))
-          scalar_success = case_success = 0
-          standard_stages = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
-          for item in report["observations"]:
-              worker = item["worker"] or {}
-              shape = item["shape"]
-              scalar = "scalar-subquery" in shape
-              typed = shape.endswith("-typed-schema")
-              stage_metrics = worker.get("stageMetrics", [])
-              stages = {s["Stage"] for s in stage_metrics if s.get("Success")}
-              expected = standard_stages | ({"SchemaBinding", "SchemaType"} if typed else set())
-              if not worker.get("success") or item["processExitCode"] != 0 or not expected.issubset(stages):
-                  raise SystemExit("Projection Query must compile all proof stages: " + str(
-                      (shape, item["depth"], worker.get("diagnosticCode"), stages)))
-              if scalar:
-                  scalar_success += 1
-              else:
-                  case_success += 1
-              if item["depth"] == 2048:
-                  limit = 32_000_000 if scalar else 90_000_000
-                  render_limit = 4_000_000 if scalar else 30_000_000
-                  render = [s for s in stage_metrics if s["Stage"] == "Rendering"]
-                  if (not isinstance(worker.get("allocatedBytes"), int)
-                      or worker["allocatedBytes"] > limit
-                      or len(render) != 1 or render[0]["AllocatedBytes"] > render_limit):
-                      raise SystemExit("Projection Query 2048 allocation budget regressed: " + shape)
-              print(f"  {shape:36} depth={item['depth']:4} compiled={worker.get('success')} bytes={worker.get('allocatedBytes')} code={worker.get('diagnosticCode')}")
-          if scalar_success != 6 or case_success != 6:
-              raise SystemExit("All scalar and CASE projection probes must compile on 256 KiB")
-          print(f"Projection Query 256 KiB: scalar compiled={scalar_success}/6; CASE compiled={case_success}/6")
-          PY
+          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile projection --file artifacts/sqlcore-scalar-case-small-stack-pr.json
       - name: Require six-provider deep paging and exact negative grammar on 256 KiB
         run: >
           dotnet run -c Release --no-build
@@ -821,41 +619,7 @@ jobs:
           --output artifacts/sqlcore-paging-small-stack-pr.json
       - name: Gate complete paging corpus, typed stages and first syntax error
         run: |
-          python3 - <<'PY'
-          import itertools, json
-          with open("artifacts/sqlcore-paging-small-stack-pr.json", encoding="utf-8") as source:
-              report = json.load(source)
-          providers = ["Postgres", "MySQL", "Sqlite", "MsSqlServer", "Oracle", "Firebird"]
-          expected = set(itertools.product(providers,
-              ["nested-paging-typed-schema", "invalid-nested-paging"], [128, 512, 2048]))
-          observed = [(item["dialect"], item["shape"], item["depth"]) for item in report["observations"]]
-          if len(observed) != 36 or set(observed) != expected or report["failures"] or report["crashesOrTimeouts"]:
-              raise SystemExit("Paging corpus is missing, duplicated, refused, crashed or timed out")
-          required = {"Parsing", "Binding", "SchemaBinding", "SchemaType", "Normalization", "Validation", "Policy", "Rendering"}
-          for item in report["observations"]:
-              worker = item["worker"]
-              phases = worker["stageMetrics"]
-              if item["processExitCode"] != 0 or item["stackBytes"] != 262144:
-                  raise SystemExit("Paging worker did not complete on its constrained stack")
-              if item["shape"] == "invalid-nested-paging":
-                  if (worker["success"] or not worker["expectedGrammarRejection"]
-                      or worker["diagnosticCode"] != "SQL_PARSE_GRAMMAR"
-                      or worker["diagnosticOffset"] != 18 * item["depth"] + 32
-                      or len(phases) != 1 or phases[0]["Stage"] != "Parsing" or phases[0]["Success"]):
-                      raise SystemExit("Negative paging changed its first syntax diagnostic or reached later stages")
-                  if worker["allocatedBytes"] > 30_000_000:
-                      raise SystemExit("Negative paging allocation exceeded 30 MB")
-              else:
-                  if (not worker["success"] or worker["diagnosticCode"] is not None
-                      or worker["parameterCount"] != 2 * item["depth"]
-                      or {phase["Stage"] for phase in phases} != required
-                      or not all(phase["Success"] and phase["WorkUnits"] > 0 for phase in phases)):
-                      raise SystemExit("Positive paging did not complete every typed compiler stage")
-                  render = next(phase for phase in phases if phase["Stage"] == "Rendering")
-                  if worker["allocatedBytes"] > 120_000_000 or render["AllocatedBytes"] > 60_000_000:
-                      raise SystemExit("Paging allocation exceeded existing deep-query ceilings")
-          print("Six-provider paging: 18 full successes and 18 exact syntax negatives on 256 KiB")
-          PY
+          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile paging --file artifacts/sqlcore-paging-small-stack-pr.json
       - name: Measure constrained-stack SQL compilation (observational)
         run: >
           dotnet run -c Release --no-build
@@ -866,15 +630,7 @@ jobs:
           --output artifacts/sqlcore-small-stack-pr.json
       - name: Summarize constrained-stack resource diagnostics
         run: |
-          python3 - <<'PY'
-          import json
-          with open("artifacts/sqlcore-small-stack-pr.json", encoding="utf-8") as src:
-              report = json.load(src)
-          print(f"Constrained-stack: samples={report['samples']} expectedResourceRejections={report['resourceRejections']} unexpectedFailures={report['unexpectedFailures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
-          for item in report["observations"]:
-              worker = item.get("worker") or {}
-              print(f"{item['dialect']:12} {item['shape']:23} depth={item['depth']:4} exit={item['processExitCode']} code={worker.get('diagnosticCode')} error={worker.get('error')}")
-          PY
+          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile small-stack --file artifacts/sqlcore-small-stack-pr.json
       - name: Upload isolated SQL nesting report
         uses: actions/upload-artifact@v4
         if: always()
@@ -917,7 +673,7 @@ jobs:
         ports:
           - 5432:5432
       mysql:
-        image: mysql:8
+        image: mysql:8.4
         env:
           MYSQL_ROOT_PASSWORD: test
           MYSQL_DATABASE: test
@@ -930,11 +686,76 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - name: Verify PostgreSQL 16 physical DML lost COMMIT ROLLBACK acknowledgements and no replay
+        run: >
+          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          --filter 'FullyQualifiedName~PostgresPhysicalUnknownOutcomeIntegrationTests'
+        env:
+          TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test;Pooling=false"
+      - name: Require real PostgreSQL 16 in-flight native COMMIT disconnect and outcome-unknown
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/scripts/require-physical-test-cases.sh 1 \
+            backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj \
+            'FullyQualifiedName~DmlNativePostgresCommitDisconnectTests'
+        env:
+          TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test;Pooling=false"
+      - name: Require real PostgreSQL 16 post-COMMIT wire EOF and durable Fence Witness
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/scripts/require-physical-test-cases.sh 1 \
+            backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj \
+            'FullyQualifiedName~DmlNativePostgresPostCommitAckLossTests'
+        env:
+          TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test;Pooling=false"
+      - name: Verify PostgreSQL 16 physical Custom DML 24-way load and cancellation
+        run: >
+          bash .github/scripts/require-physical-test-cases.sh 6
+          backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          'FullyQualifiedName~PostgresPhysicalLoadIntegrationTests'
+        env:
+          TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test;Pooling=false"
+      - name: Verify MySQL 8.4 physical Custom DML 24-way load and cancellation
+        run: >
+          bash .github/scripts/require-physical-test-cases.sh 6
+          backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          'FullyQualifiedName~MySqlPhysicalLoadIntegrationTests'
+        env:
+          TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test;Pooling=false"
+      - name: Verify MySQL 8.4 real physical DML lost COMMIT ROLLBACK acknowledgements and Custom MCP Audit
+        run: >
+          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          --filter 'FullyQualifiedName~MySqlPhysicalUnknownOutcomeIntegrationTests'
+        env:
+          TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test;Pooling=false"
+      - name: Verify MySQL 8.4 implicit-commit DDL Host against real database
+        run: >
+          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          --filter 'FullyQualifiedName~MySqlDdlLiveTests'
+        env:
+          TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test;Pooling=false"
+      - name: Verify MySQL 8.4 physical native builtin-versus-UDF function resolution (exact 3, no skips)
+        run: >
+          bash .github/scripts/require-physical-test-cases.sh 3
+          backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          'FullyQualifiedName~QueryNativeFunctionLiveTests.MySql_'
+        env:
+          TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test;Pooling=false"
+      - name: Require MySQL real TCP-partition production Query failure and recovery
+        run: |
+          timeout --signal=INT --kill-after=10s 180s bash .github/scripts/require-physical-test-cases.sh 1 \
+            backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
+            'FullyQualifiedName~ProviderTcpPartitionTestcontainersTests.MySql_'
+        env:
+          TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test;Pooling=false"
       - name: Run remaining SQL service tests
-        run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter 'FullyQualifiedName~SqlAgent.Test.Services&FullyQualifiedName!~GrammarMatrixTests&FullyQualifiedName!~MutationMatrixTests&FullyQualifiedName!~NegativeBindingPolicyMatrixTests&FullyQualifiedName!~NegativeTargetCapabilityMatrixTests&FullyQualifiedName!~NegativeTablePolicyMatrixTests&FullyQualifiedName!~SqlGrammarBombardmentCoverageTests&FullyQualifiedName!~DmlTargetFenceSqlServerIntegrationTests'
+        run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter 'FullyQualifiedName~SqlAgent.Test.Services&FullyQualifiedName!~GrammarMatrixTests&FullyQualifiedName!~MutationMatrixTests&FullyQualifiedName!~NegativeBindingPolicyMatrixTests&FullyQualifiedName!~NegativeTargetCapabilityMatrixTests&FullyQualifiedName!~NegativeTablePolicyMatrixTests&FullyQualifiedName!~SqlGrammarBombardmentCoverageTests&FullyQualifiedName!~DmlTargetFenceSqlServerIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerLiveDdlParityTests&FullyQualifiedName!~SqlCoreSqlServerApplyLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithMutationCteLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithInsertSelectLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithJoinedMutationSingletonLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerLiveUniqueKeyAttestationTests&FullyQualifiedName!~SqlCoreSqlServerCompositeCteLiveProofTests&FullyQualifiedName!~DmlSqlServerInsertSelectApprovalTests&FullyQualifiedName!~SqlCoreSqlServerMergeHoldLockLiveTests&FullyQualifiedName!~SqlCoreFirebirdLiveDdlParityTests&FullyQualifiedName!~SqlCoreOracleLiveDdlParityTests&FullyQualifiedName!~SqlCoreOracleInboundForeignKeyLiveParityTests&FullyQualifiedName!~SqlCoreOracleRenameConstraintLiveParityTests&FullyQualifiedName!~SqlCoreOracle26JoinedMutationLiveParityTests&FullyQualifiedName!~SqlCoreOracleLateralDerived121LiveParityTests&FullyQualifiedName!~SqlCoreOracleApplyLiveParityTests&FullyQualifiedName!~SqlCoreFilteredCountSqlServerLiveTests&FullyQualifiedName!~SqlCoreFilteredDistinctCountSqlServerLiveTests&FullyQualifiedName!~SqlCoreSqlServerWindowNullTreatmentLiveTests&FullyQualifiedName!~SqlCoreOracleWindowNullTreatmentLiveTests&FullyQualifiedName!~SqlCoreFirebirdInt128ExactNumericLiveParityTests&FullyQualifiedName!~DmlNativePostgresPostCommitAckLossTests'
         env:
           TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test"
           TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test"
+          SQLCORE_EXACT_NUMERIC_LIVE_PROVIDER: MySQL
 
 
   sqlagent-test-rest:
@@ -964,7 +785,13 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter 'FullyQualifiedName!~SqlAgent.Test.Services&FullyQualifiedName!~DmlTargetFenceSqlServerIntegrationTests'
+      - name: Run remaining SqlAgent tests per TFM without concurrent Oracle containers
+        shell: bash
+        run: |
+          set -euo pipefail
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --framework "$framework" --filter 'FullyQualifiedName!~SqlAgent.Test.Services&FullyQualifiedName!~DmlTargetFenceSqlServerIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerLiveDdlParityTests&FullyQualifiedName!~SqlCoreSqlServerApplyLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithMutationCteLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithInsertSelectLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithJoinedMutationSingletonLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerLiveUniqueKeyAttestationTests&FullyQualifiedName!~SqlCoreSqlServerCompositeCteLiveProofTests&FullyQualifiedName!~DmlSqlServerInsertSelectApprovalTests&FullyQualifiedName!~SqlCoreSqlServerMergeHoldLockLiveTests&FullyQualifiedName!~SqlCoreFirebirdLiveDdlParityTests&FullyQualifiedName!~SqlCoreOracleLiveDdlParityTests&FullyQualifiedName!~SqlCoreOracleInboundForeignKeyLiveParityTests&FullyQualifiedName!~SqlCoreOracleRenameConstraintLiveParityTests&FullyQualifiedName!~SqlCoreOracle26JoinedMutationLiveParityTests&FullyQualifiedName!~SqlCoreOracleLateralDerived121LiveParityTests&FullyQualifiedName!~SqlCoreOracleApplyLiveParityTests&FullyQualifiedName!~SqlCoreFilteredCountSqlServerLiveTests&FullyQualifiedName!~SqlCoreFilteredDistinctCountSqlServerLiveTests&FullyQualifiedName!~SqlCoreSqlServerWindowNullTreatmentLiveTests&FullyQualifiedName!~SqlCoreOracleWindowNullTreatmentLiveTests&FullyQualifiedName!~SqlCoreFirebirdInt128ExactNumericLiveParityTests'
+          done
         env:
           TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test"
           TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test"
@@ -990,14 +817,307 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - name: Verify actual SQL Server admission, COMMIT witness and revocation races
-        # Dedicated service job to keep the regular SQL test shards lightweight.
-        # Missing/unready SQL Server is a hard failure in CI, never a skip.
-        run: >
-          dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
-          --filter 'FullyQualifiedName~DmlTargetFenceSqlServerIntegrationTests'
+      - name: Verify SQL Server Host DDL real transactional CREATE TABLE proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Isolate both TFMs against this job's single SQL Server physical database.
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --framework "$framework" \
+              --filter 'FullyQualifiedName~SqlCoreSqlServerDdlHostLiveTests'
+          done
         env:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
+      - name: Verify SQL Server 2022 physical Custom DML lost COMMIT ROLLBACK ACK and persisted Audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Isolate both TFMs against this job's single SQL Server physical database.
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --framework "$framework" \
+              --filter 'FullyQualifiedName~SqlServerPhysicalUnknownOutcomeIntegrationTests'
+          done
+        env:
+          TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
+      - name: Verify SQL Server 2022 physical Custom DML 24-way load and cancellation
+        run: >
+          bash .github/scripts/require-physical-test-cases.sh 6
+          backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          'FullyQualifiedName~SqlServerPhysicalLoadIntegrationTests'
+        env:
+          TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
+      - name: Verify SQL Server physical native-function Query whitelist fence (exact 2, no skips)
+        run: >
+          bash .github/scripts/require-physical-test-cases.sh 2
+          backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          'FullyQualifiedName~QueryNativeFunctionLiveTests.SqlServer_'
+        env:
+          TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
+      - name: Require SQL Server real TCP-partition production Query failure and recovery
+        run: |
+          timeout --signal=INT --kill-after=10s 180s bash .github/scripts/require-physical-test-cases.sh 1 \
+            backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
+            'FullyQualifiedName~ProviderTcpPartitionTestcontainersTests.SqlServer_'
+        env:
+          TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
+      - name: Verify real SQL Server DML fencing and DDL Catalog differential parity
+        # Dedicated service job to keep the regular SQL test shards lightweight.
+        # Missing/unready SQL Server is a hard failure in CI, never a skip.
+        # The same live SQL Server 2022 instance is reused by ordered steps.
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Isolate both TFMs against this job's single SQL Server physical database.
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --framework "$framework" \
+              --filter 'FullyQualifiedName~DmlTargetFenceSqlServerIntegrationTests|FullyQualifiedName~SqlCoreSqlServerLiveDdlParityTests|FullyQualifiedName~SqlCoreSqlServerApplyLiveParityTests|FullyQualifiedName~SqlCoreSqlServerWithMutationCteLiveParityTests|FullyQualifiedName~SqlCoreSqlServerWithInsertSelectLiveParityTests|FullyQualifiedName~SqlCoreSqlServerWithJoinedMutationSingletonLiveParityTests|FullyQualifiedName~SqlCoreSqlServerLiveUniqueKeyAttestationTests|FullyQualifiedName~SqlCoreSqlServerCompositeCteLiveProofTests|FullyQualifiedName~SqlCoreBoundedExactNumericLiveParityTests'
+          done
+        env:
+          TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
+          SQLCORE_EXACT_NUMERIC_LIVE_PROVIDER: MsSqlServer
+      - name: Verify bounded SQL Server INSERT SELECT source-row approval against live physical tables
+        # TABLOCKX/HOLDLOCK tests must not race each other across net8/net10
+        # against the same physical database. Execute every case on both TFMs.
+        shell: bash
+        run: |
+          set -euo pipefail
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --framework "$framework" \
+              --filter 'FullyQualifiedName~DmlSqlServerInsertSelectApprovalTests'
+          done
+        env:
+          TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
+      - name: Verify SQL Server M10 MERGE HOLDLOCK, live unique-key and key-range serialization
+        # Real SQL Server only, isolated from parallel master sys-catalog DDL tests.
+        # A missing SQL Server connection fails CI; never run these on general shards.
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Isolate both TFMs against this job's single SQL Server physical database.
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --framework "$framework" \
+              --filter 'FullyQualifiedName~SqlCoreSqlServerMergeHoldLockLiveTests'
+          done
+        env:
+          TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
+
+      - name: Verify G10 LAG LEAD IGNORE NULLS on real SQL Server 2022
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Isolate both TFMs against this job's single SQL Server physical database.
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --framework "$framework" \
+              --filter 'FullyQualifiedName~SqlCoreSqlServerWindowNullTreatmentLiveTests'
+          done
+        env:
+          TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
+
+      - name: Verify G10 filtered DISTINCT COUNT on real SQL Server 2022
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Isolate both TFMs against this job's single SQL Server physical database.
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --framework "$framework" \
+              --filter 'FullyQualifiedName~SqlCoreFilteredDistinctCountSqlServerLiveTests'
+          done
+        env:
+          TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
+
+      - name: Verify G10 bounded COUNT FILTER lowering on real SQL Server 2022
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Isolate both TFMs against this job's single SQL Server physical database.
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --framework "$framework" \
+              --filter 'FullyQualifiedName~SqlCoreFilteredCountSqlServerLiveTests'
+          done
+        env:
+          TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
+
+      - name: Verify SQL Server MERGE MATCHED DELETE Host Preview, Approval and Commit on live key
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Isolate both TFMs against this job's single SQL Server physical database.
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --framework "$framework" \
+              --filter 'FullyQualifiedName~SqlServerMergeMatchedDeleteApprovalLiveTests'
+          done
+        env:
+          TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
+
+      - name: Verify SQL Server MERGE MATCHED UPDATE physical row-value approval in real SQL Server 2022
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Isolate both TFMs against this job's single SQL Server physical database.
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --framework "$framework" \
+              --filter 'FullyQualifiedName~SqlServerMergeMatchedUpdateApprovalLiveTests'
+          done
+        env:
+          TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
+
+      - name: Verify SQL Server MERGE NOT MATCHED INSERT real key absence and payload approval
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Isolate both TFMs against this job's single SQL Server physical database.
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --framework "$framework" \
+              --filter 'FullyQualifiedName~SqlServerMergeNotMatchedInsertApprovalLiveTests'
+          done
+        env:
+          TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
+
+  sqlagent-firebird-ddl-parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    services:
+      firebird:
+        # Version pinned: never silently change engine semantics during CI.
+        image: firebirdsql/firebird:5.0.4-bookworm
+        env:
+          FIREBIRD_ROOT_PASSWORD: "Strong_Password_123!"
+          FIREBIRD_DATABASE: "sqlcore_p6.fdb"
+          FIREBIRD_DATABASE_DEFAULT_CHARSET: UTF8
+        ports:
+          - 3050:3050
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Verify Firebird 5 Host DDL preview, approval and commit against live metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --framework "$framework" \
+              --filter 'FullyQualifiedName~FirebirdDdlLiveTests'
+          done
+        env:
+          TEST_FIREBIRD_CONNECTION: "DataSource=localhost;Port=3050;Database=/var/lib/firebird/data/sqlcore_p6.fdb;User=SYSDBA;Password=Strong_Password_123!;Charset=UTF8;Dialect=3;Pooling=false"
+      - name: Verify Firebird 5 physical Custom DML lost COMMIT ROLLBACK ACK and persisted Audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --framework "$framework" \
+              --filter 'FullyQualifiedName~FirebirdPhysicalUnknownOutcomeIntegrationTests'
+          done
+        env:
+          TEST_FIREBIRD_CONNECTION: "DataSource=localhost;Port=3050;Database=/var/lib/firebird/data/sqlcore_p6.fdb;User=SYSDBA;Password=Strong_Password_123!;Charset=UTF8;Dialect=3;Pooling=false"
+      - name: Verify Firebird 5 physical Custom DML 24-way load and cancellation
+        run: >
+          bash .github/scripts/require-physical-test-cases.sh 6
+          backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          'FullyQualifiedName~FirebirdPhysicalLoadIntegrationTests'
+        env:
+          TEST_FIREBIRD_CONNECTION: "DataSource=localhost;Port=3050;Database=/var/lib/firebird/data/sqlcore_p6.fdb;User=SYSDBA;Password=Strong_Password_123!;Charset=UTF8;Dialect=3;Pooling=false"
+      - name: Verify Firebird 5 physical native-function Query whitelist fence (exact 1, no skips)
+        run: >
+          bash .github/scripts/require-physical-test-cases.sh 1
+          backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          'FullyQualifiedName~QueryNativeFunctionLiveTests.Firebird_'
+        env:
+          TEST_FIREBIRD_CONNECTION: "DataSource=localhost;Port=3050;Database=/var/lib/firebird/data/sqlcore_p6.fdb;User=SYSDBA;Password=Strong_Password_123!;Charset=UTF8;Dialect=3;Pooling=false"
+      - name: Require Firebird real TCP-partition production Query failure and recovery
+        run: |
+          timeout --signal=INT --kill-after=10s 180s bash .github/scripts/require-physical-test-cases.sh 1 \
+            backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
+            'FullyQualifiedName~ProviderTcpPartitionTestcontainersTests.Firebird_'
+        env:
+          TEST_FIREBIRD_CONNECTION: "DataSource=localhost;Port=3050;Database=/var/lib/firebird/data/sqlcore_p6.fdb;User=SYSDBA;Password=Strong_Password_123!;Charset=UTF8;Dialect=3;Pooling=false"
+      - name: Verify live Firebird 5 Catalog against modeled DDL
+        shell: bash
+        run: |
+          set -euo pipefail
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --framework "$framework" \
+              --filter 'FullyQualifiedName~SqlCoreFirebirdLiveDdlParityTests|FullyQualifiedName~SqlCoreFirebirdInt128ExactNumericLiveParityTests'
+          done
+        env:
+          TEST_FIREBIRD_CONNECTION: "DataSource=localhost;Port=3050;Database=/var/lib/firebird/data/sqlcore_p6.fdb;User=SYSDBA;Password=Strong_Password_123!;Charset=UTF8;Dialect=3;Pooling=false"
+
+  sqlagent-oracle-ddl-parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    services:
+      oracle:
+        # Version-pinned Oracle Database Free. No implicit floating "latest".
+        # Engine setup can take longer than lightweight PostgreSQL/MySQL.
+        image: gvenzl/oracle-free:23.26.3-slim-faststart
+        env:
+          ORACLE_PASSWORD: "Strong_Password_123!"
+          APP_USER: sqlcore
+          APP_USER_PASSWORD: "Strong_Password_123!"
+        ports:
+          - 1521:1521
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Verify Oracle 26ai Host implicit-commit DDL, independent approval and live PDB metadata
+        run: >
+          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          --filter 'FullyQualifiedName~OracleDdlLiveTests|FullyQualifiedName~OracleDdlVersionProofTests'
+        env:
+          TEST_ORACLE_CONNECTION: "User Id=sqlcore;Password=Strong_Password_123!;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
+          TEST_ORACLE_ADMIN_CONNECTION: "User Id=sys;Password=Strong_Password_123!;DBA Privilege=SYSDBA;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
+      - name: Verify Oracle 26ai physical Custom DML lost COMMIT ROLLBACK ACK and persisted Audit
+        run: >
+          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          --filter 'FullyQualifiedName~OraclePhysicalUnknownOutcomeIntegrationTests'
+        env:
+          TEST_ORACLE_CONNECTION: "User Id=sqlcore;Password=Strong_Password_123!;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
+      - name: Verify Oracle 26ai physical Custom DML 24-way load and cancellation
+        run: >
+          bash .github/scripts/require-physical-test-cases.sh 6
+          backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          'FullyQualifiedName~OraclePhysicalLoadIntegrationTests'
+        env:
+          TEST_ORACLE_CONNECTION: "User Id=sqlcore;Password=Strong_Password_123!;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
+      - name: Verify Oracle 26ai physical native-function Query whitelist fence (exact 4, no skips)
+        run: >
+          bash .github/scripts/require-physical-test-cases.sh 4
+          backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          'FullyQualifiedName~QueryNativeFunctionLiveTests.Oracle_'
+        env:
+          TEST_ORACLE_CONNECTION: "User Id=sqlcore;Password=Strong_Password_123!;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
+      - name: Require Oracle real TCP-partition production Query failure and recovery
+        run: |
+          timeout --signal=INT --kill-after=10s 180s bash .github/scripts/require-physical-test-cases.sh 1 \
+            backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
+            'FullyQualifiedName~ProviderTcpPartitionTestcontainersTests.Oracle_'
+        env:
+          TEST_ORACLE_CONNECTION: "User Id=sqlcore;Password=Strong_Password_123!;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
+      - name: Verify G10 LAG LEAD IGNORE NULLS on real Oracle
+        run: >
+          dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
+          --filter 'FullyQualifiedName~SqlCoreOracleWindowNullTreatmentLiveTests'
+        env:
+          TEST_ORACLE_CONNECTION: "User Id=sqlcore;Password=Strong_Password_123!;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
+
+      - name: Verify real Oracle 26ai Catalog, joined DML and LATERAL DQL parity
+        run: >
+          dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
+          --filter 'FullyQualifiedName~SqlCoreOracleLiveDdlParityTests|FullyQualifiedName~SqlCoreOracleInboundForeignKeyLiveParityTests|FullyQualifiedName~SqlCoreOracleRenameConstraintLiveParityTests|FullyQualifiedName~SqlCoreOracle26JoinedMutationLiveParityTests|FullyQualifiedName~SqlCoreOracleLateralDerived121LiveParityTests|FullyQualifiedName~SqlCoreOracleApplyLiveParityTests|FullyQualifiedName~SqlCoreOracleExactNumberLiveParityTests'
+        env:
+          TEST_ORACLE_CONNECTION: "User Id=sqlcore;Password=Strong_Password_123!;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
+          SQLCORE_ORACLE_EXACT_NUMERIC_LIVE: "true"
 
   sqlagent-package-smoke:
     runs-on: ubuntu-latest
@@ -1058,6 +1178,13 @@ jobs:
       - name: Smoke test packed Server package
         shell: bash
         run: bash .github/scripts/nuget-consumer-smoke.sh artifacts/packages
+      - name: Build Docker image and verify .NET 10 application payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --file Dockerfile --tag hs-sql-agent:ci .
+          docker run --rm --entrypoint sh hs-sql-agent:ci -c \
+            'test -s /app/ToolBox.dll && test -s /app/HsSqlAgent.Server.dll'
 
 
   admin-api-openapi:
@@ -1075,7 +1202,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 .github/scripts/verify-admin-openapi.py artifacts/openapi/HsSqlAgent.ApiSpec_admin.json
+          dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- admin-openapi --file artifacts/openapi/HsSqlAgent.ApiSpec_admin.json
       - uses: actions/upload-artifact@v4
         with:
           name: hs-sql-agent-admin-openapi
@@ -1120,7 +1247,9 @@ jobs:
         working-directory: frontend
 
   sql-syntax-parity:
-    if: github.event_name == 'pull_request'
+    # The 18-job release gate requires a successful parity job on actual
+    # develop/main pushes, not a silently skipped PR-only check.
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1219,12 +1348,21 @@ jobs:
           --configuration Release --no-build --
           verify-negative artifacts/parity/head/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-negative-syntax-contract.json
-      - name: Build base main SqlCore
+      - name: Build comparable base SqlCore
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # A push has no pull_request.base.sha. Compare the new commit
+          # with its immediately previous branch SHA; for PRs retain the
+          # original target-branch base. Never self-compare.
+          BASE_SHA: ${{ github.event.pull_request.base.sha || (github.event_name == 'push' && github.event.before) || '' }}
         shell: bash
         run: |
           set -euo pipefail
+          if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ ||
+                "$BASE_SHA" == "0000000000000000000000000000000000000000" ||
+                "$BASE_SHA" == "$GITHUB_SHA" ]]; then
+            echo "::error::SQL syntax parity requires a valid distinct PR base or previous branch push SHA." >&2
+            exit 1
+          fi
           git fetch origin "$BASE_SHA" --depth=1
           git worktree add --detach /tmp/hs-sql-agent-main "$BASE_SHA"
           dotnet build /tmp/hs-sql-agent-main/backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.fsproj \

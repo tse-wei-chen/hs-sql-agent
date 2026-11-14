@@ -1,0 +1,828 @@
+using System.Collections.Immutable;
+using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.Core.Compilation;
+using HsSqlAgent.SqlCore.Core.Pipeline;
+using HsSqlAgent.Provider.Abstractions;
+using SqlAgent.Service.Core.Execution;
+using System.Data.Common;
+using Moq;
+using HsSqlAgent.SqlCore.Enums;
+using Microsoft.Data.SqlClient;
+using Xunit;
+
+namespace SqlAgent.Test.Services;
+
+/// <summary>
+/// G7/M02: physical two-column INT UNIQUE proof must bind the exact ordered
+/// index, both unchanged CTE projections and both mandatory target equalities.
+/// Static Catalog cardinality is intentionally never an execution authority.
+/// </summary>
+public sealed partial class SqlCoreSqlServerCompositeCteLiveProofTests
+{
+    [Theory]
+    [InlineData(true, true, 1, false, false, "NONE", "INT", "INT")]
+    [InlineData(true, false, 1, false, false, "NONE", "INT", "INT")]
+    [InlineData(false, true, 1, false, false, "NONE", "INT", "INT")]
+    [InlineData(false, false, 1, false, false, "NONE", "INT", "INT")]
+    [InlineData(true, true, 2, false, false, "NONE", "INT", "INT")]
+    [InlineData(false, true, 2, false, false, "NONE", "INT", "INT")]
+    [InlineData(true, false, 3, false, false, "NONE", "INT", "INT")]
+    [InlineData(false, false, 3, false, false, "NONE", "INT", "INT")]
+    [InlineData(true, false, 1, true, false, "NONE", "INT", "INT")]
+    [InlineData(false, false, 3, true, false, "NONE", "INT", "INT")]
+    [InlineData(true, true, 1, false, true, "NONE", "INT", "INT")]
+    [InlineData(false, false, 1, false, true, "NONE", "INT", "INT")]
+    [InlineData(true, false, 2, false, true, "NONE", "INT", "INT")]
+    [InlineData(false, true, 2, false, true, "NONE", "INT", "INT")]
+    [InlineData(true, true, 3, false, true, "NONE", "INT", "INT")]
+    [InlineData(false, false, 3, false, true, "NONE", "INT", "INT")]
+    [InlineData(true, false, 2, true, true, "NONE", "INT", "INT")]
+    [InlineData(false, false, 3, true, true, "NONE", "INT", "INT")]
+    [InlineData(true, true, 1, false, true, "CROSS", "INT", "INT")]
+    [InlineData(false, false, 1, false, true, "CROSS", "INT", "INT")]
+    [InlineData(true, false, 2, false, true, "INNER", "INT", "INT")]
+    [InlineData(false, true, 2, false, true, "INNER", "INT", "INT")]
+    [InlineData(true, true, 3, false, true, "LEFT", "INT", "INT")]
+    [InlineData(false, false, 3, false, true, "LEFT", "INT", "INT")]
+    [InlineData(true, false, 2, true, true, "CROSS", "INT", "INT")]
+    [InlineData(false, false, 3, true, true, "INNER", "INT", "INT")]
+    [InlineData(true, true, 1, false, true, "SELF", "INT", "INT")]
+    [InlineData(false, false, 1, false, true, "SELF", "INT", "INT")]
+    [InlineData(true, false, 2, false, true, "SELF_LEFT", "INT", "INT")]
+    [InlineData(false, true, 3, false, true, "SELF_LEFT", "INT", "INT")]
+    [InlineData(true, false, 2, true, true, "SELF", "INT", "INT")]
+    [InlineData(false, false, 3, true, true, "SELF_LEFT", "INT", "INT")]
+    // G9/M04: 64-bit exact SQL Server 2022 physical key types.
+    [InlineData(true, true, 1, false, false, "NONE", "BIGINT", "BIGINT")]
+    [InlineData(false, false, 2, false, true, "NONE", "BIGINT", "BIGINT")]
+    [InlineData(true, false, 3, false, true, "SELF", "INT", "BIGINT")]
+    [InlineData(false, true, 2, false, false, "SELF_LEFT", "BIGINT", "INT")]
+    [InlineData(true, false, 2, false, true, "INNER", "BIGINT", "BIGINT")]
+    [InlineData(false, false, 1, false, true, "CROSS", "BIGINT", "INT")]
+    [InlineData(true, false, 3, true, false, "NONE", "BIGINT", "BIGINT")]
+    [InlineData(false, false, 2, true, true, "SELF", "BIGINT", "INT")]
+    // G9/M04: distinct signed 16-bit and unsigned 8-bit physical SQL key kinds.
+    // All existing approval, cardinality, index drift and CAST rejection
+    // assertions apply to these exact key types too.
+    [InlineData(true, true, 1, false, false, "NONE", "SMALLINT", "SMALLINT")]
+    [InlineData(false, false, 2, false, true, "NONE", "TINYINT", "TINYINT")]
+    [InlineData(true, false, 3, false, true, "SELF", "SMALLINT", "TINYINT")]
+    [InlineData(false, true, 2, false, false, "SELF_LEFT", "TINYINT", "SMALLINT")]
+    [InlineData(true, false, 1, true, false, "NONE", "TINYINT", "INT")]
+    [InlineData(false, false, 3, false, true, "INNER", "SMALLINT", "BIGINT")]
+    [InlineData(true, true, 2, false, false, "CROSS", "BIGINT", "TINYINT")]
+    [InlineData(false, false, 1, false, true, "LEFT", "INT", "SMALLINT")]
+    // G9/M04: fixed-point physical type equality requires both p and s.
+    [InlineData(true, true, 1, false, false, "NONE", "DECIMAL(12,2)", "DECIMAL(18,4)")]
+    [InlineData(false, false, 2, false, true, "NONE", "NUMERIC(12,2)", "DECIMAL(18,4)")]
+    [InlineData(true, false, 3, false, true, "SELF", "SMALLINT", "DECIMAL(20,0)")]
+    [InlineData(false, true, 2, false, false, "SELF_LEFT", "DECIMAL(18,4)", "BIGINT")]
+    [InlineData(true, false, 1, true, true, "NONE", "DECIMAL(12,2)", "INT")]
+    [InlineData(false, false, 3, false, true, "INNER", "DECIMAL(18,4)", "DECIMAL(12,2)")]
+    [InlineData(true, false, 2, false, false, "CROSS", "DECIMAL(38,0)", "DECIMAL(38,18)")]
+    // G9/M04: UUID belongs to an exact non-numeric physical key family.
+    // Positive 1-3 CTE, self-join, 2-column mixed, approval and index drift.
+    [InlineData(true, true, 1, false, false, "NONE", "UNIQUEIDENTIFIER", "UNIQUEIDENTIFIER")]
+    [InlineData(false, false, 2, false, true, "NONE", "UNIQUEIDENTIFIER", "INT")]
+    [InlineData(true, false, 3, false, true, "SELF", "INT", "UNIQUEIDENTIFIER")]
+    [InlineData(false, false, 2, false, false, "SELF_LEFT", "DECIMAL(12,2)", "UNIQUEIDENTIFIER")]
+    [InlineData(true, false, 1, true, false, "NONE", "UNIQUEIDENTIFIER", "BIGINT")]
+    [InlineData(false, true, 3, false, true, "INNER", "UNIQUEIDENTIFIER", "SMALLINT")]
+    [InlineData(true, true, 2, false, false, "CROSS", "UNIQUEIDENTIFIER", "UNIQUEIDENTIFIER")]
+    // G9/M04 Text: fixed VARCHAR/NVARCHAR under verified BIN2 collation.
+    [InlineData(true, true, 1, false, false, "NONE", "VARCHAR(24)", "VARCHAR(24)")]
+    [InlineData(false, false, 2, false, true, "NONE", "NVARCHAR(32)", "NVARCHAR(32)")]
+    [InlineData(true, false, 3, false, true, "SELF", "VARCHAR(32)", "INT")]
+    [InlineData(false, true, 2, false, false, "SELF_LEFT", "UNIQUEIDENTIFIER", "NVARCHAR(32)")]
+    [InlineData(true, false, 1, true, true, "NONE", "NVARCHAR(32)", "DECIMAL(12,2)")]
+    [InlineData(false, false, 3, false, true, "INNER", "VARCHAR(24)", "NVARCHAR(32)")]
+    [InlineData(true, true, 2, false, false, "CROSS", "NVARCHAR(32)", "SMALLINT")]
+    // M05: linguistic equality must use the *same physical collation* as
+    // the source UNIQUE index, not a case-sensitive binary approximation.
+    [InlineData(true, true, 1, false, false, "NONE", "VARCHAR(24) COLLATE Latin1_General_100_CI_AS", "INT")]
+    [InlineData(false, false, 2, false, true, "NONE", "NVARCHAR(32) COLLATE Latin1_General_100_CI_AI", "DECIMAL(12,2)")]
+    [InlineData(true, false, 3, false, true, "SELF", "VARCHAR(24) COLLATE Latin1_General_100_CS_AS", "UNIQUEIDENTIFIER")]
+    [InlineData(false, true, 2, false, false, "SELF_LEFT", "INT", "NVARCHAR(32) COLLATE Latin1_General_100_CI_AS")]
+    [InlineData(true, false, 1, true, true, "NONE", "VARCHAR(24) COLLATE Latin1_General_100_CI_AI", "BIGINT")]
+    [InlineData(false, false, 3, false, true, "INNER", "NVARCHAR(32) COLLATE Latin1_General_100_CS_AS", "VARCHAR(24) COLLATE Latin1_General_100_CI_AS")]
+    [InlineData(true, true, 2, false, false, "CROSS", "NVARCHAR(32) COLLATE Latin1_General_100_CI_AI", "NVARCHAR(32) COLLATE Latin1_General_100_CI_AI")]
+    // M06: the first CTE reads a bounded, non-lateral derived-table
+    // direct projection, including two independent key renames.
+    // F# must prove cardinality independently of Host live discovery.
+    [InlineData(true, false, 2, false, false, "DERIVED", "INT", "BIGINT")]
+    [InlineData(false, false, 3, false, false, "DERIVED", "DECIMAL(12,2)", "UNIQUEIDENTIFIER")]
+    [InlineData(true, false, 1, true, false, "DERIVED", "NVARCHAR(32)", "INT")]
+    // M06 next boundary: two successive non-lateral projections must each
+    // preserve every physical UNIQUE component, with no extra row source.
+    [InlineData(true, false, 1, false, false, "DERIVED2", "INT", "BIGINT")]
+    [InlineData(false, false, 3, false, false, "DERIVED2", "DECIMAL(12,2)", "UNIQUEIDENTIFIER")]
+    [InlineData(true, false, 2, true, false, "DERIVED2", "NVARCHAR(32)", "INT")]
+    // G11: three nested non-lateral, key-preserving derived projections.
+    // The Host must still re-attest the original physical UNIQUE tuple.
+    [InlineData(true, false, 2, false, false, "DERIVED3", "INT", "BIGINT")]
+    [InlineData(false, false, 3, true, false, "DERIVED3", "DECIMAL(12,2)", "UNIQUEIDENTIFIER")]
+    // M06: two independent physical-key-preserving CTE branches reconverge
+    // only through a complete ordinary-equality key JOIN (a diamond DAG).
+    [InlineData(true, false, 3, false, false, "DIAMOND", "INT", "BIGINT")]
+    [InlineData(false, false, 3, false, false, "DIAMOND", "DECIMAL(12,2)", "UNIQUEIDENTIFIER")]
+    [InlineData(true, false, 3, true, false, "DIAMOND", "NVARCHAR(32)", "INT")]
+    // M06: preserve direct payload next to the composite key through each
+    // independent branch AND the converged CTE; no new physical source.
+    [InlineData(true, false, 3, false, true, "DIAMOND_PAYLOAD", "INT", "BIGINT")]
+    [InlineData(false, false, 3, false, true, "DIAMOND_PAYLOAD", "DECIMAL(12,2)", "UNIQUEIDENTIFIER")]
+    [InlineData(true, false, 3, true, true, "DIAMOND_PAYLOAD", "NVARCHAR(32)", "INT")]
+    // M07: actual correlated full-key semi/anti filtering inside either
+    // physical CTE branch, followed by the proven two-key INNER diamond.
+    [InlineData(true, false, 3, false, false, "DIAMOND_SEMI_LEFT", "INT", "BIGINT")]
+    [InlineData(false, false, 3, false, false, "DIAMOND_SEMI_RIGHT", "DECIMAL(12,2)", "UNIQUEIDENTIFIER")]
+    [InlineData(true, false, 3, false, false, "DIAMOND_ANTI_LEFT", "NVARCHAR(32)", "INT")]
+    [InlineData(false, false, 3, true, false, "DIAMOND_ANTI_RIGHT", "INT", "SMALLINT")]
+    public async Task OrderedPhysicalKeyTupleRequiresAllEqualitiesAndFreshTransactionProof(
+        bool update, bool primaryKey, int hops, bool revokeBeforeCommit, bool payload,
+        string joined, string k1Type, string k2Type)
+    {
+        var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
+        if (string.IsNullOrWhiteSpace(cs))
+        {
+            if (Environment.GetEnvironmentVariable("CI") == "true")
+                throw new InvalidOperationException("G7 composite SQL Server proof requires TEST_SQLSERVER_CONNECTION.");
+            Assert.Skip("Real SQL Server 2022 is required.");
+        }
+
+        var ct = TestContext.Current.CancellationToken;
+        var tag = Guid.NewGuid().ToString("N")[..12];
+        var src = "g7_src_" + tag;
+        var dst = "g7_dst_" + tag;
+        var idx = "g7_uq_" + tag;
+        await using var db = new SqlConnection(cs);
+        for (var n = 0; ; n++)
+        {
+            try { await db.OpenAsync(ct); break; }
+            catch (SqlException) when (n < 24 && !ct.IsCancellationRequested)
+            { await Task.Delay(TimeSpan.FromSeconds(3), ct); }
+        }
+        async Task Exec(string sql)
+        {
+            await using var command = new SqlCommand(sql, db);
+            await command.ExecuteNonQueryAsync(ct);
+        }
+
+        try
+        {
+            static bool IsText(string type) =>
+                type.StartsWith("VARCHAR(", StringComparison.Ordinal)
+                || type.StartsWith("NVARCHAR(", StringComparison.Ordinal);
+            string PhysicalType(string type) => IsText(type)
+                ? (type.Contains(" COLLATE ", StringComparison.Ordinal) ? type
+                    : type + " COLLATE Latin1_General_100_BIN2")
+                : type;
+            await Exec("CREATE TABLE dbo.[" + dst +
+                "] (k1 " + PhysicalType(k1Type) + " NOT NULL, k2 " + PhysicalType(k2Type)
+                + " NOT NULL, label VARCHAR(30)"
+                + (joined == "DIAMOND_PAYLOAD" ? ", copied_payload INT NULL" : "")
+                + ", PRIMARY KEY (k1,k2))");
+            await Exec("CREATE TABLE dbo.[" + src +
+                "] (k1 " + PhysicalType(k1Type) + " NOT NULL, k2 " + PhysicalType(k2Type)
+                + " NOT NULL, payload INT NOT NULL" +
+                (primaryKey ? ", PRIMARY KEY (k1,k2)" : "") + ")");
+            if (!primaryKey)
+                await Exec("CREATE UNIQUE INDEX [" + idx + "] ON dbo.[" + src + "] (k1,k2)");
+            // Actual 64-bit values distinguish BIGINT from ordinary INT.
+            decimal first = k1Type == "BIGINT" ? 2147483649m
+                : (k1Type.StartsWith("DECIMAL(", StringComparison.Ordinal)
+                   || k1Type.StartsWith("NUMERIC(", StringComparison.Ordinal)) && !k1Type.EndsWith(",0)", StringComparison.Ordinal)
+                    ? 1.25m : 1m;
+            decimal second = k2Type == "BIGINT" ? 2147483649m
+                : k2Type.StartsWith("DECIMAL(", StringComparison.Ordinal) && !k2Type.EndsWith(",0)", StringComparison.Ordinal)
+                    ? 101.125m : 1m;
+            string KeySql(string type, decimal numeric, int ordinal)
+            {
+                if (IsText(type))
+                    return (type.StartsWith("NVARCHAR", StringComparison.Ordinal) ? "N" : "")
+                        + "'Key" + ordinal.ToString("D4") + "'";
+                if (type != "UNIQUEIDENTIFIER")
+                    return numeric.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                // SQL literal is explicitly typed by the physical UNIQUEIDENTIFIER
+                // column; no conversion is part of the key equality predicate.
+                return "'00000000-0000-0000-0000-" + ordinal.ToString("D12") + "'";
+            }
+            var key1 = KeySql(k1Type, first, 1);
+            var key2 = KeySql(k2Type, second, 11);
+            var key1Next = KeySql(k1Type, first + 1, 2);
+            var key2Next = KeySql(k2Type, second + 1, 12);
+
+            await Exec("INSERT INTO dbo.[" + dst +
+                $"] (k1,k2,label) VALUES ({key1},{key2},'old'),({key1},{key2Next},'old'),({key1Next},{key2},'old')");
+            await Exec("INSERT INTO dbo.[" + src +
+                $"] (k1,k2,payload) VALUES ({key1},{key2},11),({key1},{key2Next},12),({key1Next},{key2},21)");
+
+            var snapshot = new SqlSchemaSnapshot(SqlAgentToolType.MsSqlServer,
+                "g7-composite-live-v1", [
+                    SqlSchemaTable.WithTypes("dbo." + dst, [
+                        new SqlSchemaColumn("k1", k1Type == "UNIQUEIDENTIFIER"
+                            ? SqlSchemaValueKind.Uuid : (IsText(k1Type) ? SqlSchemaValueKind.Text : SqlSchemaValueKind.Numeric)),
+                        new SqlSchemaColumn("k2", k2Type == "UNIQUEIDENTIFIER"
+                            ? SqlSchemaValueKind.Uuid : (IsText(k2Type) ? SqlSchemaValueKind.Text : SqlSchemaValueKind.Numeric))]),
+                    SqlSchemaTable.WithTypes("dbo." + src, [
+                        new SqlSchemaColumn("k1", k1Type == "UNIQUEIDENTIFIER"
+                            ? SqlSchemaValueKind.Uuid : (IsText(k1Type) ? SqlSchemaValueKind.Text : SqlSchemaValueKind.Numeric)),
+                        new SqlSchemaColumn("k2", k2Type == "UNIQUEIDENTIFIER"
+                            ? SqlSchemaValueKind.Uuid : (IsText(k2Type) ? SqlSchemaValueKind.Text : SqlSchemaValueKind.Numeric))])
+                ]);
+            var target = "dbo." + dst;
+            var source = "dbo." + src;
+            var proof = SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
+                db, snapshot, target, new[] { "k1", "k2" },
+                source, new[] { "k1", "k2" });
+            Assert.Equal(new[] { "k1", "k2" }, proof.SourceKeyColumns);
+            Assert.Equal(new[] { "k1", "k2" }, proof.TargetKeyColumns);
+            if (k1Type == "UNIQUEIDENTIFIER" || k2Type == "UNIQUEIDENTIFIER")
+            {
+                // Numeric is not a UUID witness, even when every live
+                // source UNIQUE key has otherwise been correctly attested.
+                var wrongTypedSnapshot = new SqlSchemaSnapshot(
+                    SqlAgentToolType.MsSqlServer, "g9-wrong-uuid-family", [
+                        SqlSchemaTable.WithTypes(target, [
+                            new SqlSchemaColumn("k1", SqlSchemaValueKind.Numeric),
+                            new SqlSchemaColumn("k2", SqlSchemaValueKind.Numeric)]),
+                        SqlSchemaTable.WithTypes(source, [
+                            new SqlSchemaColumn("k1", SqlSchemaValueKind.Numeric),
+                            new SqlSchemaColumn("k2", SqlSchemaValueKind.Numeric)])
+                    ]);
+                Assert.Throws<ArgumentException>(() =>
+                    SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
+                        db, wrongTypedSnapshot, target, new[] { "k1", "k2" },
+                        source, new[] { "k1", "k2" }));
+                // Correct source UUID family is still not permission to
+                // misdeclare the target UUID as Numeric.
+                var wrongTargetSnapshot = new SqlSchemaSnapshot(
+                    SqlAgentToolType.MsSqlServer, "g9-wrong-target-family", [
+                        SqlSchemaTable.WithTypes(target, [
+                            new SqlSchemaColumn("k1", SqlSchemaValueKind.Numeric),
+                            new SqlSchemaColumn("k2", SqlSchemaValueKind.Numeric)]),
+                        SqlSchemaTable.WithTypes(source, [
+                            new SqlSchemaColumn("k1", k1Type == "UNIQUEIDENTIFIER"
+                                ? SqlSchemaValueKind.Uuid : (IsText(k1Type) ? SqlSchemaValueKind.Text : SqlSchemaValueKind.Numeric)),
+                            new SqlSchemaColumn("k2", k2Type == "UNIQUEIDENTIFIER"
+                                ? SqlSchemaValueKind.Uuid : (IsText(k2Type) ? SqlSchemaValueKind.Text : SqlSchemaValueKind.Numeric))])
+                    ]);
+                Assert.Throws<ArgumentException>(() =>
+                    SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
+                        db, wrongTargetSnapshot, target, new[] { "k1", "k2" },
+                        source, new[] { "k1", "k2" }));
+            }
+            Assert.Contains("k1", proof.ProofIdentity);
+            Assert.Contains("k2", proof.ProofIdentity);
+            var exactTypes = (k1Type + "," + k2Type)
+                .Replace("NUMERIC(", "DECIMAL(", StringComparison.Ordinal)
+                .Replace(" COLLATE ", "@", StringComparison.Ordinal);
+            Assert.Contains("source-key-types=" + exactTypes,
+                proof.ProofIdentity, StringComparison.Ordinal);
+            Assert.Contains("target-key-types=" + exactTypes,
+                proof.ProofIdentity, StringComparison.Ordinal);
+
+            var profile = new SqlProviderCapabilityProfile(
+                SqlAgentToolType.MsSqlServer, new Version(16, 0));
+            var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                { target, source };
+            var context = new SqlPlanValidationContext("g7-composite-live", allowed)
+                .WithSqlServerCteUniqueKeyAssurance(proof);
+
+            var firstProjection = payload
+                ? "k1 AS a, payload AS extra, k2 AS b"
+                : "k1 AS a, k2 AS b";
+            var nextProjection = payload ? "a, extra, b" : "a, b";
+            if (joined.StartsWith("SELF", StringComparison.Ordinal))
+                firstProjection = "s.k1 AS a, s.payload AS extra, s.k2 AS b";
+            var physicalSource = joined.StartsWith("SELF", StringComparison.Ordinal)
+                ? "dbo.[" + src + "] AS s"
+                : "dbo.[" + src + "]";
+            if (joined == "DERIVED")
+            {
+                physicalSource = "(SELECT innerSrc.k1 AS x, innerSrc.k2 AS y " +
+                    "FROM dbo.[" + src + "] AS innerSrc) AS d";
+                firstProjection = "d.x AS a, d.y AS b";
+            }
+            if (joined == "DERIVED2")
+            {
+                physicalSource = "(SELECT middle.x AS x, middle.y AS y FROM " +
+                    "(SELECT innerSrc.k1 AS x, innerSrc.k2 AS y FROM dbo.[" +
+                    src + "] AS innerSrc) AS middle) AS d";
+                firstProjection = "d.x AS a, d.y AS b";
+            }
+            if (joined == "DERIVED3")
+            {
+                physicalSource = "(SELECT outerSrc.x AS x, outerSrc.y AS y FROM " +
+                    "(SELECT middle.x AS x, middle.y AS y FROM " +
+                    "(SELECT innerSrc.k1 AS x, innerSrc.k2 AS y FROM dbo.[" +
+                    src + "] AS innerSrc) AS middle) AS outerSrc) AS d";
+                firstProjection = "d.x AS a, d.y AS b";
+            }
+            if (joined.StartsWith("DIAMOND", StringComparison.Ordinal))
+            {
+                physicalSource = "dbo.[" + src + "] AS s";
+                firstProjection = joined == "DIAMOND_PAYLOAD"
+                    ? "s.k1 AS a, s.payload AS extra, s.k2 AS b"
+                    : "s.k1 AS a, s.k2 AS b";
+            }
+            var singletonJoin = joined switch
+            {
+                "CROSS" => " CROSS JOIN (SELECT 1 AS marker) AS once",
+                "INNER" => " INNER JOIN (SELECT 1 AS marker) AS once ON 1 = 1",
+                "LEFT" => " LEFT JOIN (SELECT 1 AS marker) AS once ON 1 = 1",
+                "SELF" => " INNER JOIN dbo.[" + src +
+                    "] AS j ON s.k1 = j.k1 AND s.k2 = j.k2",
+                "SELF_LEFT" => " LEFT JOIN dbo.[" + src +
+                    "] AS j ON s.k1 = j.k1 AND s.k2 = j.k2",
+                "NONE" or "DERIVED" or "DERIVED2" or "DERIVED3" or "DIAMOND" or "DIAMOND_PAYLOAD"
+                    or "DIAMOND_SEMI_LEFT" or "DIAMOND_SEMI_RIGHT"
+                    or "DIAMOND_ANTI_LEFT" or "DIAMOND_ANTI_RIGHT" => "",
+                _ => throw new ArgumentOutOfRangeException(nameof(joined))
+            };
+            var isDiamond = joined.StartsWith("DIAMOND", StringComparison.Ordinal);
+            var withPayload = joined == "DIAMOND_PAYLOAD";
+            var semiAnti = joined.StartsWith("DIAMOND_SEMI_", StringComparison.Ordinal)
+                || joined.StartsWith("DIAMOND_ANTI_", StringComparison.Ordinal);
+            var filterRight = joined.EndsWith("_RIGHT", StringComparison.Ordinal);
+            var anti = joined.StartsWith("DIAMOND_ANTI_", StringComparison.Ordinal);
+            var queryAlias = filterRight ? "t" : "s";
+            var correlatedFilter = semiAnti
+                ? " WHERE " + (anti ? "NOT EXISTS" : "EXISTS") +
+                  " (SELECT 1 FROM dbo.[" + src + "] AS e" +
+                  " WHERE e.k1 = " + queryAlias + ".k1" +
+                  " AND e.k2 = " + queryAlias + ".k2 AND e.payload = 11)"
+                : "";
+            var cte = isDiamond
+                ? "WITH seed AS (SELECT " + firstProjection + " FROM " + physicalSource +
+                  (semiAnti && !filterRight ? correlatedFilter : "") + "), " +
+                  "twin AS (SELECT " + (withPayload
+                    ? "t.k1 AS x, t.payload AS side, t.k2 AS y"
+                    : "t.k1 AS x, t.k2 AS y") + " FROM dbo.[" + src + "] AS t" +
+                  (semiAnti && filterRight ? correlatedFilter : "") + "), " +
+                  "matched AS (SELECT " + (withPayload
+                    ? "l.a AS a, l.extra AS projected, l.b AS b"
+                    : "l.a AS a, l.b AS b") + " FROM seed AS l " +
+                  "INNER JOIN twin AS r ON l.a = r.x AND l.b = r.y) "
+                : "WITH seed AS (SELECT " + firstProjection +
+                  " FROM " + physicalSource + singletonJoin + ") ";
+            // Declared CTE column aliases share the same strict, ordered
+            // physical-key mapping as each nested derived projection.
+            if (joined == "DERIVED3" && !update)
+                cte = cte.Replace("WITH seed AS", "WITH seed(a, b) AS",
+                    StringComparison.Ordinal);
+            if (!isDiamond && hops >= 2)
+                cte += ", picked AS (SELECT " + nextProjection + " FROM seed) ";
+            if (!isDiamond && hops >= 3)
+                cte += ", matched AS (SELECT " + nextProjection + " FROM picked) ";
+            var keyAlias = hops switch
+            {
+                1 => "seed",
+                2 => "picked",
+                3 => "matched",
+                _ => throw new ArgumentOutOfRangeException(nameof(hops))
+            };
+            var sql = cte + (update
+                ? "UPDATE dbo.[" + dst + "] SET label = 'changed'" +
+                  (withPayload ? ", copied_payload = matched.projected" : "") +
+                  " FROM " + keyAlias
+                : "DELETE FROM dbo.[" + dst + "] FROM " + keyAlias)
+                + " WHERE dbo." + dst + ".k1 = " + keyAlias + ".a"
+                + " AND dbo." + dst + ".k2 = " + keyAlias + ".b";
+            var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.MsSqlServer, profile);
+            var compiled = SqlCoreFacade.CompileDml(parsed,
+                SqlAgentToolType.MsSqlServer, context,
+                new DmlCompilationPolicy(), profile, null);
+            Assert.StartsWith("WITH ", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(" AND ", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+            if (IsText(k1Type) || IsText(k2Type))
+            {
+                var forcedCollation = sql.Replace(
+                    " WHERE dbo." + dst + ".k1 = " + keyAlias + ".a",
+                    " WHERE dbo." + dst +
+                        ".k1 COLLATE Latin1_General_100_BIN2 = " + keyAlias + ".a",
+                    StringComparison.Ordinal);
+                Assert.ThrowsAny<Exception>(() =>
+                    SqlCoreFacade.CompileDml(
+                        CoreSqlTextParser.ParseDml(forcedCollation,
+                            SqlAgentToolType.MsSqlServer, profile),
+                        SqlAgentToolType.MsSqlServer, context,
+                        new DmlCompilationPolicy(), profile, null));
+            }
+            var missing = sql.Replace(
+                " AND dbo." + dst + ".k2 = " + keyAlias + ".b", "");
+            var missingParsed = CoreSqlTextParser.ParseDml(
+                missing, SqlAgentToolType.MsSqlServer, profile);
+            Assert.Throws<SqlCompilationException>(() => SqlCoreFacade.CompileDml(
+                missingParsed, SqlAgentToolType.MsSqlServer, context,
+                new DmlCompilationPolicy(), profile, null));
+
+            if (joined is "DERIVED" or "DERIVED2" or "DERIVED3")
+            {
+                // M06 negative grammar matrix: changing the nested source
+                // must never borrow a physical UNIQUE proof by alias alone.
+                var direct = "SELECT innerSrc.k1 AS x, innerSrc.k2 AS y " +
+                    "FROM dbo.[" + src + "] AS innerSrc";
+                Assert.Contains(direct, sql, StringComparison.Ordinal);
+                foreach (var invalidDerived in new[]
+                {
+                    direct.Replace("innerSrc.k1 AS x", "innerSrc.k1 + 0 AS x",
+                        StringComparison.Ordinal), // computed key
+                    direct.Replace("innerSrc.k2 AS y", "innerSrc.k2 AS x",
+                        StringComparison.Ordinal), // ambiguous output
+                    direct.Replace("innerSrc.k2 AS y", "innerSrc.k2 AS z",
+                        StringComparison.Ordinal), // missing key lineage
+                    "SELECT DISTINCT innerSrc.k1 AS x, innerSrc.k2 AS y " +
+                        "FROM dbo.[" + src + "] AS innerSrc",
+                    direct + " WHERE innerSrc.k1 IS NOT NULL",
+                    direct + " INNER JOIN dbo.[" + src + "] AS second " +
+                        "ON innerSrc.k1 = second.k1"
+                })
+                {
+                    var rejected = sql.Replace(direct, invalidDerived,
+                        StringComparison.Ordinal);
+                    Assert.NotEqual(sql, rejected);
+                    Assert.ThrowsAny<Exception>(() =>
+                        SqlCoreFacade.CompileDml(
+                            CoreSqlTextParser.ParseDml(
+                                rejected, SqlAgentToolType.MsSqlServer, profile),
+                            SqlAgentToolType.MsSqlServer, context,
+                            new DmlCompilationPolicy(), profile, null));
+                }
+            }
+
+            if (joined == "DERIVED2")
+            {
+                var intermediate = "SELECT middle.x AS x, middle.y AS y FROM " +
+                    "(SELECT innerSrc.k1 AS x, innerSrc.k2 AS y FROM dbo.[" +
+                    src + "] AS innerSrc) AS middle";
+                Assert.Contains(intermediate, sql, StringComparison.Ordinal);
+                foreach (var invalid in new[]
+                {
+                    intermediate.Replace("middle.x AS x", "middle.x + 0 AS x",
+                        StringComparison.Ordinal),
+                    intermediate.Replace("middle.y AS y", "middle.y AS x",
+                        StringComparison.Ordinal),
+                    intermediate + " WHERE middle.x IS NOT NULL",
+                    intermediate.Replace(") AS middle", ") AS middle " +
+                        "INNER JOIN dbo.[" + src + "] AS extra ON middle.x = extra.k1",
+                        StringComparison.Ordinal)
+                })
+                {
+                    var rejected = sql.Replace(intermediate, invalid,
+                        StringComparison.Ordinal);
+                    Assert.NotEqual(sql, rejected);
+                    Assert.ThrowsAny<Exception>(() =>
+                        SqlCoreFacade.CompileDml(
+                            CoreSqlTextParser.ParseDml(rejected,
+                                SqlAgentToolType.MsSqlServer, profile),
+                            SqlAgentToolType.MsSqlServer, context,
+                            new DmlCompilationPolicy(), profile, null));
+                }
+            }
+
+            if (joined == "DERIVED3")
+            {
+                var intermediate = "SELECT middle.x AS x, middle.y AS y FROM " +
+                    "(SELECT innerSrc.k1 AS x, innerSrc.k2 AS y FROM dbo.[" +
+                    src + "] AS innerSrc) AS middle";
+                var third = "SELECT outerSrc.x AS x, outerSrc.y AS y FROM (" +
+                    intermediate + ") AS outerSrc";
+                Assert.Contains(third, sql, StringComparison.Ordinal);
+                if (!update)
+                {
+                    var duplicateCteAlias = sql.Replace(
+                        "WITH seed(a, b) AS", "WITH seed(a, a) AS",
+                        StringComparison.Ordinal);
+                    Assert.NotEqual(sql, duplicateCteAlias);
+                    Assert.ThrowsAny<Exception>(() =>
+                        SqlCoreFacade.CompileDml(
+                            CoreSqlTextParser.ParseDml(duplicateCteAlias,
+                                SqlAgentToolType.MsSqlServer, profile),
+                            SqlAgentToolType.MsSqlServer, context,
+                            new DmlCompilationPolicy(), profile, null));
+                }
+                foreach (var invalid in new[]
+                {
+                    third.Replace("outerSrc.x AS x", "outerSrc.x + 0 AS x",
+                        StringComparison.Ordinal),
+                    third.Replace("outerSrc.y AS y", "outerSrc.x AS y",
+                        StringComparison.Ordinal),
+                    third + " WHERE outerSrc.x IS NOT NULL",
+                    third + " INNER JOIN dbo.[" + src +
+                        "] AS extra ON outerSrc.x = extra.k1",
+                    // A fourth derived layer must never inherit executable
+                    // UNIQUE-key authority through its display aliases.
+                    "SELECT extra.x AS x, extra.y AS y FROM (" + third + ") AS extra"
+                })
+                {
+                    var rejected = sql.Replace(third, invalid,
+                        StringComparison.Ordinal);
+                    Assert.NotEqual(sql, rejected);
+                    Assert.ThrowsAny<Exception>(() =>
+                        SqlCoreFacade.CompileDml(
+                            CoreSqlTextParser.ParseDml(rejected,
+                                SqlAgentToolType.MsSqlServer, profile),
+                            SqlAgentToolType.MsSqlServer, context,
+                            new DmlCompilationPolicy(), profile, null));
+                }
+            }
+
+            if (isDiamond && !semiAnti)
+            {
+                // These queries are syntactically valid; the protected
+                // execution proof must reject them at the capability fence.
+                var joinPredicate = "l.a = r.x AND l.b = r.y";
+                foreach (var invalid in new[]
+                {
+                    sql.Replace(joinPredicate, "l.a = r.x OR l.b = r.y", StringComparison.Ordinal),
+                    sql.Replace(joinPredicate, "l.a = r.x", StringComparison.Ordinal),
+                    sql.Replace(joinPredicate, "l.a = r.x AND l.b = r.x", StringComparison.Ordinal),
+                    sql.Replace(joinPredicate, "l.a = r.x AND l.b + 0 = r.y", StringComparison.Ordinal),
+                    sql.Replace("INNER JOIN twin", "LEFT JOIN twin", StringComparison.Ordinal),
+                    sql.Replace("t.k2 AS y", "t.k1 AS y", StringComparison.Ordinal),
+                    sql.Replace("t.k2 AS y", "t.k2 + 0 AS y", StringComparison.Ordinal),
+                    sql.Replace("AS t), matched", "AS t WHERE t.k1 IS NOT NULL), matched",
+                        StringComparison.Ordinal),
+                    sql.Replace("FROM dbo.[" + src + "] AS t",
+                        "FROM dbo.[" + dst + "] AS t", StringComparison.Ordinal),
+                    sql.Replace(withPayload
+                            ? "SELECT l.a AS a, l.extra AS projected, l.b AS b"
+                            : "SELECT l.a AS a, l.b AS b",
+                        "SELECT l.a AS a, l.a AS b", StringComparison.Ordinal)
+                })
+                {
+                    Assert.NotEqual(sql, invalid);
+                    Assert.ThrowsAny<Exception>(() =>
+                        SqlCoreFacade.CompileDml(
+                            CoreSqlTextParser.ParseDml(invalid,
+                                SqlAgentToolType.MsSqlServer, profile),
+                            SqlAgentToolType.MsSqlServer, context,
+                            new DmlCompilationPolicy(), profile, null));
+                }
+            }
+
+            if (withPayload)
+            {
+                // A payload is direct and unique in each branch and output.
+                // Duplicate source columns, fake aliases and expressions
+                // cannot acquire the already attested physical key proof.
+                foreach (var invalid in new[]
+                {
+                    sql.Replace("s.payload AS extra", "s.payload + 0 AS extra", StringComparison.Ordinal),
+                    sql.Replace("s.payload AS extra", "s.k1 AS extra", StringComparison.Ordinal),
+                    sql.Replace("t.payload AS side", "t.payload + 0 AS side", StringComparison.Ordinal),
+                    sql.Replace("t.payload AS side", "t.k2 AS side", StringComparison.Ordinal),
+                    sql.Replace("l.extra AS projected", "l.extra + 0 AS projected", StringComparison.Ordinal),
+                    sql.Replace("l.extra AS projected", "l.a AS projected", StringComparison.Ordinal),
+                    sql.Replace("l.extra AS projected", "l.extra AS a", StringComparison.Ordinal),
+                    sql.Replace("l.extra AS projected", "r.side AS projected", StringComparison.Ordinal)
+                })
+                {
+                    Assert.NotEqual(sql, invalid);
+                    Assert.ThrowsAny<Exception>(() =>
+                        SqlCoreFacade.CompileDml(
+                            CoreSqlTextParser.ParseDml(invalid,
+                                SqlAgentToolType.MsSqlServer, profile),
+                            SqlAgentToolType.MsSqlServer, context,
+                            new DmlCompilationPolicy(), profile, null));
+                }
+            }
+
+            if (semiAnti)
+            {
+                // A filter can reduce the approved row set but cannot
+                // borrow any incomplete, computed, or foreign source key.
+                foreach (var rejected in new[]
+                {
+                    sql.Replace(" AND e.k2 = " + queryAlias + ".k2", "", StringComparison.Ordinal),
+                    sql.Replace(" AND e.k2 = " + queryAlias + ".k2",
+                        " OR e.k2 = " + queryAlias + ".k2", StringComparison.Ordinal),
+                    sql.Replace("e.k1 = " + queryAlias + ".k1", "e.k1 = e.k1", StringComparison.Ordinal),
+                    sql.Replace("e.k2 = " + queryAlias + ".k2",
+                        "e.k2 + 0 = " + queryAlias + ".k2", StringComparison.Ordinal),
+                    sql.Replace("FROM dbo.[" + src + "] AS e",
+                        "FROM dbo.[" + dst + "] AS e", StringComparison.Ordinal),
+                    sql.Replace(" AND e.payload = 11", " OR e.payload = 11", StringComparison.Ordinal),
+                    sql.Replace("e.payload = 11", "e.payload + 0 = 11", StringComparison.Ordinal),
+                    sql.Replace("SELECT 1 FROM dbo.[" + src + "] AS e",
+                        "SELECT 1 FROM dbo.[" + src + "] AS e " +
+                        "INNER JOIN dbo.[" + src + "] AS j ON e.k1 = j.k1",
+                        StringComparison.Ordinal)
+                })
+                {
+                    Assert.NotEqual(sql, rejected);
+                    Assert.ThrowsAny<Exception>(() =>
+                        SqlCoreFacade.CompileDml(
+                            CoreSqlTextParser.ParseDml(rejected,
+                                SqlAgentToolType.MsSqlServer, profile),
+                            SqlAgentToolType.MsSqlServer, context,
+                            new DmlCompilationPolicy(), profile, null));
+                }
+            }
+
+            // A complete tuple never becomes a match through OR, duplicate
+            // edges, implicit coercion or a shuffled physical-key projection.
+            foreach (var rejected in new[]
+            {
+                sql.Replace(" AND dbo." + dst + ".k2 = " + keyAlias + ".b",
+                    " OR dbo." + dst + ".k2 = " + keyAlias + ".b",
+                    StringComparison.Ordinal),
+                sql.Replace(" AND dbo." + dst + ".k2 = " + keyAlias + ".b",
+                    " AND dbo." + dst + ".k1 = " + keyAlias + ".a" +
+                    " AND dbo." + dst + ".k2 = " + keyAlias + ".b",
+                    StringComparison.Ordinal),
+                sql.Replace(keyAlias + ".b",
+                    "CAST(" + keyAlias + ".b AS BIGINT)", StringComparison.Ordinal),
+                sql.Replace(firstProjection,
+                    isDiamond ? (withPayload
+                                ? "s.k2 AS a, s.payload AS extra, s.k1 AS b"
+                                : "s.k2 AS a, s.k1 AS b")
+                            : payload ? "k2 AS a, payload AS extra, k1 AS b"
+                                      : "k2 AS a, k1 AS b", StringComparison.Ordinal),
+                sql.Replace(firstProjection,
+                    isDiamond ? (withPayload
+                                ? "s.k1 AS a, s.payload AS extra, s.k1 AS b"
+                                : "s.k1 AS a, s.k1 AS b")
+                            : payload ? "k1 AS a, payload AS extra, k1 AS b"
+                                      : "k1 AS a, k1 AS b", StringComparison.Ordinal),
+                // Payload must not be allowed to mask or overwrite a key.
+                sql.Replace(firstProjection,
+                    isDiamond ? (withPayload
+                                ? "s.k1 AS a, s.payload AS extra, s.k2 + 0 AS b"
+                                : "s.k1 AS a, s.k2 + 0 AS b")
+                            : payload ? "k1 AS a, payload AS extra, payload AS b"
+                                      : "k1 AS a, k2 + 0 AS b", StringComparison.Ordinal),
+                // Extra projection aliases cannot introduce ambiguity.
+                sql.Replace(firstProjection,
+                    isDiamond ? (withPayload
+                                ? "s.k1 AS a, s.payload AS extra, s.k2 AS a"
+                                : "s.k1 AS a, s.k2 AS a")
+                            : payload ? "k1 AS a, payload AS a, k2 AS b"
+                                      : "k1 AS a, k2 AS a", StringComparison.Ordinal)
+            })
+            {
+                // Use the same profile-verified parsed-statement compiler
+                // that accepted the positive SQL above. TryCompileDml(text)
+                // has no policy/profile overload by design.
+                Assert.Throws<SqlCompilationException>(() =>
+                    SqlCoreFacade.CompileDml(
+                        CoreSqlTextParser.ParseDml(rejected,
+                            SqlAgentToolType.MsSqlServer, profile),
+                        SqlAgentToolType.MsSqlServer, context,
+                        new DmlCompilationPolicy(), profile, null));
+            }
+
+            if (joined.StartsWith("SELF", StringComparison.Ordinal))
+            {
+                foreach (var invalid in new[]
+                {
+                    sql.Replace(" AND s.k2 = j.k2", "", StringComparison.Ordinal),
+                    sql.Replace(" AND s.k2 = j.k2", " OR s.k2 = j.k2", StringComparison.Ordinal),
+                    sql.Replace("s.k2 = j.k2", "s.k2 + 0 = j.k2", StringComparison.Ordinal),
+                    sql.Replace("s.k2 = j.k2", "s.k1 = j.k2", StringComparison.Ordinal)
+                })
+                {
+                    Assert.Throws<SqlCompilationException>(() =>
+                        SqlCoreFacade.CompileDml(
+                            CoreSqlTextParser.ParseDml(invalid,
+                                SqlAgentToolType.MsSqlServer, profile),
+                            SqlAgentToolType.MsSqlServer, context,
+                            new DmlCompilationPolicy(), profile, null));
+                }
+            }
+            if (joined is "CROSS" or "INNER" or "LEFT")
+            {
+                // A derived singleton is the ONLY acceptable extra join
+                // source. A physical or derived table scan can multiply
+                // source keys and must never be proof-bearing.
+                foreach (var wrong in new[]
+                {
+                    sql.Replace("(SELECT 1 AS marker)", "(SELECT k1 AS marker FROM dbo.[" + src + "])", StringComparison.Ordinal),
+                    sql.Replace("(SELECT 1 AS marker)", "(SELECT 1 AS marker UNION ALL SELECT 2 AS marker)", StringComparison.Ordinal),
+                    sql.Replace("(SELECT 1 AS marker)", "(SELECT 1 AS marker FROM dbo.[" + src + "])", StringComparison.Ordinal)
+                })
+                {
+                    Assert.ThrowsAny<Exception>(() =>
+                        SqlCoreFacade.CompileDml(
+                            CoreSqlTextParser.ParseDml(wrong, SqlAgentToolType.MsSqlServer, profile),
+                            SqlAgentToolType.MsSqlServer, context,
+                            new DmlCompilationPolicy(), profile, null));
+                }
+            }
+
+            await using (var tx = (SqlTransaction)await db.BeginTransactionAsync(ct))
+            {
+                Assert.True(proof.IsCurrent(db, tx));
+                await tx.RollbackAsync(ct);
+            }
+
+            // Production Host path: the user supplies no proof. Discovery
+            // extracts ordered CTE lineage, attests sys.* and binds the
+            // resulting token to preview, approval and same-tx commit.
+            var metadata = new Mock<IProviderMetadataReader>();
+            metadata.Setup(x => x.GetSchemasAsync("g7-metadata", It.IsAny<CancellationToken>()))
+                .ReturnsAsync(["dbo"]);
+            metadata.Setup(x => x.GetTablesAsync("g7-metadata", "dbo", It.IsAny<CancellationToken>()))
+                .ReturnsAsync([dst]);
+            var targetMetadata = new List<DatabaseColumnMetadata>
+            {
+                new("dbo", dst, "k1", k1Type, true, 1),
+                new("dbo", dst, "k2", k2Type, true, 2),
+                new("dbo", dst, "label", "varchar", false)
+            };
+            if (withPayload)
+                targetMetadata.Add(new("dbo", dst, "copied_payload", "int", false));
+            metadata.Setup(x => x.GetColumnsAsync("g7-metadata", "dbo", dst,
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(targetMetadata);
+            var plan = await new DmlPlanFactory(metadata.Object)
+                .CreateWithMetadataConnectionAsync(db, "g7-metadata", parsed,
+                    SqlAgentToolType.MsSqlServer,
+                    new SqlPlanValidationContext("g7-composite-live", allowed),
+                    new DmlCompilationPolicy(), DmlRowIdentityAssurance.Strict,
+                    maxAffectedRows: 5, cancellationToken: ct, targetProfile: profile);
+            var auto = Assert.IsType<SqlServerCteUniqueKeyAssurance>(
+                plan.SqlServerCteUniqueKeyAssurance);
+            Assert.Equal(new[] { "k1", "k2" }, auto.SourceKeyColumns);
+            // The manually declared snapshot and Host's bounded auto-
+            // discovered snapshot have deliberately different identities.
+            // Compare physical, ordered key facts instead of treating their
+            // independent snapshot hashes as interchangeable proof tokens.
+            Assert.NotEqual(proof.SchemaSha256, auto.SchemaSha256);
+            Assert.Equal(proof.DatabaseGuid, auto.DatabaseGuid);
+            Assert.Equal(proof.ServerInstanceName, auto.ServerInstanceName);
+            Assert.Equal(proof.UniqueIndexName, auto.UniqueIndexName);
+            Assert.Equal(new[] { "k1", "k2" }, auto.TargetKeyColumns);
+            DmlCoordinator.ValidatePlan(plan);
+            var coordinator = new DmlCoordinator(new SqlServerConnectionFactory());
+            var serverVersion = db.ServerVersion.Trim();
+            var preview = await coordinator.PreviewAsync(
+                cs, plan, "g7-composite-approver", ct, serverVersion);
+            var expectedAffected = !semiAnti ? 3 : anti ? 2 : 1;
+            Assert.Equal(expectedAffected, preview.AffectedRows);
+            if (revokeBeforeCommit)
+            {
+                // Preview/approval already happened. Removing physical
+                // uniqueness must invalidate the exact same plan when the
+                // commit transaction rechecks live index metadata.
+                Assert.False(primaryKey);
+                await Exec("DROP INDEX [" + idx + "] ON dbo.[" + src + "]");
+                await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    coordinator.CommitAsync(cs, plan, preview.Challenge,
+                        "g7-composite-approver", ct, serverVersion));
+                await using var unchanged = new SqlCommand(
+                    "SELECT COUNT(*) FROM dbo.[" + dst + "] WHERE label = 'old'", db);
+                Assert.Equal(3, Convert.ToInt32(await unchanged.ExecuteScalarAsync(ct)));
+            }
+            else
+            {
+                var committed = await coordinator.CommitAsync(
+                    cs, plan, preview.Challenge, "g7-composite-approver", ct, serverVersion);
+                Assert.True(committed.Committed);
+                await using var count = new SqlCommand(
+                    "SELECT COUNT(*) FROM dbo.[" + dst + "]", db);
+                Assert.Equal(update ? 3 : 3 - expectedAffected,
+                    Convert.ToInt32(await count.ExecuteScalarAsync(ct)));
+                if (semiAnti && update)
+                {
+                    await using var changed = new SqlCommand(
+                        "SELECT COUNT(*) FROM dbo.[" + dst + "] WHERE label = 'changed'", db);
+                    Assert.Equal(expectedAffected,
+                        Convert.ToInt32(await changed.ExecuteScalarAsync(ct)));
+                }
+                if (update && withPayload)
+                {
+                    // Confirm payload is not merely an unused SELECT column:
+                    // actual approved DML transfers the source row value.
+                    await using var copied = new SqlCommand(
+                        "SELECT COUNT(*) FROM dbo.[" + dst + "] AS d " +
+                        "INNER JOIN dbo.[" + src + "] AS s ON " +
+                        "d.k1 = s.k1 AND d.k2 = s.k2 " +
+                        "WHERE d.copied_payload = s.payload", db);
+                    Assert.Equal(3, Convert.ToInt32(await copied.ExecuteScalarAsync(ct)));
+                }
+            }
+            if (primaryKey)
+            {
+                await using var command = new SqlCommand(
+                    "SELECT kc.name FROM sys.key_constraints kc WHERE kc.parent_object_id = OBJECT_ID(@t) AND kc.type = 'PK'", db);
+                command.Parameters.AddWithValue("@t", source);
+                var pk = (string?)await command.ExecuteScalarAsync(ct);
+                Assert.False(string.IsNullOrWhiteSpace(pk));
+                await Exec("ALTER TABLE dbo.[" + src + "] DROP CONSTRAINT [" + pk + "]");
+            }
+            else if (!revokeBeforeCommit)
+                await Exec("DROP INDEX [" + idx + "] ON dbo.[" + src + "]");
+
+            await using var recheck = (SqlTransaction)await db.BeginTransactionAsync(ct);
+            Assert.False(proof.IsCurrent(db, recheck));
+            await recheck.RollbackAsync(ct);
+        }
+        finally
+        {
+            await Exec("DROP TABLE IF EXISTS dbo.[" + src + "]");
+            await Exec("DROP TABLE IF EXISTS dbo.[" + dst + "]");
+        }
+    }
+
+}

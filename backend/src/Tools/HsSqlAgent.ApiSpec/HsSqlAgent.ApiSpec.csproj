@@ -1,6 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+        <!-- CLI entry point; published libraries and test projects stay multi-targeted. -->
+    <TargetFramework Condition="'$(LibraryFrameworks)'==''">net10.0</TargetFramework>
+    <TargetFrameworks Condition="'$(LibraryFrameworks)'!=''">$(LibraryFrameworks)</TargetFrameworks>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <OutputType>Exe</OutputType>

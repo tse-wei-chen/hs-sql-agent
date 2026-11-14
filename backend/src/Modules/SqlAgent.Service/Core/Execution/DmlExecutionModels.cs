@@ -17,8 +17,64 @@ public enum DmlRowIdentityAssurance
 public enum DmlApprovalMode
 {
     RowSetMutation,
-    InsertValues
+    InsertValues,
+    /// <summary>Native bounded physical source rows, bound by full projected-value fingerprint.</summary>
+    InsertSelect,
+    /// <summary>Native SQLite/PostgreSQL single-row DO NOTHING: sole physical UNIQUE key must be rechecked at commit.</summary>
+    InsertConflictDoNothing,
+    /// <summary>PostgreSQL one-row conflict UPDATE: bind every old and proposed TEXT column.</summary>
+    InsertConflictDoUpdate,
+    /// <summary>Native SQL Server single-source INT primary-key MATCHED DELETE; no INSERT/UPDATE branches.</summary>
+    SqlServerMergeMatchedDelete,
+    /// <summary>Native SQL Server matched direct INT UPDATE with sealed old/new row evidence.</summary>
+    SqlServerMergeMatchedUpdate,
+    /// <summary>SQL Server exact one-row NOT MATCHED INSERT with physical absence + full INT payload approval.</summary>
+    SqlServerMergeNotMatchedInsert
 }
+
+/// <summary>Only the trusted plan factory can mint this executable source-shape proof.</summary>
+internal sealed record NativeInsertSelectProof(
+    string PhysicalTarget,
+    string PhysicalSource,
+    string MutationFingerprint,
+    string SourceQueryFingerprint,
+    string SchemaSha256,
+    ImmutableArray<string> ProjectedColumns);
+
+/// <summary>Internal proof scoped to a native, one-row SQLite/PostgreSQL sole-UNIQUE-key no-op.</summary>
+internal sealed record NativeConflictDoNothingProof(
+    string PhysicalTarget,
+    string UniqueKeyColumn,
+    string MutationFingerprint,
+    string TargetQueryFingerprint,
+    string SchemaSha256);
+
+internal sealed record NativeConflictDoUpdateProof(
+    string PhysicalTarget,
+    string UniqueKeyColumn,
+    ImmutableArray<string> UpdatedColumns,
+    string MutationFingerprint,
+    string TargetQueryFingerprint,
+    string SchemaSha256);
+
+/// <summary>Live SQL Server one-row MERGE delete authority; only the trusted factory may mint it.</summary>
+internal sealed record SqlServerMergeMatchedDeleteProof(
+    string PhysicalTarget,
+    string UniqueKeyColumn,
+    int KeyValue,
+    string MutationFingerprint,
+    string TargetQueryFingerprint,
+    string SchemaSha256);
+
+internal sealed record SqlServerMergeMatchedUpdateProof(
+    string PhysicalTarget, string UniqueKeyColumn, int KeyValue,
+    ImmutableArray<string> UpdatedColumns, ImmutableArray<int> ProposedValues,
+    string MutationFingerprint, string TargetQueryFingerprint, string SchemaSha256);
+
+internal sealed record SqlServerMergeNotMatchedInsertProof(
+    string PhysicalTarget, string UniqueKeyColumn, int KeyValue,
+    ImmutableArray<string> InsertColumns, ImmutableArray<int> InsertValues,
+    string MutationFingerprint, string TargetQueryFingerprint, string SchemaSha256);
 
 public sealed record ValidatedDmlPlan(
     DmlOperation Operation,
@@ -33,7 +89,31 @@ public sealed record ValidatedDmlPlan(
     int MaxAffectedRows = 0,
     DmlApprovalMode ApprovalMode = DmlApprovalMode.RowSetMutation,
     ImmutableArray<ImmutableDictionary<string, object?>> InsertRows = default,
-    SqlSchemaSnapshot? SchemaSnapshot = null);
+    SqlSchemaSnapshot? SchemaSnapshot = null)
+{
+    /// <summary>
+    /// An optional live, provider-minted SQL Server INT source-key proof. A
+    /// plan carrying this proof must be re-attested on the actual commit
+    /// connection and transaction. It does not authorize unproven CTE DML.
+    /// </summary>
+    public SqlServerCteUniqueKeyAssurance? SqlServerCteUniqueKeyAssurance { get; init; }
+
+    /// <summary>
+    /// Host-internal admission proof. External callers cannot construct or set it,
+    /// even though ValidatedDmlPlan remains a CLR-friendly public record.
+    /// </summary>
+    internal NativeInsertSelectProof? NativeInsertSelectProof { get; init; }
+
+    internal NativeConflictDoNothingProof? NativeConflictDoNothingProof { get; init; }
+
+    internal NativeConflictDoUpdateProof? NativeConflictDoUpdateProof { get; init; }
+
+    internal SqlServerMergeMatchedDeleteProof? SqlServerMergeMatchedDeleteProof { get; init; }
+
+    internal SqlServerMergeMatchedUpdateProof? SqlServerMergeMatchedUpdateProof { get; init; }
+
+    internal SqlServerMergeNotMatchedInsertProof? SqlServerMergeNotMatchedInsertProof { get; init; }
+}
 
 public sealed record DmlPreview(
     DmlOperation Operation,

@@ -12,6 +12,7 @@ module internal RewriteLexer =
         | StringLiteral of string
         | IntegerLiteral of int64
         | DecimalLiteral of decimal
+        | ExactNumericLiteral of string
         | Keyword of string
         | Symbol of char
         | Operator of string
@@ -44,7 +45,10 @@ module internal RewriteLexer =
           PostgresEscapeString: bool
           PostgresDollarQuotedString: bool
           OracleQuotedString: bool
-          HashPrefixedIdentifier: bool }
+          HashPrefixedIdentifier: bool
+          ScriptMySqlAccountSeparator: bool
+          ScriptDeferUnclosedGrouping: bool
+          PostgresExactNumeric: bool }
 
     module LexicalSemantics =
         let standard =
@@ -57,7 +61,10 @@ module internal RewriteLexer =
               PostgresEscapeString = false
               PostgresDollarQuotedString = false
               OracleQuotedString = false
-              HashPrefixedIdentifier = false }
+              HashPrefixedIdentifier = false
+              ScriptMySqlAccountSeparator = false
+              ScriptDeferUnclosedGrouping = false
+              PostgresExactNumeric = false }
 
         let mysql ansiQuotes noBackslashEscapes =
             { standard with
@@ -84,7 +91,7 @@ module internal RewriteLexer =
     let private keywords =
         set [ "SELECT"; "DISTINCT"; "FROM"; "WHERE"; "AS"; "AND"; "OR"; "NOT"; "NULL"; "TRUE"; "FALSE"
               "GROUP"; "BY"; "HAVING"; "ORDER"; "ASC"; "DESC"; "LIMIT"; "OFFSET"; "INNER"; "LEFT"; "RIGHT"
-              "FULL"; "OUTER"; "CROSS"; "NATURAL"; "JOIN"; "LATERAL"; "ON"; "LIKE"; "ILIKE"; "ESCAPE"; "IS"; "IN"; "BETWEEN"; "EXISTS"; "INSERT"; "INTO"
+              "FULL"; "OUTER"; "CROSS"; "NATURAL"; "JOIN"; "LATERAL"; "APPLY"; "ON"; "LIKE"; "ILIKE"; "ESCAPE"; "IS"; "IN"; "BETWEEN"; "EXISTS"; "INSERT"; "INTO"
               "VALUES"; "UPDATE"; "SET"; "DELETE"; "MERGE"; "MATCHED"; "RETURNING"; "OUTPUT"; "DEFAULT"; "UNION"; "ALL"; "INTERSECT"
               "EXCEPT"; "NULLS"; "FIRST"; "LAST"; "ROWS"; "ROW"; "FETCH"; "NEXT"; "ONLY"; "TOP"; "WITH"
               "RECURSIVE"; "CASE"; "WHEN"; "THEN"; "ELSE"; "END"; "CAST"; "EXTRACT"; "DATE"; "TIME"; "TIMESTAMP"; "WITHOUT"
@@ -187,11 +194,16 @@ module internal RewriteLexer =
                     overNestingAt <- start
             | Symbol ')' ->
                 if groupingDepth = 0 then
-                    lexicalError
-                        "SQL_LEXICAL_UNBALANCED_PARENTHESIS"
-                        "Unexpected closing parenthesis without a matching opening parenthesis."
-                        start (finish - start)
-                groupingDepth <- groupingDepth - 1
+                    // Script dispatch defers this error to the strictly lexed
+                    // statement, so a later physical SQL Server GO batch is
+                    // not hidden by the malformed earlier batch.
+                    if not semantics.ScriptDeferUnclosedGrouping then
+                        lexicalError
+                            "SQL_LEXICAL_UNBALANCED_PARENTHESIS"
+                            "Unexpected closing parenthesis without a matching opening parenthesis."
+                            start (finish - start)
+                else
+                    groupingDepth <- groupingDepth - 1
             | _ -> ()
 
             tokens.Add({ Kind = kind; Start = start; Length = finish - start })
@@ -217,6 +229,114 @@ module internal RewriteLexer =
                         SqlDiagnosticCategory.Syntax,
                         detail,
                         SqlDiagnosticSpan(start, actualLength))))
+
+        // A successful CLR Decimal.TryParse is NOT proof that the SQL number
+        // survived unchanged: it can round significant digits or turn a
+        // nonzero 1e-29 (or 1e-1000) into zero. Compare normalized exact
+        // decimal values, not their textual spelling. Mantissa trailing zeros
+        // and exponent spellings are mathematically equivalent.
+        //
+        // This scan is linear in the already bounded SQL token length; very
+        // long exponents saturate at +/-1e9 (far outside Decimal's finite
+        // representable scale) instead of overflowing a CLR integer.
+        let normalizedNumeric (literal: string) =
+            // Charge the entire canonical pass before allocating its digit
+            // buffer; this work is separate from lexical source scanning.
+            RewriteResourceBudget.charge (int64 literal.Length)
+            let exponentAt = literal.IndexOfAny([| 'e'; 'E' |])
+            let coefficientEnd =
+                if exponentAt < 0 then literal.Length else exponentAt
+            let digits = Text.StringBuilder(coefficientEnd)
+            let mutable inFraction = false
+            let mutable fractionalDigits = 0L
+            for position = 0 to coefficientEnd - 1 do
+                if (position &&& 4095) = 0 then RewriteResourceBudget.checkpoint ()
+                let c = literal.[position]
+                if c = '.' then
+                    inFraction <- true
+                elif c >= '0' && c <= '9' then
+                    digits.Append(c) |> ignore
+                    if inFraction then fractionalDigits <- fractionalDigits + 1L
+
+            let mutable first = 0
+            while first < digits.Length && digits.[first] = '0' do
+                if (first &&& 4095) = 0 then RewriteResourceBudget.checkpoint ()
+                first <- first + 1
+            if first = digits.Length then
+                "0", 0L
+            else
+                let mutable last = digits.Length
+                while last > first && digits.[last - 1] = '0' do
+                    if (last &&& 4095) = 0 then RewriteResourceBudget.checkpoint ()
+                    last <- last - 1
+
+                let mutable power = 0L
+                if exponentAt >= 0 then
+                    let mutable position = exponentAt + 1
+                    let negative =
+                        if position < literal.Length && literal.[position] = '-' then
+                            position <- position + 1
+                            true
+                        else
+                            if position < literal.Length && literal.[position] = '+' then
+                                position <- position + 1
+                            false
+                    while position < literal.Length do
+                        if (position &&& 4095) = 0 then RewriteResourceBudget.checkpoint ()
+                        power <-
+                            min 1000000000L
+                                (power * 10L + int64 (int literal.[position] - int '0'))
+                        position <- position + 1
+                    if negative then power <- -power
+
+                digits.ToString(first, last - first),
+                power - fractionalDigits + int64 (digits.Length - last)
+
+        // First provider-specific exact numeric proof: PostgreSQL NUMERIC.
+        // The tuple is a normalized coefficient and power-of-ten, so neither
+        // a long source exponent nor leading/trailing zeros can escape the
+        // deliberately conservative 1000-digit/scale acceptance envelope.
+        // Other source dialects retain their existing fail-closed semantics.
+        let tryExactNumeric (text: string) start finish =
+            if not semantics.PostgresExactNumeric || text.Length > 4096 then false
+            else
+                let coefficient, exponent = normalizedNumeric text
+                let significant = int64 coefficient.Length
+                let integerDigits = max 0L (significant + exponent)
+                let fractionDigits = max 0L (-exponent)
+                let totalDigits = integerDigits + fractionDigits
+                if totalDigits > 1000L then false
+                else
+                    add (ExactNumericLiteral text) start finish
+                    true
+
+        // SQL numeric magnitudes are bounded by the canonical DecimalLiteral
+        // model. Never leak CLR overflow or silently round/underflow
+        // representable SQL syntax into a DIFFERENT numeric value.
+        let decimalLiteral (text: string) start finish =
+            // Account for the CLR parse pass separately from exact decimal
+            // normalization, before entering an expensive long-token parse.
+            RewriteResourceBudget.charge (int64 text.Length)
+            match Decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture) with
+            | true, value ->
+                // G29 round-trips the CLR Decimal value. If the actual SQL
+                // numeric differs, never accept the rounded/underflowed value.
+                // PostgreSQL alone may instead create an opaque exact token.
+                let rendered = value.ToString("G29", CultureInfo.InvariantCulture)
+                if normalizedNumeric text <> normalizedNumeric rendered then
+                    if not (tryExactNumeric text start finish) then
+                        lexicalError
+                            "SQL_LEXICAL_NUMERIC_PRECISION_LOSS"
+                            "Numeric literal cannot be represented exactly by the supported Decimal model."
+                            start (finish - start)
+                else
+                    add (DecimalLiteral value) start finish
+            | false, _ ->
+                if not (tryExactNumeric text start finish) then
+                    lexicalError
+                        "SQL_LEXICAL_NUMERIC_OUT_OF_RANGE"
+                        "Numeric literal is outside the supported Decimal range."
+                        start (finish - start)
 
         let rejectBackslashIfAmbiguous kind start current =
             match semantics.Backslash with
@@ -489,6 +609,11 @@ module internal RewriteLexer =
                 while i < length && isIdentifierPart sql[i] do i <- i + 1
                 let parameterText = sql.Substring(start, i - start)
                 parseError ("Unbound SQL parameter '" + parameterText + "'.") start (max 1 (i - start))
+            elif c = '@' && semantics.ScriptMySqlAccountSeparator then
+                // Script-only MySQL DCL account delimiter. The executable SQL
+                // parser uses a stricter lexer and continues to reject @params.
+                add (Symbol '@') i (i + 1)
+                i <- i + 1
             elif c = '@' then
                 let start = i
                 i <- i + 1
@@ -512,6 +637,7 @@ module internal RewriteLexer =
                 let mutable hasExponent = false
 
                 while i < length && Char.IsDigit(sql[i]) do
+                    if (i &&& 4095) = 0 then chargeSourceProgress ()
                     hasDigits <- true
                     i <- i + 1
 
@@ -519,6 +645,7 @@ module internal RewriteLexer =
                     hasDot <- true
                     i <- i + 1
                     while i < length && Char.IsDigit(sql[i]) do
+                        if (i &&& 4095) = 0 then chargeSourceProgress ()
                         hasDigits <- true
                         i <- i + 1
 
@@ -532,6 +659,7 @@ module internal RewriteLexer =
                         i <- i + 1
                     let exponentStart = i
                     while i < length && Char.IsDigit(sql[i]) do
+                        if (i &&& 4095) = 0 then chargeSourceProgress ()
                         i <- i + 1
                     if i = exponentStart then
                         parseError "Invalid numeric exponent." start (max 1 (i - start))
@@ -539,16 +667,24 @@ module internal RewriteLexer =
                 if i < length && (sql[i] = '.' || isConfiguredIdentifierStart sql[i]) then
                     let invalidStart = i
                     while i < length && (sql[i] = '.' || isConfiguredIdentifierPart sql[i]) do
+                        if (i &&& 4095) = 0 then chargeSourceProgress ()
                         i <- i + 1
                     parseError "Invalid numeric literal." start (max 1 (i - start))
 
+                // Ensure single-token digit loops observe cancellation and
+                // charge source progress before allocating their substring.
+                chargeSourceProgress ()
                 let text = sql.Substring(start, i - start)
                 if not hasDot && not hasExponent then
+                    // Huge leading-zero integer lexemes may fit Int64 despite
+                    // being millions of digits long. The CLR integer parse is
+                    // a separate pass that must not bypass the lexical quota.
+                    RewriteResourceBudget.charge (int64 text.Length)
                     match Int64.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture) with
                     | true, value -> add (IntegerLiteral value) start i
-                    | _ -> add (DecimalLiteral(Decimal.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture))) start i
+                    | _ -> decimalLiteral text start i
                 else
-                    add (DecimalLiteral(Decimal.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture))) start i
+                    decimalLiteral text start i
             elif isConfiguredIdentifierStart c then
                 let start = i
                 i <- i + 1
@@ -597,7 +733,11 @@ module internal RewriteLexer =
 
         chargeSourceProgress ()
 
-        if groupingDepth <> 0 then
+        // Script-only SQL Server dispatch can defer unmatched opening
+        // grouping to each statement's strict lexer, allowing a subsequent
+        // physical GO batch to be analyzed independently. The executable
+        // compiler always uses the original strict grouping validation.
+        if groupingDepth <> 0 && not semantics.ScriptDeferUnclosedGrouping then
             lexicalError
                 "SQL_LEXICAL_UNBALANCED_PARENTHESIS"
                 "SQL text ends with an opening parenthesis that has no matching closing parenthesis."

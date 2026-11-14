@@ -16,8 +16,50 @@ public partial class SqlAgentTool(
     ITypedQueryRuntime? typedQueryRuntime = null,
     TypedDmlRuntime? typedDmlRuntime = null,
     IDmlApprovalProvider? dmlApprovalProvider = null,
-    IDmlApprovalCompletionSink? dmlApprovalCompletionSink = null)
+    IDmlApprovalCompletionSink? dmlApprovalCompletionSink = null,
+    PostgresDdlRuntime? postgresDdlRuntime = null,
+    IDdlApprovalProvider? ddlApprovalProvider = null,
+    SqliteDdlRuntime? sqliteDdlRuntime = null,
+    SqlServerDdlRuntime? sqlServerDdlRuntime = null,
+    FirebirdDdlRuntime? firebirdDdlRuntime = null,
+    MySqlDdlRuntime? mySqlDdlRuntime = null,
+    OracleDdlRuntime? oracleDdlRuntime = null)
 {
+    // Preserve the public v3.0.0 CLR constructor for already-compiled .NET consumers.
+    // The new DDL runtimes remain opt-in: this legacy entry point never injects
+    // or authorizes them and delegates to the same current implementation.
+    public SqlAgentTool(
+        IHttpContextAccessor httpContextAccessor,
+        ISqlProviderFactory sqlProviderFactory,
+        IAuditService auditService,
+        IDbSemanticService semanticService,
+        ISecurityPolicyRuntimeState securityPolicyRuntimeState,
+        ISqlExecutionConcurrencyLimiter sqlConcurrencyLimiter,
+        ITypedQueryRuntime? typedQueryRuntime,
+        TypedDmlRuntime? typedDmlRuntime,
+        IDmlApprovalProvider? dmlApprovalProvider,
+        IDmlApprovalCompletionSink? dmlApprovalCompletionSink)
+        : this(
+            httpContextAccessor,
+            sqlProviderFactory,
+            auditService,
+            semanticService,
+            securityPolicyRuntimeState,
+            sqlConcurrencyLimiter,
+            typedQueryRuntime,
+            typedDmlRuntime,
+            dmlApprovalProvider,
+            dmlApprovalCompletionSink,
+            postgresDdlRuntime: null,
+            ddlApprovalProvider: null,
+            sqliteDdlRuntime: null,
+            sqlServerDdlRuntime: null,
+            firebirdDdlRuntime: null,
+            mySqlDdlRuntime: null,
+            oracleDdlRuntime: null)
+    {
+    }
+
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
     private readonly ISqlProviderFactory _sqlProviderFactory = sqlProviderFactory;
     private readonly IAuditService _auditService = auditService;
@@ -28,4 +70,11 @@ public partial class SqlAgentTool(
     private readonly TypedDmlRuntime _typedDmlRuntime = typedDmlRuntime ?? new TypedDmlRuntime();
     private readonly IDmlApprovalProvider? _dmlApprovalProvider = dmlApprovalProvider;
     private readonly IDmlApprovalCompletionSink? _dmlApprovalCompletionSink = dmlApprovalCompletionSink;
+    private readonly PostgresDdlRuntime? _postgresDdlRuntime = postgresDdlRuntime;
+    private readonly IDdlApprovalProvider? _ddlApprovalProvider = ddlApprovalProvider;
+    private readonly SqliteDdlRuntime? _sqliteDdlRuntime = sqliteDdlRuntime;
+    private readonly SqlServerDdlRuntime? _sqlServerDdlRuntime = sqlServerDdlRuntime;
+    private readonly FirebirdDdlRuntime? _firebirdDdlRuntime = firebirdDdlRuntime;
+    private readonly MySqlDdlRuntime? _mySqlDdlRuntime = mySqlDdlRuntime;
+    private readonly OracleDdlRuntime? _oracleDdlRuntime = oracleDdlRuntime;
 }

@@ -2,6 +2,7 @@
 import { Command } from "@lucide/vue";
 import NavUser from "@/components/NavUser.vue";
 import { Permissions } from "@/lib/permissions";
+import { useAuthStore } from "@/stores/auth";
 import {
   Sidebar,
   SidebarContent,
@@ -16,6 +17,12 @@ import {
 } from "@/components/ui/sidebar";
 
 const route = useRoute();
+const auth = useAuthStore();
+const user = computed(() => ({
+  name: auth.userName || "User",
+  email: auth.userEmail || "user@example.com",
+  avatar: "",
+}));
 const { $can } = useNuxtApp();
 
 const navMain = computed(() =>
@@ -34,18 +41,7 @@ const props = defineProps<{
   class?: any;
 }>();
 
-onMounted(() => {
-  data.value.user.name = localStorage.getItem("userName") || "User";
-  data.value.user.email =
-    localStorage.getItem("userEmail") || "user@example.com";
-});
-
 const data = ref({
-  user: {
-    name: "",
-    email: "",
-    avatar: "",
-  },
   navGroups: [
     {
       title: "Runtime Management",
@@ -118,7 +114,7 @@ const data = ref({
       </SidebarGroup>
     </SidebarContent>
     <SidebarFooter>
-      <NavUser :user="data.user" />
+      <NavUser :user="user" />
     </SidebarFooter>
   </Sidebar>
 </template>

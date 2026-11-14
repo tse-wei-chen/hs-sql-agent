@@ -53,6 +53,10 @@ internal sealed class TypedDmlTransactionApprovalFlow(
                     ErrorCode: "server.busy",
                     ErrorStage: "Execution",
                     Retryable: true);
+            // Preview is non-commit work: discard any evidence if Redis
+            // admission is lost, including a late success from the driver.
+            using var leaseCancellation = new SqlExecutionLeaseCancellation(lease, cancellationToken);
+            leaseCancellation.Token.ThrowIfCancellationRequested();
             session = await runtime.PreviewTransactionAsync(
                 provider,
                 connectionString,
@@ -60,7 +64,8 @@ internal sealed class TypedDmlTransactionApprovalFlow(
                 previewPolicy,
                 previewAllowedTables,
                 approvalContext,
-                cancellationToken);
+                leaseCancellation.Token);
+            leaseCancellation.Token.ThrowIfCancellationRequested();
         }
 
         var approvalRequest = DmlApprovalRequestFactory.Create(approvalTitle, approvalContext, session);
@@ -119,6 +124,19 @@ internal sealed class TypedDmlTransactionApprovalFlow(
                 ErrorCode: "server.busy",
                 ErrorStage: "Execution",
                 Retryable: true);
+
+        // Do not cross into target COMMIT when the newly acquired distributed
+        // admission is already revoked. No approval challenge is consumed.
+        if (SqlDmlCommitLeaseAdmission.IsRevoked(commitLease))
+            return new TypedDmlExecutionTiming(
+                SqlDmlCommitLeaseAdmission.RefusalMessage,
+                approvalWaitDurationMs,
+                session.Challenge.AffectedRows,
+                false,
+                DmlApprovalDecision.Approved,
+                approvalRequest.RequestId,
+                ErrorCode: SqlDmlCommitLeaseAdmission.ErrorCode,
+                ErrorStage: "Admission");
 
         DmlCommitResult commit;
         try

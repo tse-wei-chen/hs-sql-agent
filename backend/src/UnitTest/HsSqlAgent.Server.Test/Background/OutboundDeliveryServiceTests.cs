@@ -36,8 +36,14 @@ public class OutboundDeliveryServiceTests
             await setup.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
             setup.OutboundDeliveries.Add(new OutboundDelivery
             {
-                Id = 1, Category = "siem", DedupeKey = "event-1", TargetUrl = "https://siem.example/events",
-                Payload = "{\"event\":1}", Status = "pending", CreatedAt = DateTime.UtcNow, NextAttemptAt = DateTime.UtcNow
+                Id = 1,
+                Category = "siem",
+                DedupeKey = "event-1",
+                TargetUrl = "https://siem.example/events",
+                Payload = "{\"event\":1}",
+                Status = "pending",
+                CreatedAt = DateTime.UtcNow,
+                NextAttemptAt = DateTime.UtcNow
             });
             await setup.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
@@ -54,7 +60,8 @@ public class OutboundDeliveryServiceTests
         factory.Setup(x => x.CreateClient("operability-webhook")).Returns(new HttpClient(handler));
         var settings = Options.Create(new OperabilitySettings
         {
-            SiemWebhookSecret = "01234567890123456789012345678901", DeliveryMaxAttempts = 3
+            SiemWebhookSecret = "01234567890123456789012345678901",
+            DeliveryMaxAttempts = 3
         });
         var service = new OutboundDeliveryService(provider.GetRequiredService<IServiceScopeFactory>(), factory.Object, settings, NullLogger<OutboundDeliveryService>.Instance);
 
@@ -80,8 +87,15 @@ public class OutboundDeliveryServiceTests
             await setup.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
             setup.OutboundDeliveries.Add(new OutboundDelivery
             {
-                Id = 1, Category = "alert", DedupeKey = "alert-1", TargetUrl = "https://alerts.example/events",
-                Payload = "{}", Status = "pending", AttemptCount = 2, CreatedAt = DateTime.UtcNow, NextAttemptAt = DateTime.UtcNow
+                Id = 1,
+                Category = "alert",
+                DedupeKey = "alert-1",
+                TargetUrl = "https://alerts.example/events",
+                Payload = "{}",
+                Status = "pending",
+                AttemptCount = 2,
+                CreatedAt = DateTime.UtcNow,
+                NextAttemptAt = DateTime.UtcNow
             });
             await setup.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
@@ -93,7 +107,8 @@ public class OutboundDeliveryServiceTests
             .Returns(new HttpClient(new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable))));
         var settings = Options.Create(new OperabilitySettings
         {
-            AlertWebhookSecret = "01234567890123456789012345678901", DeliveryMaxAttempts = 3
+            AlertWebhookSecret = "01234567890123456789012345678901",
+            DeliveryMaxAttempts = 3
         });
         var service = new OutboundDeliveryService(provider.GetRequiredService<IServiceScopeFactory>(), factory.Object, settings, NullLogger<OutboundDeliveryService>.Instance);
 

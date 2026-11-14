@@ -165,8 +165,13 @@ const lifecycleToolOptions = computed(() => toToolOptions(lifecycleTools.value))
 const selectedToolLabel = computed(() =>
   formatAllowedToolsLabel(detail.value.allowedTools),
 );
+const lifecycleLegacyUnrestricted = computed(() =>
+  lifecycleMode.value === "edit" &&
+  !lifecycleKey.value?.allowedTools?.trim() &&
+  lifecycleAllowedTools.value.length === 0,
+);
 const lifecycleSelectedToolLabel = computed(() =>
-  formatAllowedToolsLabel(lifecycleAllowedTools.value),
+  formatAllowedToolsLabel(lifecycleAllowedTools.value, lifecycleLegacyUnrestricted.value),
 );
 
 const dmlToolNames = computed(
@@ -183,6 +188,26 @@ const lifecycleDmlToolNames = computed(
       .map((tool) => tool.name),
   ),
 );
+const ddlToolNames = computed(
+  () => new Set(
+    availableTools.value
+      .filter((tool) => tool.type === "DDL")
+      .map((tool) => tool.name.toLocaleLowerCase()),
+  ),
+);
+const lifecycleDdlToolNames = computed(
+  () => new Set(
+    lifecycleTools.value
+      .filter((tool) => tool.type === "DDL")
+      .map((tool) => tool.name.toLocaleLowerCase()),
+  ),
+);
+const issueHasDdl = computed(() =>
+  detail.value.allowedTools.some((name) => ddlToolNames.value.has(name.toLocaleLowerCase())),
+);
+const lifecycleHasDdl = computed(() =>
+  lifecycleAllowedTools.value.some((name) => lifecycleDdlToolNames.value.has(name.toLocaleLowerCase())),
+);
 
 const issueRequiresElicitation = computed(() =>
   allowedToolsRequireElicitation(detail.value.allowedTools, dmlToolNames.value),
@@ -191,6 +216,7 @@ const lifecycleRequiresElicitation = computed(() =>
   allowedToolsRequireElicitation(
     lifecycleAllowedTools.value,
     lifecycleDmlToolNames.value,
+    lifecycleLegacyUnrestricted.value,
   ),
 );
 
@@ -200,6 +226,9 @@ const issueAccessPosture = computed(() =>
     dmlToolNames.value,
     isWhitelistEnabled.value,
     detail.value.tableWhitelist.length,
+    0,
+    false,
+    ddlToolNames.value,
   ),
 );
 
@@ -216,11 +245,17 @@ const lifecycleAccessPosture = computed(() =>
     lifecycleDmlToolNames.value,
     lifecycleTableCount.value > 0,
     lifecycleTableCount.value,
+    0,
+    lifecycleLegacyUnrestricted.value,
+    lifecycleDdlToolNames.value,
   ),
 );
 
 const accessPostureClass = (level: McpAccessPostureLevel) => {
   if (level === "unrestricted") {
+    return "border-red-300 bg-red-50 text-red-900 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200";
+  }
+  if (level === "ddl-enabled" || level === "dml-ddl-enabled") {
     return "border-red-300 bg-red-50 text-red-900 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200";
   }
   if (level === "dml-enabled") {
@@ -422,6 +457,9 @@ const issue = async () => {
     if (!toolCatalogReady.value) {
       throw new Error("The MCP tool catalog must load before a key can be issued.");
     }
+    if (detail.value.allowedTools.length === 0) {
+      throw new Error("Select at least one tool. Empty selections cannot issue unrestricted MCP keys.");
+    }
 
     const expiresAt = resolveMcpKeyExpiry(
       detail.value.expiresAt,
@@ -435,10 +473,7 @@ const issue = async () => {
     const result = await issueMcpKey({
       name: values.name.trim(),
       expiresAt,
-      allowedTools:
-        detail.value.allowedTools.length > 0
-          ? detail.value.allowedTools.join(",")
-          : null,
+      allowedTools: detail.value.allowedTools.join(","),
       corsAllowedOrigins: detail.value.corsAllowedOrigins?.trim() || null,
       dbManagementId: detail.value.dbManagementId || 0,
       tableWhitelist,
@@ -539,6 +574,9 @@ const resolveStoredKeyAccessPosture = (key: McpKeyItem) => {
   const catalogDmlTools = catalog
     .filter((tool) => tool.type === "DML")
     .map((tool) => tool.name);
+  const catalogDdlTools = catalog
+    .filter((tool) => tool.type === "DDL")
+    .map((tool) => tool.name);
 
   return resolveMcpAccessPosture(
     allowedTools,
@@ -546,6 +584,8 @@ const resolveStoredKeyAccessPosture = (key: McpKeyItem) => {
     tableWhitelist.length > 0,
     tableWhitelist.length,
     unclassifiedToolCount,
+    !key.allowedTools?.trim(),
+    catalogDdlTools,
   );
 };
 
@@ -584,6 +624,10 @@ const openLifecycle = (
 
 const saveLifecycle = async () => {
   if (!lifecycleKey.value || !lifecycleMode.value) return;
+  if (lifecycleMode.value === "edit" && lifecycleAllowedTools.value.length === 0) {
+    toast.error("Select at least one tool. Blank edits cannot grant unrestricted access.");
+    return;
+  }
   lifecycleSaving.value = true;
   try {
     let result;
@@ -591,10 +635,7 @@ const saveLifecycle = async () => {
       result = await updateMcpKey(lifecycleKey.value.id, {
         name: lifecycleName.value.trim(),
         expiresAt: lifecycleExpiry(),
-        allowedTools:
-          lifecycleAllowedTools.value.length > 0
-            ? lifecycleAllowedTools.value.join(",")
-            : null,
+        allowedTools: lifecycleAllowedTools.value.join(","),
         corsAllowedOrigins: lifecycleCors.value.trim() || null,
         dbManagementId: lifecycleDbManagementId.value,
         tableWhitelist: lifecycleTableWhitelist.value.trim() || null,
@@ -732,7 +773,7 @@ onMounted(load);
               class="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
             >
               Disables only this key's request quota. IP throttling, SQL concurrency,
-              row limits, timeouts, and DML safeguards still apply.
+              row limits, timeouts, and applicable approval safeguards still apply.
             </div>
             <VeeField name="dbManagementId" rules="required" v-slot="{ errorMessage, meta: fieldMeta }">
               <Field>
@@ -846,7 +887,7 @@ onMounted(load);
                     <span
                       class="text-xs font-mono shrink-0"
                       :class="{
-                        'text-red-500': option.risk === 'high',
+                        'text-red-500': option.risk === 'high' || option.risk === 'critical',
                         'text-yellow-500': option.risk === 'medium',
                         'text-emerald-500': option.risk === 'low',
                       }"
@@ -857,7 +898,7 @@ onMounted(load);
                 </template>
               </MultiSelect>
               <p v-if="toolCatalogReady" class="mt-2 text-xs text-muted-foreground">
-                New keys start with the four safe read/query tools selected. DML is opt-in.
+                New keys start with four safe read/query tools. At least one tool must remain selected; DML is opt-in.
               </p>
               <div
                 v-if="toolCatalogReady"
@@ -875,7 +916,13 @@ onMounted(load);
                 v-if="toolCatalogReady && issueRequiresElicitation"
                 class="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
               >
-                This key can invoke DML. Its MCP client must support form Elicitation so a human can approve each commit; unsupported clients will be refused. An unrestricted tool list also includes DML.
+                DML commits require configured approval. If MCP form Elicitation is selected, the client must support it; other approval providers use their own flow.
+              </div>
+              <div
+                v-if="toolCatalogReady && issueHasDdl"
+                class="mt-2 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200"
+              >
+                DDL access is high risk. A selected tool does not enable schema changes: the Host must explicitly enable DDL and require separate DDL approval plus live schema checks. Table whitelists are not DDL schema restrictions.
               </div>
             </Field>
             <Field class="md:col-span-2">
@@ -1033,7 +1080,7 @@ onMounted(load);
             </div>
 
             <div class="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
-              <span>Tools: {{ key.allowedTools || "All current tools" }}</span>
+              <span>Tools: {{ key.allowedTools || "Legacy unrestricted (all current tools)" }}</span>
               <span>Expires: {{ key.expiresAt || "never" }}</span>
               <span>CORS: {{ key.corsAllowedOrigins || "none" }}</span>
             </div>
@@ -1103,7 +1150,7 @@ onMounted(load);
                     <span
                       class="text-xs font-mono shrink-0"
                       :class="{
-                        'text-red-500': option.risk === 'high',
+                        'text-red-500': option.risk === 'high' || option.risk === 'critical',
                         'text-yellow-500': option.risk === 'medium',
                         'text-emerald-500': option.risk === 'low',
                       }"
@@ -1128,7 +1175,13 @@ onMounted(load);
                 v-if="lifecycleRequiresElicitation"
                 class="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900"
               >
-                DML is enabled (an empty list means all tools). The client must support MCP form Elicitation.
+                DML commits require configured approval. MCP form Elicitation needs client support only when that provider is selected. To edit a legacy unrestricted key, select explicit tools first.
+              </div>
+              <div
+                v-if="lifecycleHasDdl"
+                class="mt-2 rounded-md border border-red-300 bg-red-50 p-3 text-xs text-red-900 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200"
+              >
+                DDL requires an explicit execute_ddl_sql grant, separate DDL approval, an enabled Host, and live schema checks. Table whitelists do not scope DDL changes.
               </div>
             </Field>
             <Field>

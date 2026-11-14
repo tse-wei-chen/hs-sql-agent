@@ -23,6 +23,9 @@ public sealed class TypedDmlRuntime(
     IDmlTargetExecutionFence? targetExecutionFence = null)
 {
     private const int MaxStatementsPerTransaction = 16;
+    // Direct approval sessions stay on the same process; durable recovery re-previews.
+    // A process-secret HMAC avoids exposing a guessable raw connection-string hash.
+    private static readonly byte[] PreviewConnectionBindingKey = RandomNumberGenerator.GetBytes(32);
     private static readonly IDmlPreviewTransactionFactory DriverNeutralPreviewTransactions =
         new ProviderDmlPreviewTransactionFactory();
 
@@ -79,6 +82,34 @@ public sealed class TypedDmlRuntime(
             : CoreDmlBatchTextParser.ParseDmlBatch(sql, sourceDialect);
     }
 
+    /// <summary>
+    /// Runtime-profile verification opens a physical connection. Budget that
+    /// connection separately from the preview and commit leases: the lease is
+    /// released before asynchronous approval/provider wait time begins.
+    /// </summary>
+    internal async Task<ParsedDmlBatch> ParseDmlBatchWithVerifiedRuntimeProfileUnderLeaseAsync(
+        ISqlProvider provider,
+        string connectionString,
+        string sql,
+        SqlAgentToolType sourceDialect,
+        ISqlExecutionConcurrencyLimiter concurrencyLimiter,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(concurrencyLimiter);
+        await using var lease = await concurrencyLimiter.TryAcquireAsync(cancellationToken);
+        if (lease is null)
+            throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
+        // Runtime-profile discovery performs physical I/O. An expired Redis
+        // admission must not authorize that I/O or return a verified plan.
+        using var leaseCancellation = new SqlExecutionLeaseCancellation(lease, cancellationToken);
+        leaseCancellation.Token.ThrowIfCancellationRequested();
+        var parsed = await ParseDmlBatchWithVerifiedRuntimeProfileAsync(
+            provider, connectionString, sql, sourceDialect, leaseCancellation.Token);
+        // A provider may ignore cancellation and return after revocation.
+        leaseCancellation.Token.ThrowIfCancellationRequested();
+        return parsed;
+    }
+
     public async Task<TypedDmlApprovalSession> PreviewAsync(
         ISqlProvider provider,
         string connectionString,
@@ -94,6 +125,43 @@ public sealed class TypedDmlRuntime(
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
         EnsureSupportedStatement(parsedMutation.Statement);
+        if (parsedMutation.Statement is MergeStatement
+            && (parsedMutation.SourceDialect != SqlAgentToolType.MsSqlServer
+                || provider.Type != SqlAgentToolType.MsSqlServer
+                || provider.GetType() != typeof(HsSqlAgent.Provider.SqlServer.MsSqlServerProvider)
+                || _schemaSnapshotSource is not NativeDmlSchemaSnapshotService
+                || _schemaFreshnessVerifier is not NativeDmlSchemaSnapshotService))
+            throw new NotSupportedException(
+                "SQL Server MERGE Host approval requires the exact built-in SQL Server provider, physical schema capture and commit-time freshness verification.");
+        if (parsedMutation.Statement is InsertStatement { Conflict: not null }
+            && (parsedMutation.SourceDialect != provider.Type
+                || !((provider.Type == SqlAgentToolType.Sqlite
+                      && provider.GetType() == typeof(HsSqlAgent.Provider.Sqlite.SqliteProvider))
+                  || (provider.Type == SqlAgentToolType.Postgres
+                      && provider.GetType() == typeof(HsSqlAgent.Provider.PostgreSql.PostgresProvider)))
+                || _schemaSnapshotSource is not NativeDmlSchemaSnapshotService
+                || _schemaFreshnessVerifier is not NativeDmlSchemaSnapshotService))
+            throw new NotSupportedException(
+                "Native SQLite/PostgreSQL conflict skip requires the built-in exact provider, physical schema capture and commit-time freshness verification.");
+        if (parsedMutation.Statement is InsertStatement { Source: InsertQuerySource }
+            && (parsedMutation.SourceDialect != provider.Type
+                || provider.Type is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL)))
+            throw new NotSupportedException(
+                "INSERT SELECT source-row approval requires native SQLite, PostgreSQL or MySQL only.");
+        if (parsedMutation.Statement is InsertStatement { Source: InsertQuerySource } sourceInsert)
+        {
+            // Source read permission is separate from target write permission.
+            // Deny before even fetching physical source metadata.
+            var sourceShape = NativeInsertSelectSafety.RequireShape(
+                sourceInsert, parsedMutation.SourceDialect, provider.Type, policy.DmlMaxAffectedRows);
+            if (allowedTables is not null
+                && !allowedTables.Any(table => string.Equals(table, sourceShape.PhysicalSource,
+                    provider.Type is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL
+                        ? StringComparison.Ordinal
+                        : StringComparison.OrdinalIgnoreCase)))
+                throw new UnauthorizedAccessException(
+                    "INSERT SELECT source table is not in the authorized table scope.");
+        }
         ValidateApprovalContextFields(approvalContext);
         if (provider.Type != approvalContext.Provider)
             throw new InvalidOperationException("DML approval provider does not match the current execution context.");
@@ -164,7 +232,10 @@ public sealed class TypedDmlRuntime(
             cancellationToken,
             verifiedProfile.ServerVersionIdentity);
 
-        return new TypedDmlApprovalSession(plan, preview, verifiedProfile.ServerVersionIdentity);
+        return new TypedDmlApprovalSession(plan, preview, verifiedProfile.ServerVersionIdentity)
+        {
+            PreviewConnectionFingerprint = ComputePreviewConnectionFingerprint(provider.Type, connectionString)
+        };
     }
 
     public async Task<TypedDmlTransactionApprovalSession> PreviewTransactionAsync(
@@ -182,6 +253,30 @@ public sealed class TypedDmlRuntime(
         if (parsedBatch.Count > MaxStatementsPerTransaction)
             throw new UnauthorizedAccessException(
                 $"DML transaction contains {parsedBatch.Count} statements; maximum is {MaxStatementsPerTransaction}.");
+
+        // A bounded physical-source INSERT SELECT may be one member of an
+        // already-approved SQLite atomic batch. Do not promote the single-
+        // statement source proof to a different provider, multiple source
+        // insertions, or a caller-supplied virtual schema/freshness attestation.
+        if (parsedBatch.Statements.Any(item => item.Statement is MergeStatement))
+            throw new NotSupportedException(
+                "SQL Server MERGE approval is single-statement only; atomic MERGE batches require independent cross-statement evidence.");
+        if (parsedBatch.Statements.Any(item => item.Statement is InsertStatement { Conflict: not null }))
+            throw new NotSupportedException(
+                "Native conflict skip is single-statement only; atomic conflict batches require a separate cross-statement proof.");
+
+        var sourceInsertCount = parsedBatch.Statements.Count(item =>
+            item.Statement is InsertStatement { Source: InsertQuerySource });
+        if (sourceInsertCount > 0
+            && (provider.Type != SqlAgentToolType.Sqlite
+                || parsedBatch.Count < 2
+                || sourceInsertCount != 1
+                || parsedBatch.Statements.Any(item => item.SourceDialect != SqlAgentToolType.Sqlite)
+                || _schemaSnapshotSource is not NativeDmlSchemaSnapshotService
+                || _schemaFreshnessVerifier is not NativeDmlSchemaSnapshotService))
+            throw new NotSupportedException(
+                "Atomic INSERT SELECT requires exactly one real SQLite physical-source proof " +
+                "in a multi-statement SQLite batch and the built-in native schema attestation/verifier.");
 
         var builder = ImmutableArray.CreateBuilder<TypedDmlApprovalSession>(parsedBatch.Count);
         try
@@ -207,61 +302,61 @@ public sealed class TypedDmlRuntime(
 
         try
         {
-        var statements = builder.ToImmutable();
-        var totalLong = statements.Sum(x => (long)x.Preview.AffectedRows);
-        if (totalLong > int.MaxValue)
-        {
-            throw new UnauthorizedAccessException("DML transaction affected row count exceeds the supported integer range.");
-        }
-        var total = (int)totalLong;
-        if (policy.DmlMaxAffectedRows > 0 && total > policy.DmlMaxAffectedRows)
-        {
-            throw new UnauthorizedAccessException(
-                $"Security policy denied DML transaction: affectedRows={total} exceeds maximum {policy.DmlMaxAffectedRows}.");
-        }
+            var statements = builder.ToImmutable();
+            var totalLong = statements.Sum(x => (long)x.Preview.AffectedRows);
+            if (totalLong > int.MaxValue)
+            {
+                throw new UnauthorizedAccessException("DML transaction affected row count exceeds the supported integer range.");
+            }
+            var total = (int)totalLong;
+            if (policy.DmlMaxAffectedRows > 0 && total > policy.DmlMaxAffectedRows)
+            {
+                throw new UnauthorizedAccessException(
+                    $"Security policy denied DML transaction: affectedRows={total} exceeds maximum {policy.DmlMaxAffectedRows}.");
+            }
 
-        var policyVersion = statements[0].Plan.PolicyVersion;
-        if (statements.Any(x => !string.Equals(x.Plan.PolicyVersion, policyVersion, StringComparison.Ordinal)))
-        {
-            throw new InvalidOperationException("DML transaction statements were compiled under different security policy versions.");
-        }
+            var policyVersion = statements[0].Plan.PolicyVersion;
+            if (statements.Any(x => !string.Equals(x.Plan.PolicyVersion, policyVersion, StringComparison.Ordinal)))
+            {
+                throw new InvalidOperationException("DML transaction statements were compiled under different security policy versions.");
+            }
 
-        var serverVersion = statements[0].VerifiedServerVersionIdentity;
-        if (string.IsNullOrWhiteSpace(serverVersion)
-            || statements.Any(x => !string.Equals(x.VerifiedServerVersionIdentity, serverVersion, StringComparison.Ordinal)))
-        {
-            throw new InvalidOperationException("DML transaction statements were previewed against different runtime server versions.");
-        }
+            var serverVersion = statements[0].VerifiedServerVersionIdentity;
+            if (string.IsNullOrWhiteSpace(serverVersion)
+                || statements.Any(x => !string.Equals(x.VerifiedServerVersionIdentity, serverVersion, StringComparison.Ordinal)))
+            {
+                throw new InvalidOperationException("DML transaction statements were previewed against different runtime server versions.");
+            }
 
-        var planFingerprint = ComputeTransactionPlanFingerprint(statements);
-        var evidenceFingerprint = ComputeTransactionEvidenceFingerprint(statements);
-        var approvalContextFingerprint = ComputeApprovalContextFingerprint(approvalContext);
-        var now = _timeProvider.GetUtcNow();
-        var expiresAt = statements.Min(x => x.Preview.Challenge.ExpiresAt);
-        if (expiresAt <= now)
-        {
-            throw new InvalidOperationException("DML transaction approval expired during preview.");
-        }
+            var planFingerprint = ComputeTransactionPlanFingerprint(statements);
+            var evidenceFingerprint = ComputeTransactionEvidenceFingerprint(statements);
+            var approvalContextFingerprint = ComputeApprovalContextFingerprint(approvalContext);
+            var now = _timeProvider.GetUtcNow();
+            var expiresAt = statements.Min(x => x.Preview.Challenge.ExpiresAt);
+            if (expiresAt <= now)
+            {
+                throw new InvalidOperationException("DML transaction approval expired during preview.");
+            }
 
-        var challenge = new DmlApprovalChallenge(
-            planFingerprint,
-            evidenceFingerprint,
-            total,
-            policyVersion,
-            approvalContextFingerprint,
-            now,
-            expiresAt,
-            Guid.NewGuid().ToString("N"));
-        // Redis and in-memory stores atomically swap all child approvals for
-        // this aggregate. A failed promotion must never expose a usable batch
-        // or partially consume its child challenges.
-        if (!await _challengeStore.TryPromoteAsync(
-                statements.Select(x => x.Preview.Challenge).ToArray(),
-                challenge,
-                cancellationToken))
-            throw new InvalidOperationException(
-                "DML transaction approval promotion failed: a child was changed, consumed or expired, or the aggregate nonce was already registered.");
-        return new TypedDmlTransactionApprovalSession(statements, challenge);
+            var challenge = new DmlApprovalChallenge(
+                planFingerprint,
+                evidenceFingerprint,
+                total,
+                policyVersion,
+                approvalContextFingerprint,
+                now,
+                expiresAt,
+                Guid.NewGuid().ToString("N"));
+            // Redis and in-memory stores atomically swap all child approvals for
+            // this aggregate. A failed promotion must never expose a usable batch
+            // or partially consume its child challenges.
+            if (!await _challengeStore.TryPromoteAsync(
+                    statements.Select(x => x.Preview.Challenge).ToArray(),
+                    challenge,
+                    cancellationToken))
+                throw new InvalidOperationException(
+                    "DML transaction approval promotion failed: a child was changed, consumed or expired, or the aggregate nonce was already registered.");
+            return new TypedDmlTransactionApprovalSession(statements, challenge);
         }
         catch
         {
@@ -308,6 +403,8 @@ public sealed class TypedDmlRuntime(
                 StringComparison.Ordinal))
             throw new InvalidOperationException(
                 "DML approval execution context changed after preview; request a new preview before committing.");
+
+        EnsureApprovedConnectionTarget(session.PreviewConnectionFingerprint, provider.Type, connectionString);
 
         if (currentApprovalContext.Provider != session.Plan.MutationCommand.TargetProvider
             || provider.Type != session.Plan.MutationCommand.TargetProvider)
@@ -383,6 +480,15 @@ public sealed class TypedDmlRuntime(
             || !string.Equals(expectedEvidenceFingerprint, session.Challenge.RowSetFingerprint, StringComparison.Ordinal)
             || total != session.Challenge.AffectedRows)
             throw new InvalidOperationException("DML transaction plan, order, or preview evidence changed after approval.");
+
+        var currentConnectionFingerprint = ComputePreviewConnectionFingerprint(provider.Type, connectionString);
+        if (session.Statements.Any(statement =>
+                string.IsNullOrWhiteSpace(statement.PreviewConnectionFingerprint)
+                || !string.Equals(
+                    statement.PreviewConnectionFingerprint, currentConnectionFingerprint,
+                    StringComparison.Ordinal)))
+            throw new InvalidOperationException(
+                "DML approved connection target changed after preview; request a new preview before committing.");
 
         foreach (var statement in session.Statements)
         {
@@ -467,9 +573,17 @@ public sealed class TypedDmlRuntime(
         ?? DriverNeutralPreviewTransactions;
 
     internal static bool SupportsStatement(SqlStatement statement) =>
-        statement is UpdateStatement
+        statement is MergeStatement merge
+            ? SqlServerMergeMatchedDeleteSafety.IsBoundedShape(merge)
+            : statement is UpdateStatement
             or DeleteStatement
-            or InsertStatement { Source: InsertValuesSource, Conflict: null };
+            or InsertStatement { Source: InsertValuesSource, Conflict: null }
+        || statement is InsertStatement { Source: InsertValuesSource, Conflict: not null } conflictInsert
+            && NativeSingleRowConflictSafety.IsBoundedShape(conflictInsert)
+        || statement is InsertStatement { Source: InsertQuerySource, Conflict: null } insert
+            && (NativeInsertSelectSafety.IsBoundedShape(insert, SqlAgentToolType.Sqlite)
+                || NativeInsertSelectSafety.IsBoundedShape(insert, SqlAgentToolType.Postgres)
+                || NativeInsertSelectSafety.IsBoundedShape(insert, SqlAgentToolType.MySQL));
 
     internal static void EnsureSupportedStatement(SqlStatement statement)
     {
@@ -484,6 +598,30 @@ public sealed class TypedDmlRuntime(
                 "The typed DML runtime supports INSERT VALUES only. INSERT ... SELECT remains fail-closed until source-rowset approval semantics are defined.");
         throw new NotSupportedException(
             $"The typed DML runtime does not support statement '{statement.GetType().Name}'.");
+    }
+
+    private static string ComputePreviewConnectionFingerprint(
+        SqlAgentToolType provider, string connectionString)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+        // Bind the provider and exact connection descriptor, not just Database/DataSource.
+        // Host, port, credentials, catalog or file path changes require fresh approval.
+        var material = "v1|" + FingerprintComponent(provider.ToString()) + "|" +
+            FingerprintComponent(connectionString);
+        return Convert.ToHexString(HMACSHA256.HashData(
+            PreviewConnectionBindingKey, Encoding.UTF8.GetBytes(material)));
+    }
+
+    private static void EnsureApprovedConnectionTarget(
+        string? expectedFingerprint, SqlAgentToolType provider, string connectionString)
+    {
+        if (string.IsNullOrWhiteSpace(expectedFingerprint)
+            || !string.Equals(
+                expectedFingerprint,
+                ComputePreviewConnectionFingerprint(provider, connectionString),
+                StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                "DML approved connection target changed after preview; request a new preview before committing.");
     }
 
     internal static string ComputeApprovalContextFingerprint(DmlApprovalExecutionContext approvalContext)
@@ -533,7 +671,12 @@ public sealed class TypedDmlRuntime(
 public sealed record TypedDmlApprovalSession(
     ValidatedDmlPlan Plan,
     DmlPreview Preview,
-    string? VerifiedServerVersionIdentity = null);
+    string? VerifiedServerVersionIdentity = null)
+{
+    // Server-local proof; neither an MCP-supplied field nor a durable payload contract.
+    // Missing legacy proof is rejected before challenge consumption or DB access.
+    internal string? PreviewConnectionFingerprint { get; init; }
+}
 
 public sealed record TypedDmlTransactionApprovalSession(
     ImmutableArray<TypedDmlApprovalSession> Statements,

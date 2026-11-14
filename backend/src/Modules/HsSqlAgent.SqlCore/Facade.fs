@@ -2,12 +2,16 @@ namespace HsSqlAgent.SqlCore
 
 open System
 open System.Collections.Generic
+open System.Threading
 open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Core.Pipeline
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.SqlParsing
 open HsSqlAgent.SqlCore.Rewrite
+open HsSqlAgent.SqlCore.Script
+open HsSqlAgent.SqlCore.Catalog
+open HsSqlAgent.SqlCore.Ddl
 
 type private SqlCoreTryState<'T> =
     | CapturedSuccess of 'T
@@ -206,7 +210,9 @@ module private FacadeResult =
                 value,
                 noDiagnostics,
                 evidenceForValue value)
-        with ex ->
+        with
+        | :? OperationCanceledException -> reraise()
+        | ex ->
             SqlCoreTryResult<'T>.CapturedFailure(
                 codeFor ex,
                 ex.Message,
@@ -215,8 +221,9 @@ module private FacadeResult =
                 SqlCompileEvidence.TryGetFromException(ex))
 
 module private FacadeCompile =
-    let validateProfile provider argumentName (profile: SqlProviderCapabilityProfile) =
+    let validateProfile provider argumentName (profile: SqlProviderCapabilityProfile | null) =
         ArgumentNullException.ThrowIfNull(profile)
+        let profile = nonNull profile
         if profile.Provider <> provider then
             invalidArg
                 argumentName
@@ -279,6 +286,177 @@ module private FacadeCompile =
 /// immediately to the same closed DU and cannot bypass binding, validation, policy, or rendering.
 [<AbstractClass; Sealed>]
 type SqlCoreFacade private () =
+
+    /// Immutable CLR options use the same source validation, Catalog and cancellation
+    /// path as the historical overloads; they do not carry compiler authorization.
+    static member AnalyzeScript(
+        sql: string,
+        options: SqlScriptAnalysisOptions) : SqlScriptAnalysisResult =
+        ArgumentNullException.ThrowIfNull(options)
+        SqlCoreFacade.AnalyzeScript(
+            sql, options.SourceDialect, options.InitialCatalog,
+            options.SourceProfile, options.CancellationToken)
+
+    static member ParseScript(
+        sql: string,
+        options: SqlScriptParseOptions) : SqlScriptParseResult =
+        ArgumentNullException.ThrowIfNull(options)
+        SqlCoreFacade.ParseScript(
+            sql, options.SourceDialect, options.SourceProfile,
+            options.CancellationToken)
+
+    /// Static source classification only. This never binds, authorizes, renders, or executes SQL.
+    /// Static Script analysis. Never opens a connection or produces a CompiledSqlCommand.
+    /// Without an initial Catalog, the world is open and all unmentioned objects
+    /// have UNKNOWN existence; callers must explicitly supply KnownEmpty() to
+    /// assert that an empty catalog is a proven starting point.
+    static member AnalyzeScript(
+        sql: string,
+        sourceDialect: SqlAgentToolType) : SqlScriptAnalysisResult =
+        SqlCoreFacade.AnalyzeScript(sql, sourceDialect, SqlCatalogState.Unknown(), null)
+
+    /// Cancel static analysis cooperatively without affecting the existing no-token API.
+    static member AnalyzeScript(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        cancellationToken: CancellationToken) : SqlScriptAnalysisResult =
+        SqlCoreFacade.AnalyzeScript(
+            sql, sourceDialect, SqlCatalogState.Unknown(), null, cancellationToken)
+
+    static member AnalyzeScript(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        initialCatalog: SqlCatalogState) : SqlScriptAnalysisResult =
+        SqlCoreFacade.AnalyzeScript(sql, sourceDialect, initialCatalog, null)
+
+    static member AnalyzeScript(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        initialCatalog: SqlCatalogState,
+        cancellationToken: CancellationToken) : SqlScriptAnalysisResult =
+        SqlCoreFacade.AnalyzeScript(
+            sql, sourceDialect, initialCatalog, null, cancellationToken)
+
+    static member AnalyzeScript(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        initialCatalog: SqlCatalogState,
+        sourceProfile: SqlProviderCapabilityProfile | null) : SqlScriptAnalysisResult =
+        SqlCoreFacade.AnalyzeScript(
+            sql, sourceDialect, initialCatalog, sourceProfile, CancellationToken.None)
+
+    static member AnalyzeScript(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        initialCatalog: SqlCatalogState,
+        sourceProfile: SqlProviderCapabilityProfile | null,
+        cancellationToken: CancellationToken) : SqlScriptAnalysisResult =
+        ArgumentNullException.ThrowIfNull(sql)
+        ArgumentNullException.ThrowIfNull(initialCatalog)
+        match sourceProfile with
+        | null -> ()
+        | profile -> FacadeCompile.validateProfile sourceDialect "sourceProfile" profile
+        RewriteResourceBudget.withCancellation cancellationToken (fun () ->
+            RewriteScriptAnalyzer.analyze sql sourceDialect sourceProfile initialCatalog)
+
+    static member ParseScript(
+        sql: string,
+        sourceDialect: SqlAgentToolType) : SqlScriptParseResult =
+        SqlCoreFacade.ParseScript(sql, sourceDialect, null)
+
+    static member ParseScript(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        cancellationToken: CancellationToken) : SqlScriptParseResult =
+        SqlCoreFacade.ParseScript(sql, sourceDialect, null, cancellationToken)
+
+    static member ParseScript(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        sourceProfile: SqlProviderCapabilityProfile | null) : SqlScriptParseResult =
+        SqlCoreFacade.ParseScript(sql, sourceDialect, sourceProfile, CancellationToken.None)
+
+    static member ParseScript(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        sourceProfile: SqlProviderCapabilityProfile | null,
+        cancellationToken: CancellationToken) : SqlScriptParseResult =
+        ArgumentNullException.ThrowIfNull(sql)
+        match sourceProfile with
+        | null -> ()
+        | profile -> FacadeCompile.validateProfile sourceDialect "sourceProfile" profile
+        RewriteResourceBudget.withCancellation cancellationToken (fun () ->
+            RewriteScriptParser.parse sql sourceDialect sourceProfile)
+
+    /// Strictly additive, single-statement native DDL compilation ONLY.
+    /// This is not physical schema validation, Host permission or approval.
+    static member CompileDdl(
+        sql: string,
+        options: DdlCompilationOptions) : CompiledDdlPlan =
+        ArgumentNullException.ThrowIfNull(sql)
+        ArgumentNullException.ThrowIfNull(options)
+        if not (isNull options.SourceProfile) then
+            FacadeCompile.validateProfile options.SourceDialect "sourceProfile" options.SourceProfile
+        if not (isNull options.TargetProfile) then
+            FacadeCompile.validateProfile options.TargetDialect "targetProfile" options.TargetProfile
+        RewriteResourceBudget.withCancellation options.CancellationToken (fun () ->
+            RewriteDdlCompiler.compile options sql)
+
+    /// Cancellation propagates; grammar, validation and policy denials return diagnostics.
+    static member TryCompileDdl(
+        sql: string,
+        options: DdlCompilationOptions) : SqlCoreTryResult<CompiledDdlPlan> =
+        FacadeResult.capture (fun () -> SqlCoreFacade.CompileDdl(sql, options))
+
+    /// Closed PostgreSQL multi-DDL compilation, never an atomic execution
+    /// claim or permission. The shared Script lexer owns statement splitting.
+    static member CompileDdlBatch(
+        sql: string,
+        options: DdlCompilationOptions) : CompiledDdlBatchPlan =
+        ArgumentNullException.ThrowIfNull(sql)
+        ArgumentNullException.ThrowIfNull(options)
+        if not (isNull options.SourceProfile) then
+            FacadeCompile.validateProfile options.SourceDialect "sourceProfile" options.SourceProfile
+        if not (isNull options.TargetProfile) then
+            FacadeCompile.validateProfile options.TargetDialect "targetProfile" options.TargetProfile
+        RewriteResourceBudget.withCancellation options.CancellationToken (fun () ->
+            RewriteDdlCompiler.compileBatch options sql)
+
+    static member TryCompileDdlBatch(
+        sql: string,
+        options: DdlCompilationOptions) : SqlCoreTryResult<CompiledDdlBatchPlan> =
+        FacadeResult.capture (fun () -> SqlCoreFacade.CompileDdlBatch(sql, options))
+
+    /// Read-only virtual-Catalog schema diff. A Known Catalog supplied by the
+    /// caller is NEVER a live database proof and can never authorize DDL.
+    static member PreviewDdl(
+        sql: string,
+        options: DdlCompilationOptions) : DdlSchemaPreview =
+        SqlCoreFacade.PreviewDdl(sql, options, SqlCatalogState.Unknown())
+
+    static member PreviewDdl(
+        sql: string,
+        options: DdlCompilationOptions,
+        initialCatalog: SqlCatalogState) : DdlSchemaPreview =
+        ArgumentNullException.ThrowIfNull(sql)
+        ArgumentNullException.ThrowIfNull(options)
+        ArgumentNullException.ThrowIfNull(initialCatalog)
+        RewriteResourceBudget.withCancellation options.CancellationToken (fun () ->
+            RewriteResourceBudget.withCompilation (fun () ->
+                let plan = SqlCoreFacade.CompileDdl(sql, options)
+                RewriteResourceBudget.withStage "DdlPreview" SqlDiagnosticStage.SemanticValidation
+                    (fun () -> RewriteDdlPreview.project plan initialCatalog)))
+
+    static member TryPreviewDdl(
+        sql: string,
+        options: DdlCompilationOptions) : SqlCoreTryResult<DdlSchemaPreview> =
+        FacadeResult.capture (fun () -> SqlCoreFacade.PreviewDdl(sql, options))
+
+    static member TryPreviewDdl(
+        sql: string,
+        options: DdlCompilationOptions,
+        initialCatalog: SqlCatalogState) : SqlCoreTryResult<DdlSchemaPreview> =
+        FacadeResult.capture (fun () -> SqlCoreFacade.PreviewDdl(sql, options, initialCatalog))
 
     static member CompileQuery(
         parsed: ParsedStatement,
@@ -496,3 +674,68 @@ type SqlCoreFacade private () =
                 sourceDialect,
                 targetProvider,
                 validationContext))
+
+    /// Opt-in cancellation is scoped to this synchronous compiler attempt.
+    /// The same validated F# pipeline remains the only producer of commands.
+    static member CompileQuery(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        targetProvider: SqlAgentToolType,
+        validationContext: SqlPlanValidationContext,
+        executionPolicy: SqlExecutionPlanPolicy,
+        cancellationToken: CancellationToken) : CompiledSqlCommand =
+        RewriteResourceBudget.withCancellation cancellationToken (fun () ->
+            SqlCoreFacade.CompileQuery(
+                sql, sourceDialect, targetProvider, validationContext, executionPolicy))
+
+    static member CompileDml(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        targetProvider: SqlAgentToolType,
+        validationContext: SqlPlanValidationContext,
+        cancellationToken: CancellationToken) : CompiledSqlCommand =
+        RewriteResourceBudget.withCancellation cancellationToken (fun () ->
+            SqlCoreFacade.CompileDml(
+                sql, sourceDialect, targetProvider, validationContext))
+
+    static member CompileQuery(
+        parsed: ParsedStatement,
+        targetProvider: SqlAgentToolType,
+        validationContext: SqlPlanValidationContext,
+        executionPolicy: SqlExecutionPlanPolicy,
+        cancellationToken: CancellationToken) : CompiledSqlCommand =
+        RewriteResourceBudget.withCancellation cancellationToken (fun () ->
+            SqlCoreFacade.CompileQuery(
+                parsed, targetProvider, validationContext, executionPolicy))
+
+    static member CompileDml(
+        parsed: ParsedStatement,
+        targetProvider: SqlAgentToolType,
+        validationContext: SqlPlanValidationContext,
+        cancellationToken: CancellationToken) : CompiledSqlCommand =
+        RewriteResourceBudget.withCancellation cancellationToken (fun () ->
+            SqlCoreFacade.CompileDml(
+                parsed, targetProvider, validationContext))
+
+    /// Cancellation propagates as OperationCanceledException and is never
+    /// represented as a failed SQL validation or ordinary Try result.
+    static member TryCompileQuery(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        targetProvider: SqlAgentToolType,
+        validationContext: SqlPlanValidationContext,
+        executionPolicy: SqlExecutionPlanPolicy,
+        cancellationToken: CancellationToken) : SqlCoreTryResult<CompiledSqlCommand> =
+        RewriteResourceBudget.withCancellation cancellationToken (fun () ->
+            SqlCoreFacade.TryCompileQuery(
+                sql, sourceDialect, targetProvider, validationContext, executionPolicy))
+
+    static member TryCompileDml(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        targetProvider: SqlAgentToolType,
+        validationContext: SqlPlanValidationContext,
+        cancellationToken: CancellationToken) : SqlCoreTryResult<CompiledSqlCommand> =
+        RewriteResourceBudget.withCancellation cancellationToken (fun () ->
+            SqlCoreFacade.TryCompileDml(
+                sql, sourceDialect, targetProvider, validationContext))

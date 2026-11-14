@@ -1,7 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+        <TargetFrameworks Condition="'$(LibraryFrameworks)'==''">net10.0;net8.0;</TargetFrameworks>
+    <TargetFrameworks Condition="'$(LibraryFrameworks)'!=''">$(LibraryFrameworks)</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
@@ -14,15 +15,13 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
-    <PackageReference Include="coverlet.collector">
-      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-      <PrivateAssets>all</PrivateAssets>
-    </PackageReference>
+    <PackageReference Include="coverlet.MTP" />
     <PackageReference Include="Microsoft.Extensions.Caching.Memory" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\Infrastructure\Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\tools\HsSqlAgent.TestGovernance\HsSqlAgent.TestGovernance.csproj" />
   </ItemGroup>
 
 </Project>

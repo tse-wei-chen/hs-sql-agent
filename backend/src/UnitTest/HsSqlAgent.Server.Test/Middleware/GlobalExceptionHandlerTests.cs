@@ -106,7 +106,7 @@ public sealed class GlobalExceptionHandlerTests
         stream.Position = 0;
         using var document = await JsonDocument.ParseAsync(
             stream, cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Equal("ordinary conflict", document.RootElement.GetProperty("error").GetString());
+        Assert.Equal("Request cannot be completed in its current state.", document.RootElement.GetProperty("error").GetString());
         Assert.False(document.RootElement.TryGetProperty("status", out _));
         Assert.False(document.RootElement.TryGetProperty("code", out _));
         Assert.False(document.RootElement.TryGetProperty("retryable", out _));

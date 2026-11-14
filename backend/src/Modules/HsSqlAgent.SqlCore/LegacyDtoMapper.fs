@@ -295,22 +295,39 @@ type QueryDefinitionCoreMapper private () =
             match window.Frame with
             | null -> null
             | value -> QueryDefinitionCoreMapper.MapWindowFrame(value)
-        WindowSpec(
-            partition,
-            QueryDefinitionCoreMapper.MapOrderBy(window.OrderBy),
-            frame,
-            unknown)
+        let mapped =
+            WindowSpec(
+                partition,
+                QueryDefinitionCoreMapper.MapOrderBy(window.OrderBy),
+                frame,
+                unknown)
+        mapped.NullTreatment <-
+            match window.NullTreatment with
+            | WindowNullTreatmentMode.Unspecified -> WindowNullTreatmentKind.Unspecified
+            | WindowNullTreatmentMode.IgnoreNulls -> WindowNullTreatmentKind.IgnoreNulls
+            | WindowNullTreatmentMode.RespectNulls -> WindowNullTreatmentKind.RespectNulls
+            | value -> raise (ArgumentOutOfRangeException("window.NullTreatment", value, "Unknown window null treatment."))
+        mapped
 
     static member private MapWindowFrame(frame: WindowFrameDefinition) =
         let unitKind =
             match frame.Unit with
             | WindowFrameUnit.Rows -> WindowFrameUnitKind.Rows
             | WindowFrameUnit.Range -> WindowFrameUnitKind.Range
+            | WindowFrameUnit.Groups -> WindowFrameUnitKind.Groups
             | value -> raise (ArgumentOutOfRangeException("frame.Unit", value, "Unknown window frame unit."))
+        let exclusion =
+            match frame.Exclusion with
+            | WindowFrameExclusionMode.Unspecified -> WindowFrameExclusionKind.Unspecified
+            | WindowFrameExclusionMode.CurrentRow -> WindowFrameExclusionKind.CurrentRow
+            | WindowFrameExclusionMode.Group -> WindowFrameExclusionKind.Group
+            | WindowFrameExclusionMode.Ties -> WindowFrameExclusionKind.Ties
+            | WindowFrameExclusionMode.NoOthers -> WindowFrameExclusionKind.NoOthers
+            | value -> raise (ArgumentOutOfRangeException("frame.Exclusion", value, "Unknown window frame exclusion."))
         let startBound = QueryDefinitionCoreMapper.MapWindowBound(frame.Start)
         match frame.End with
-        | null -> WindowFrame(unitKind, startBound, null, unknown)
-        | value -> WindowFrame(unitKind, startBound, QueryDefinitionCoreMapper.MapWindowBound(value), unknown)
+        | null -> WindowFrame(unitKind, startBound, null, exclusion, unknown)
+        | value -> WindowFrame(unitKind, startBound, QueryDefinitionCoreMapper.MapWindowBound(value), exclusion, unknown)
 
     static member private MapWindowBound(bound: WindowFrameBound) =
         let kind =

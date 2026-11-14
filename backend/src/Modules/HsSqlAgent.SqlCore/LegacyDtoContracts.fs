@@ -5,6 +5,11 @@ open System
 open System.Collections.Generic
 open HsSqlAgent.SqlCore.Enums
 
+type WindowNullTreatmentMode =
+    | Unspecified = 0
+    | IgnoreNulls = 1
+    | RespectNulls = 2
+
 type QueryDefinition() =
     member val SourceDialect = Nullable<SqlAgentToolType>() with get, set
     member val TableName = String.Empty with get, set
@@ -205,11 +210,13 @@ and WindowDefinition() =
     member val PartitionBy: List<GroupByCondition> | null = null with get, set
     member val OrderBy: List<OrderByCondition> | null = null with get, set
     member val Frame: WindowFrameDefinition | null = null with get, set
+    member val NullTreatment = WindowNullTreatmentMode.Unspecified with get, set
 
 and WindowFrameDefinition() =
     member val Unit = WindowFrameUnit.Rows with get, set
     member val Start = WindowFrameBound() with get, set
     member val End: WindowFrameBound | null = null with get, set
+    member val Exclusion = WindowFrameExclusionMode.Unspecified with get, set
 
 and WindowFrameBound() =
     member val Kind = WindowFrameBoundKind.CurrentRow with get, set

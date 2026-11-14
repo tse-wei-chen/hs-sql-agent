@@ -58,6 +58,7 @@ public partial class SqlAgentTool
             {
                 if (lease is null)
                     throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
+                using var leaseCancellation = new SqlExecutionLeaseCancellation(lease, cancellationToken);
                 if (_typedQueryRuntime is ITypedQueryRuntimeFacts factsRuntime)
                 {
                     var compiledExecution = await factsRuntime.ExecuteWithFactsAsync(
@@ -67,7 +68,7 @@ public partial class SqlAgentTool
                         dbType,
                         securityPolicy,
                         allowedTables,
-                        cancellationToken);
+                        leaseCancellation.Token);
                     auditFacts = compiledExecution.Facts;
                     execution = compiledExecution.Execution;
                 }
@@ -81,8 +82,11 @@ public partial class SqlAgentTool
                         dbType,
                         securityPolicy,
                         allowedTables,
-                        cancellationToken);
+                        leaseCancellation.Token);
                 }
+                // A native driver may complete despite CancellationToken.
+                // Never publish results after losing the distributed lease.
+                leaseCancellation.Token.ThrowIfCancellationRequested();
             }
 
             await _auditService.WriteEventAsync(
@@ -112,7 +116,7 @@ public partial class SqlAgentTool
         catch (Exception ex)
         {
             auditFacts ??= SqlCoreInspection.TryGetQueryFactsFromException(ex);
-            await _auditService.WriteEventAsync(
+            await McpErrorResponsePolicy.TryAuditFailureAsync(() => _auditService.WriteEventAsync(
                 "mcp.query.executed",
                 AuditTarget(auditFacts),
                 "failed",
@@ -125,7 +129,7 @@ public partial class SqlAgentTool
                     Definition = auditFacts is null ? null : DescribeQuery(sql, dbType, auditFacts)
                 },
                 ex.Message,
-                cancellationToken);
+                cancellationToken));
             return McpQueryToolResult.Failed(
                 dbType.ToString(),
                 DescribeQueryError(ex),
@@ -133,43 +137,8 @@ public partial class SqlAgentTool
         }
     }
 
-    private static McpToolError DescribeQueryError(Exception error)
-    {
-        for (Exception? current = error; current is not null; current = current.InnerException)
-        {
-            var evidence = SqlCompileEvidence.TryGetFromException(current);
-            if (evidence is not null)
-            {
-                return new McpToolError(
-                    evidence.DecisionCode,
-                    error.Message,
-                    evidence.DecisionBoundary.ToString());
-            }
-        }
-
-        return error switch
-        {
-            UnauthorizedAccessException => new McpToolError(
-                "authorization.denied",
-                error.Message,
-                "Authorization"),
-            TimeoutException => new McpToolError(
-                "execution.timeout",
-                error.Message,
-                "Execution",
-                true),
-            InvalidOperationException when error.Message.StartsWith("Server busy:", StringComparison.Ordinal) =>
-                new McpToolError(
-                    "server.busy",
-                    error.Message,
-                    "Execution",
-                    true),
-            _ => new McpToolError(
-                "execution.failed",
-                error.Message,
-                "Execution")
-        };
-    }
+    private static McpToolError DescribeQueryError(Exception error) =>
+        McpErrorResponsePolicy.Classify(error, McpErrorSurface.Query);
 
     private static string AuditTarget(QueryFacts? facts) =>
         facts?.ReferencedTables.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).FirstOrDefault()

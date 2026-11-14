@@ -1,7 +1,8 @@
+using static SqlAgent.Service.Core.Execution.DmlCompiledCommandExecution;
 using System.Collections.Immutable;
+using System.Data;
 using System.Data.Common;
 using System.Runtime.ExceptionServices;
-using Dapper;
 
 namespace SqlAgent.Service.Core.Execution;
 
@@ -58,6 +59,11 @@ public sealed class DmlCoordinator(
         if (plan.ApprovalMode == DmlApprovalMode.InsertValues)
             return await PreviewInsertValuesAsync(plan, approvalContextFingerprint, cancellationToken);
 
+        if (plan.ApprovalMode is DmlApprovalMode.InsertSelect or DmlApprovalMode.InsertConflictDoNothing or DmlApprovalMode.InsertConflictDoUpdate or DmlApprovalMode.SqlServerMergeMatchedDelete or DmlApprovalMode.SqlServerMergeMatchedUpdate or DmlApprovalMode.SqlServerMergeNotMatchedInsert
+            && _schemaFreshnessVerifier is not NativeDmlSchemaSnapshotService)
+            throw new InvalidOperationException(
+                "Native source/target DML approval requires built-in live schema verification before preview.");
+
         var matchCommand = RequireMatchCommand(plan);
         await using var connection = _connectionFactory.Create(connectionString);
         await connection.OpenAsync(cancellationToken);
@@ -65,8 +71,16 @@ public sealed class DmlCoordinator(
         await using var transaction = await _previewTransactionFactory.BeginAsync(
             connection,
             matchCommand.TargetProvider,
-            _transactionIsolationPolicy.PreviewIsolation(matchCommand.TargetProvider),
+            plan.ApprovalMode == DmlApprovalMode.InsertSelect
+                && matchCommand.TargetProvider is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer
+                ? IsolationLevel.Serializable
+                : _transactionIsolationPolicy.PreviewIsolation(matchCommand.TargetProvider),
             cancellationToken);
+
+        if (plan.ApprovalMode is DmlApprovalMode.InsertSelect or DmlApprovalMode.InsertConflictDoNothing or DmlApprovalMode.InsertConflictDoUpdate or DmlApprovalMode.SqlServerMergeMatchedDelete or DmlApprovalMode.SqlServerMergeMatchedUpdate or DmlApprovalMode.SqlServerMergeNotMatchedInsert)
+            await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
+                connection, transaction, plan.MutationCommand, plan.SchemaSnapshot,
+                _schemaFreshnessVerifier, cancellationToken);
 
         var rows = await QueryRowsAsync(
             connection,
@@ -82,19 +96,44 @@ public sealed class DmlCoordinator(
                 $"Security policy denied DML: affectedRows={rows.Count} exceeds maximum {plan.MaxAffectedRows}.");
         }
 
+        if (plan.ApprovalMode is DmlApprovalMode.InsertConflictDoNothing or DmlApprovalMode.InsertConflictDoUpdate or DmlApprovalMode.SqlServerMergeNotMatchedInsert && rows.Count > 1)
+            throw new InvalidOperationException(
+                "Native conflict skip target UNIQUE key resolved to multiple physical rows; preview denied.");
+
+        // A present target PK means a guaranteed DO NOTHING with zero affected
+        // rows; an absent PK means exactly one proposed insert. The query result
+        // is still fingerprinted in both cases, including the empty set.
+        var affectedRows = plan.ApprovalMode switch
+        {
+            DmlApprovalMode.InsertConflictDoNothing => 1 - rows.Count,
+            DmlApprovalMode.SqlServerMergeNotMatchedInsert => 1 - rows.Count,
+            DmlApprovalMode.InsertConflictDoUpdate => 1,
+            _ => rows.Count
+        };
         var rowSetFingerprint = ComputeRowSetFingerprint(plan, rows);
         var challenge = CreateChallenge(
             plan,
             rowSetFingerprint,
-            rows.Count,
+            affectedRows,
             approvalContextFingerprint);
         await _challengeStore.RegisterAsync(challenge, cancellationToken);
 
         return new DmlPreview(
             plan.Operation,
             plan.TableName,
-            rows.Count,
-            rows.Take(PreviewRowLimit).ToImmutableArray(),
+            affectedRows,
+            (plan.ApprovalMode == DmlApprovalMode.SqlServerMergeNotMatchedInsert
+                ? plan.InsertRows.Take(affectedRows)
+                    .Select(row => (IReadOnlyDictionary<string, object?>)row)
+                : plan.ApprovalMode == DmlApprovalMode.SqlServerMergeMatchedUpdate
+                    ? SqlServerMergeMatchedUpdatePreviewRows(plan, rows)
+                : plan.ApprovalMode == DmlApprovalMode.InsertConflictDoUpdate
+                    ? ConflictUpdatePreviewRows(plan, rows)
+                    : plan.ApprovalMode == DmlApprovalMode.InsertConflictDoNothing
+                    ? plan.InsertRows.Take(affectedRows)
+                        .Select(row => (IReadOnlyDictionary<string, object?>)row)
+                    : rows.Take(PreviewRowLimit))
+                .ToImmutableArray(),
             challenge);
     }
 
@@ -133,6 +172,10 @@ public sealed class DmlCoordinator(
         if (witnessEvidence is not null && _targetCommitWitness is null)
             throw new InvalidOperationException("Target-enlisted DML witness was requested but is not configured.");
         ValidatePlan(plan);
+        if (plan.ApprovalMode is DmlApprovalMode.InsertSelect or DmlApprovalMode.InsertConflictDoNothing or DmlApprovalMode.InsertConflictDoUpdate or DmlApprovalMode.SqlServerMergeMatchedDelete or DmlApprovalMode.SqlServerMergeMatchedUpdate or DmlApprovalMode.SqlServerMergeNotMatchedInsert
+            && _schemaFreshnessVerifier is not NativeDmlSchemaSnapshotService)
+            throw new InvalidOperationException(
+                "Native DML source/target approval cannot commit without built-in schema freshness proof.");
         ArgumentException.ThrowIfNullOrWhiteSpace(approvalContextFingerprint);
         ArgumentException.ThrowIfNullOrWhiteSpace(expectedServerVersionIdentity);
         ValidateChallenge(plan, approvedChallenge, approvalContextFingerprint);
@@ -148,143 +191,186 @@ public sealed class DmlCoordinator(
         ExceptionDispatchInfo? primaryFailure = null;
         try
         {
-        await using var connection = _connectionFactory.Create(connectionString);
-        await connection.OpenAsync(cancellationToken);
-        RuntimeServerProfileVerifier.EnsureMatches(connection, expectedServerVersionIdentity);
-        if (requireExecutionFence)
-        {
-            // An opt-in target fence must prove its actual schema, unique
-            // keys, witness and transactional rollback on the same physical
-            // DML identity before starting the approved mutation. A manually
-            // run, possibly stale deployment probe is not sufficient.
-            if (_targetExecutionFence is not RelationalDmlTargetExecutionFence
-                || _targetCommitWitness is not RelationalDmlTargetCommitWitness)
-                throw new InvalidOperationException(
-                    "Production target-fenced DML requires the built-in verified relational " +
-                    "fence and witness implementations; custom components need a separate " +
-                    "audited readiness capability.");
-
-            await new DmlTargetFenceReadinessProbe().VerifyAsync(
-                connection, plan.MutationCommand.TargetProvider, cancellationToken);
-        }
-
-        await using var transaction = await connection.BeginTransactionAsync(
-            _transactionIsolationPolicy.CommitIsolation(plan.MutationCommand.TargetProvider),
-            cancellationToken);
-
-        try
-        {
-            // Catalog verification must finish before durable admission.
-            // Oracle may invalidate an earlier uncommitted target admission
-            // while reading dictionary metadata. Revocation still races the
-            // INSERT below, before any business DML is permitted.
-            await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
-                connection, transaction, plan.MutationCommand, plan.SchemaSnapshot,
-                _schemaFreshnessVerifier, cancellationToken);
-
+            await using var connection = _connectionFactory.Create(connectionString);
+            await connection.OpenAsync(cancellationToken);
+            RuntimeServerProfileVerifier.EnsureMatches(connection, expectedServerVersionIdentity);
             if (requireExecutionFence)
             {
-                await _targetExecutionFence!.AdmitAsync(connection, transaction,
-                    plan.MutationCommand.TargetProvider, witnessEvidence!, cancellationToken);
-                await RelationalDmlTargetExecutionFence.EnsureAdmittedInTransactionAsync(
-                    connection, transaction, plan.MutationCommand.TargetProvider,
-                    witnessEvidence!, cancellationToken);
+                // An opt-in target fence must prove its actual schema, unique
+                // keys, witness and transactional rollback on the same physical
+                // DML identity before starting the approved mutation. A manually
+                // run, possibly stale deployment probe is not sufficient.
+                if (_targetExecutionFence is not RelationalDmlTargetExecutionFence
+                    || _targetCommitWitness is not RelationalDmlTargetCommitWitness)
+                    throw new InvalidOperationException(
+                        "Production target-fenced DML requires the built-in verified relational " +
+                        "fence and witness implementations; custom components need a separate " +
+                        "audited readiness capability.");
+
+                await new DmlTargetFenceReadinessProbe().VerifyAsync(
+                    connection, plan.MutationCommand.TargetProvider, cancellationToken);
             }
 
-            if (plan.ApprovalMode == DmlApprovalMode.InsertValues)
-            {
-                var insertResult = await CommitInsertValuesAsync(
-                    connection,
-                    transaction,
-                    plan,
-                    approvedChallenge,
-                    cancellationToken,
-                    witnessEvidence,
-                    requireExecutionFence);
-                if (insertResult.Committed)
-                    acknowledgedCommit = insertResult;
-                return insertResult;
-            }
+            // The native SQLite provider starts a SERIALIZABLE transaction with
+            // BEGIN IMMEDIATE (not a deferred read snapshot). This acquires the
+            // writer reservation before the source-row recheck. Verify that
+            // provider behavior in a real SQLite concurrency test; SqlAgent.Service
+            // must remain driver-free.
+            var commitIsolation = plan.ApprovalMode is DmlApprovalMode.InsertSelect or DmlApprovalMode.SqlServerMergeMatchedDelete or DmlApprovalMode.SqlServerMergeMatchedUpdate or DmlApprovalMode.SqlServerMergeNotMatchedInsert
+                ? IsolationLevel.Serializable
+                : _transactionIsolationPolicy.CommitIsolation(plan.MutationCommand.TargetProvider);
+            await using var transaction = await connection.BeginTransactionAsync(
+                commitIsolation, cancellationToken);
 
-            var matchCommand = RequireMatchCommand(plan);
-            var currentRows = await QueryRowsAsync(
-                connection,
-                transaction,
-                matchCommand,
-                cancellationToken);
-
-            if (plan.MaxAffectedRows > 0 && currentRows.Count > plan.MaxAffectedRows)
-            {
-                await transaction.RollbackAsync(cancellationToken);
-                return new DmlCommitResult(
-                    false,
-                    0,
-                    $"DML execution cancelled: current affected row count {currentRows.Count} exceeds maximum {plan.MaxAffectedRows}.");
-            }
-
-            var currentFingerprint = ComputeRowSetFingerprint(plan, currentRows);
-
-            if (currentRows.Count != approvedChallenge.AffectedRows
-                || !string.Equals(
-                    currentFingerprint,
-                    approvedChallenge.RowSetFingerprint,
-                    StringComparison.Ordinal))
-            {
-                await transaction.RollbackAsync(cancellationToken);
-                return new DmlCommitResult(
-                    false,
-                    0,
-                    "DML execution cancelled: the matched row set changed after approval.");
-            }
-
-            var execution = await ExecuteMutationAsync(
-                connection,
-                transaction,
-                plan.MutationCommand,
-                cancellationToken);
-
-            if (execution.AffectedRows != approvedChallenge.AffectedRows)
-            {
-                await transaction.RollbackAsync(cancellationToken);
-                return new DmlCommitResult(
-                    false,
-                    0,
-                    $"DML execution cancelled: affected row count changed after revalidation " +
-                    $"(approved={approvedChallenge.AffectedRows}, executed={execution.AffectedRows}).");
-            }
-
-            await WriteWitnessAsync(connection, transaction, plan.MutationCommand.TargetProvider,
-                witnessEvidence, cancellationToken);
-            await DmlTransactionFailureRecovery.CommitAsync(transaction, cancellationToken);
-            if (requireExecutionFence)
-                await DmlTargetCommitEvidenceVerifier.EnsureConfirmedAsync(
-                    connection, plan.MutationCommand.TargetProvider, witnessEvidence!,
-                    _targetExecutionFence!, _targetCommitWitness!, cancellationToken);
-            acknowledgedCommit = new DmlCommitResult(
-                true,
-                execution.AffectedRows,
-                "DML operation committed after approval and row-set revalidation.")
-            {
-                ReturnedRows = execution.ReturnedRows
-            };
-            return acknowledgedCommit;
-        }
-        catch (Exception failure)
-        {
-            await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(transaction, failure);
             try
             {
-                DmlTransactionFailureRecovery.ThrowIfRollbackUnconfirmed(failure);
+                // Catalog verification must finish before durable admission.
+                // Oracle may invalidate an earlier uncommitted target admission
+                // while reading dictionary metadata. Revocation still races the
+                // INSERT below, before any business DML is permitted.
+                await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
+                    connection, transaction, plan.MutationCommand, plan.SchemaSnapshot,
+                    _schemaFreshnessVerifier, cancellationToken);
+
+                // An approval-time unique index is not a transaction-held proof.
+                // Acquire SQL Server table locks and re-attest on THIS write
+                // connection before even reading the approved row set.
+                EnsureLiveSqlServerCteKeyCurrent(
+                    plan, connection, transaction, cancellationToken);
+
+                if (requireExecutionFence)
+                {
+                    await _targetExecutionFence!.AdmitAsync(connection, transaction,
+                        plan.MutationCommand.TargetProvider, witnessEvidence!, cancellationToken);
+                    await RelationalDmlTargetExecutionFence.EnsureAdmittedInTransactionAsync(
+                        connection, transaction, plan.MutationCommand.TargetProvider,
+                        witnessEvidence!, cancellationToken);
+                }
+
+                if (plan.ApprovalMode == DmlApprovalMode.InsertValues)
+                {
+                    var insertResult = await CommitInsertValuesAsync(
+                        connection,
+                        transaction,
+                        plan,
+                        approvedChallenge,
+                        cancellationToken,
+                        witnessEvidence,
+                        requireExecutionFence);
+                    if (insertResult.Committed)
+                        acknowledgedCommit = insertResult;
+                    return insertResult;
+                }
+
+                var matchCommand = RequireMatchCommand(plan);
+                var currentRows = await QueryRowsAsync(
+                    connection,
+                    transaction,
+                    matchCommand,
+                    cancellationToken);
+
+                if (plan.MaxAffectedRows > 0 && currentRows.Count > plan.MaxAffectedRows)
+                {
+                    await DmlTransactionFailureRecovery.RollbackForRefusalAsync(transaction);
+                    return new DmlCommitResult(
+                        false,
+                        0,
+                        $"DML execution cancelled: current affected row count {currentRows.Count} exceeds maximum {plan.MaxAffectedRows}.");
+                }
+
+                var currentFingerprint = ComputeRowSetFingerprint(plan, currentRows);
+
+                if (plan.ApprovalMode is DmlApprovalMode.InsertConflictDoNothing or DmlApprovalMode.InsertConflictDoUpdate or DmlApprovalMode.SqlServerMergeNotMatchedInsert
+                    && currentRows.Count > 1)
+                {
+                    await DmlTransactionFailureRecovery.RollbackForRefusalAsync(transaction);
+                    return new DmlCommitResult(false, 0,
+                        "Native conflict skip cancelled: target key is no longer uniquely identifiable.");
+                }
+                var currentAffectedRows = plan.ApprovalMode switch
+                {
+                    DmlApprovalMode.InsertConflictDoNothing => 1 - currentRows.Count,
+                    DmlApprovalMode.SqlServerMergeNotMatchedInsert => 1 - currentRows.Count,
+                    DmlApprovalMode.InsertConflictDoUpdate => 1,
+                    _ => currentRows.Count
+                };
+                if (currentAffectedRows != approvedChallenge.AffectedRows
+                    || !string.Equals(
+                        currentFingerprint,
+                        approvedChallenge.RowSetFingerprint,
+                        StringComparison.Ordinal))
+                {
+                    await DmlTransactionFailureRecovery.RollbackForRefusalAsync(transaction);
+                    return new DmlCommitResult(
+                        false,
+                        0,
+                        plan.ApprovalMode == DmlApprovalMode.InsertSelect
+                            ? "INSERT SELECT execution cancelled: the source row values or count changed after approval."
+                            : plan.ApprovalMode == DmlApprovalMode.InsertConflictDoNothing
+                                ? "Native DO NOTHING cancelled: the target UNIQUE key conflict changed after approval."
+                                : plan.ApprovalMode == DmlApprovalMode.InsertConflictDoUpdate
+                                    ? "PostgreSQL conflict UPDATE cancelled: the target row or conflict state changed after approval."
+                                    : plan.ApprovalMode == DmlApprovalMode.SqlServerMergeNotMatchedInsert
+                                        ? "SQL Server MERGE INSERT cancelled: the approved physical target key absence/presence changed."
+                                        : "DML execution cancelled: the matched row set changed after approval.");
+                }
+
+                var execution = await ExecuteMutationAsync(
+                    connection,
+                    transaction,
+                    plan.MutationCommand,
+                    cancellationToken);
+
+                if (execution.AffectedRows != approvedChallenge.AffectedRows)
+                {
+                    await DmlTransactionFailureRecovery.RollbackForRefusalAsync(transaction);
+                    return new DmlCommitResult(
+                        false,
+                        0,
+                        $"DML execution cancelled: affected row count changed after revalidation " +
+                        $"(approved={approvedChallenge.AffectedRows}, executed={execution.AffectedRows}).");
+                }
+
+                await WriteWitnessAsync(connection, transaction, plan.MutationCommand.TargetProvider,
+                    witnessEvidence, cancellationToken);
+                await DmlTransactionFailureRecovery.CommitAsync(transaction, cancellationToken);
+                if (requireExecutionFence)
+                    await DmlTargetCommitEvidenceVerifier.EnsureConfirmedAsync(
+                        connection, plan.MutationCommand.TargetProvider, witnessEvidence!,
+                        _targetExecutionFence!, _targetCommitWitness!, cancellationToken);
+                acknowledgedCommit = new DmlCommitResult(
+                    true,
+                    execution.AffectedRows,
+                    "DML operation committed after approval and row-set revalidation.")
+                {
+                    ReturnedRows = execution.ReturnedRows
+                };
+                return acknowledgedCommit;
             }
             catch (DmlRollbackOutcomeUnknownException unconfirmedRollback)
             {
+                // An explicit refusal already attempted bounded cleanup. NEVER
+                // issue a second blind ROLLBACK after the native ACK was lost.
+                // Preserve its typed non-replayable uncertainty across disposal.
                 primaryFailure = ExceptionDispatchInfo.Capture(unconfirmedRollback);
                 throw;
             }
+            catch (Exception failure)
+            {
+                await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(transaction, failure);
+                try
+                {
+                    DmlTransactionFailureRecovery.ThrowIfRollbackUnconfirmed(failure);
+                }
+                catch (DmlRollbackOutcomeUnknownException unconfirmedRollback)
+                {
+                    primaryFailure = ExceptionDispatchInfo.Capture(unconfirmedRollback);
+                    throw;
+                }
 
-            primaryFailure = ExceptionDispatchInfo.Capture(failure);
-            throw;
-        }
+                primaryFailure = ExceptionDispatchInfo.Capture(failure);
+                throw;
+            }
         }
         catch (Exception) when (acknowledgedCommit is not null)
         {
@@ -302,6 +388,65 @@ public sealed class DmlCoordinator(
             primaryFailure.Throw();
             throw;
         }
+    }
+
+    private static IEnumerable<IReadOnlyDictionary<string, object?>> SqlServerMergeMatchedUpdatePreviewRows(
+        ValidatedDmlPlan plan,
+        IReadOnlyList<IReadOnlyDictionary<string, object?>> before)
+    {
+        var proof = plan.SqlServerMergeMatchedUpdateProof
+            ?? throw new InvalidOperationException("SQL Server MERGE UPDATE payload proof is missing.");
+        if (before.Count == 0) yield break;
+        if (before.Count != 1)
+            throw new InvalidOperationException("SQL Server MERGE target primary key was not unique.");
+        var row = before[0];
+        var result = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["__action"] = "UPDATE",
+            [proof.UniqueKeyColumn] = proof.KeyValue
+        };
+        for (var index = 0; index < proof.UpdatedColumns.Length; index++)
+        {
+            var column = proof.UpdatedColumns[index];
+            if (!row.TryGetValue(column, out var previous))
+                throw new InvalidOperationException(
+                    "SQL Server MERGE preview cannot read every physical before-value.");
+            result.Add("__before_" + column, previous);
+            result.Add("__after_" + column, proof.ProposedValues[index]);
+        }
+        yield return result;
+    }
+
+    private static IEnumerable<IReadOnlyDictionary<string, object?>> ConflictUpdatePreviewRows(
+        ValidatedDmlPlan plan,
+        IReadOnlyList<IReadOnlyDictionary<string, object?>> before)
+    {
+        // The approved payload is the only source of proposed values. Old
+        // values come exclusively from the transactionally schema-verified
+        // physical SELECT, never an untrusted caller's preview DTO.
+        var key = plan.RowIdentityColumns[0];
+        if (before.Count > 1
+            || !plan.InsertRows[0].TryGetValue(key, out var keyValue))
+            throw new InvalidOperationException(
+                "PostgreSQL conflict update preview has an invalid physical key/value binding.");
+        var preview = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["__action"] = before.Count == 1 ? "UPDATE" : "INSERT",
+            [key] = keyValue
+        };
+        foreach (var column in plan.RowIdentityColumns.Skip(1))
+        {
+            if (!plan.InsertRows[0].TryGetValue(column, out var proposed))
+                throw new InvalidOperationException(
+                    "PostgreSQL conflict update preview is missing an approved proposed value.");
+            object? oldValue = null;
+            if (before.Count == 1 && !before[0].TryGetValue(column, out oldValue))
+                throw new InvalidOperationException(
+                    "PostgreSQL conflict update preview could not read every physical before-value.");
+            preview.Add("__before_" + column, oldValue);
+            preview.Add("__after_" + column, proposed);
+        }
+        yield return preview;
     }
 
     private async Task<DmlPreview> PreviewInsertValuesAsync(
@@ -351,7 +496,7 @@ public sealed class DmlCoordinator(
 
         if (execution.AffectedRows != approvedChallenge.AffectedRows)
         {
-            await transaction.RollbackAsync(cancellationToken);
+            await DmlTransactionFailureRecovery.RollbackForRefusalAsync(transaction);
             return new DmlCommitResult(
                 false,
                 0,
@@ -438,6 +583,20 @@ public sealed class DmlCoordinator(
         if (plan.MaxAffectedRows > 0 && challenge.AffectedRows > plan.MaxAffectedRows)
             throw new InvalidOperationException("DML approval exceeds the validated maximum affected row count.");
 
+        if (plan.ApprovalMode == DmlApprovalMode.SqlServerMergeMatchedDelete
+            && challenge.AffectedRows is not (0 or 1))
+            throw new InvalidOperationException(
+                "SQL Server MERGE MATCHED DELETE approval must predict zero or one affected row.");
+        if (plan.ApprovalMode is DmlApprovalMode.SqlServerMergeMatchedDelete or DmlApprovalMode.SqlServerMergeMatchedUpdate or DmlApprovalMode.SqlServerMergeNotMatchedInsert
+            && challenge.AffectedRows is not (0 or 1))
+            throw new InvalidOperationException(
+                "SQL Server MERGE approval must predict zero or one affected row.");
+
+        if (plan.ApprovalMode == DmlApprovalMode.InsertConflictDoNothing
+            && challenge.AffectedRows is not (0 or 1))
+            throw new InvalidOperationException(
+                "SQLite conflict skip approval must predict exactly zero or one affected row.");
+
         if (plan.ApprovalMode == DmlApprovalMode.InsertValues)
         {
             if (challenge.RowSetFingerprint is not null)
@@ -465,30 +624,178 @@ public sealed class DmlCoordinator(
         if (plan.MaxAffectedRows < 0)
             throw new InvalidOperationException("DML maximum affected rows cannot be negative.");
         if (plan.MutationCommand.Kind is not (
-            SqlStatementKind.Insert or SqlStatementKind.Update or SqlStatementKind.Delete))
+            SqlStatementKind.Insert or SqlStatementKind.Update or SqlStatementKind.Delete or SqlStatementKind.Merge))
         {
             throw new InvalidOperationException(
                 $"DML mutation command has invalid kind {plan.MutationCommand.Kind}.");
         }
 
-        var expectedKind = plan.Operation switch
-        {
-            HsSqlAgent.SqlCore.Enums.DmlOperation.Insert => SqlStatementKind.Insert,
-            HsSqlAgent.SqlCore.Enums.DmlOperation.Update => SqlStatementKind.Update,
-            HsSqlAgent.SqlCore.Enums.DmlOperation.Delete => SqlStatementKind.Delete,
-            _ => throw new InvalidOperationException($"Unsupported DML operation {plan.Operation}.")
-        };
+        var expectedKind = plan.ApprovalMode is DmlApprovalMode.SqlServerMergeMatchedDelete or DmlApprovalMode.SqlServerMergeMatchedUpdate or DmlApprovalMode.SqlServerMergeNotMatchedInsert
+            ? SqlStatementKind.Merge
+            : plan.Operation switch
+            {
+                HsSqlAgent.SqlCore.Enums.DmlOperation.Insert => SqlStatementKind.Insert,
+                HsSqlAgent.SqlCore.Enums.DmlOperation.Update => SqlStatementKind.Update,
+                HsSqlAgent.SqlCore.Enums.DmlOperation.Delete => SqlStatementKind.Delete,
+                _ => throw new InvalidOperationException($"Unsupported DML operation {plan.Operation}.")
+            };
         if (plan.MutationCommand.Kind != expectedKind)
             throw new InvalidOperationException("DML operation does not match its compiled mutation command kind.");
 
+        if (plan.SqlServerCteUniqueKeyAssurance is { } proof)
+        {
+            if (plan.MutationCommand.TargetProvider != SqlAgentToolType.MsSqlServer
+                || plan.Operation is not (DmlOperation.Update or DmlOperation.Delete)
+                || plan.ApprovalMode != DmlApprovalMode.RowSetMutation
+                || plan.RowIdentityAssurance != DmlRowIdentityAssurance.Strict
+                || plan.MaxAffectedRows <= 0
+                || !string.Equals(plan.TableName, proof.TargetTable, StringComparison.Ordinal)
+                || (plan.SchemaSnapshot is not null
+                    && (plan.SchemaSnapshot.Provider != SqlAgentToolType.MsSqlServer
+                        || !string.Equals(plan.SchemaSnapshot.Sha256, proof.SchemaSha256,
+                            StringComparison.Ordinal))))
+            {
+                throw new InvalidOperationException(
+                    "SQL Server live CTE key proof is not bound to a strict, bounded, " +
+                    "same-provider UPDATE/DELETE plan and its exact physical target/snapshot.");
+            }
+        }
+
+        var fingerprintPolicy = plan.SqlServerCteUniqueKeyAssurance?.TargetKeyColumn is not null
+            ? plan.PolicyVersion + "|live-sqlserver-cte-exact-integer=" +
+              plan.SqlServerCteUniqueKeyAssurance.ProofIdentity
+            : plan.PolicyVersion;
         var expectedFingerprint = DmlFingerprintService.ComputePlanFingerprint(
-            plan.MutationCommand,
-            plan.PolicyVersion);
+            plan.MutationCommand, fingerprintPolicy);
+        if (plan.SqlServerCteUniqueKeyAssurance?.TargetKeyColumn is not null
+            && !string.Equals(expectedFingerprint, plan.MutationCommand.PlanFingerprint,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "SQL Server live CTE proof is not bound to the compiled command fingerprint.");
+        }
         if (!string.Equals(expectedFingerprint, plan.PlanFingerprint, StringComparison.Ordinal))
             throw new InvalidOperationException("Validated DML plan fingerprint does not match its mutation command.");
 
+        if (plan.SqlServerMergeNotMatchedInsertProof is not null
+            && plan.ApprovalMode != DmlApprovalMode.SqlServerMergeNotMatchedInsert)
+            throw new InvalidOperationException(
+                "SQL Server MERGE INSERT proof cannot authorize any other DML approval mode.");
+        if (plan.SqlServerMergeMatchedUpdateProof is not null
+            && plan.ApprovalMode != DmlApprovalMode.SqlServerMergeMatchedUpdate)
+            throw new InvalidOperationException(
+                "SQL Server MERGE UPDATE proof cannot authorize another approval mode.");
+        if (plan.SqlServerMergeMatchedDeleteProof is not null
+            && plan.ApprovalMode != DmlApprovalMode.SqlServerMergeMatchedDelete)
+            throw new InvalidOperationException(
+                "SQL Server MERGE live proof cannot authorize another DML operation.");
+        if (plan.NativeConflictDoNothingProof is not null
+            && plan.ApprovalMode != DmlApprovalMode.InsertConflictDoNothing)
+            throw new InvalidOperationException(
+                "Native conflict skip proof cannot authorize a different DML approval mode.");
+        if (plan.NativeConflictDoUpdateProof is not null
+            && (plan.ApprovalMode != DmlApprovalMode.InsertConflictDoUpdate
+                || plan.NativeConflictDoNothingProof is not null))
+            throw new InvalidOperationException(
+                "PostgreSQL conflict UPDATE proof cannot authorize another mode or carry a DO NOTHING proof.");
+
         switch (plan.ApprovalMode)
         {
+            case DmlApprovalMode.SqlServerMergeNotMatchedInsert:
+                ValidateSqlServerMergeInsertPlan(plan);
+                return;
+
+            case DmlApprovalMode.SqlServerMergeMatchedDelete:
+            case DmlApprovalMode.SqlServerMergeMatchedUpdate:
+                ValidateSqlServerMergePlan(plan);
+                return;
+
+            case DmlApprovalMode.InsertConflictDoNothing:
+                var keyProof = plan.NativeConflictDoNothingProof;
+                if (plan.Operation != DmlOperation.Insert
+                    || plan.MutationCommand.TargetProvider is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres)
+                    || plan.RowIdentityAssurance != DmlRowIdentityAssurance.Strict
+                    || plan.MaxAffectedRows != 1
+                    || plan.InsertRows.Length != 1
+                    || plan.RowIdentityColumns.Length != 1
+                    || plan.MatchQueryCommand is not
+                    {
+                        Kind: SqlStatementKind.Select,
+                        TargetProvider: SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres
+                    } pkMatch
+                    || pkMatch.TargetProvider != plan.MutationCommand.TargetProvider
+                    || plan.SchemaSnapshot is null
+                    || plan.SchemaSnapshot.Provider != plan.MutationCommand.TargetProvider
+                    || plan.SchemaSnapshot.Tables.Count != 1
+                    || !(plan.MutationCommand.TargetProvider == SqlAgentToolType.Sqlite
+                        ? plan.SchemaSnapshot.Version.StartsWith(
+                            "native-dml-schema-v2:", StringComparison.Ordinal)
+                        : plan.SchemaSnapshot.Version.StartsWith(
+                            "native-postgres-insert-source-v1:", StringComparison.Ordinal))
+                    || keyProof is null
+                    || !string.Equals(keyProof.PhysicalTarget, plan.TableName,
+                        plan.MutationCommand.TargetProvider == SqlAgentToolType.Postgres
+                            ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(plan.SchemaSnapshot.Tables[0].Name,
+                        plan.TableName, plan.MutationCommand.TargetProvider == SqlAgentToolType.Postgres
+                            ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(keyProof.SchemaSha256, plan.SchemaSnapshot.Sha256,
+                        StringComparison.Ordinal)
+                    || !string.Equals(keyProof.UniqueKeyColumn,
+                        plan.RowIdentityColumns[0], StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(keyProof.MutationFingerprint,
+                        plan.PlanFingerprint, StringComparison.Ordinal)
+                    || !string.Equals(keyProof.TargetQueryFingerprint,
+                        DmlFingerprintService.ComputePlanFingerprint(pkMatch, plan.PolicyVersion),
+                        StringComparison.Ordinal))
+                    throw new InvalidOperationException(
+                        "Native conflict skip requires a sealed sole enforced UNIQUE key proof, " +
+                        "exact match SELECT, immutable single payload and physical schema freshness.");
+                return;
+
+            case DmlApprovalMode.InsertConflictDoUpdate:
+                var updateProof = plan.NativeConflictDoUpdateProof;
+                if (plan.Operation != DmlOperation.Insert
+                    || plan.MutationCommand.TargetProvider != SqlAgentToolType.Postgres
+                    || plan.RowIdentityAssurance != DmlRowIdentityAssurance.Strict
+                    || plan.MaxAffectedRows != 1
+                    || plan.InsertRows.Length != 1
+                    || plan.RowIdentityColumns.Length is < 2 or > 5
+                    || plan.MatchQueryCommand is not
+                    {
+                        Kind: SqlStatementKind.Select,
+                        TargetProvider: SqlAgentToolType.Postgres
+                    } updateMatch
+                    || plan.SchemaSnapshot is null
+                    || plan.SchemaSnapshot.Provider != SqlAgentToolType.Postgres
+                    || plan.SchemaSnapshot.Tables.Count != 1
+                    || !plan.SchemaSnapshot.Version.StartsWith(
+                        "native-postgres-insert-source-v1:", StringComparison.Ordinal)
+                    || updateProof is null
+                    || !string.Equals(updateProof.PhysicalTarget, plan.TableName, StringComparison.Ordinal)
+                    || !string.Equals(plan.SchemaSnapshot.Tables[0].Name,
+                        plan.TableName, StringComparison.Ordinal)
+                    || !string.Equals(updateProof.SchemaSha256, plan.SchemaSnapshot.Sha256,
+                        StringComparison.Ordinal)
+                    || !string.Equals(updateProof.UniqueKeyColumn,
+                        plan.RowIdentityColumns[0], StringComparison.Ordinal)
+                    || updateProof.UpdatedColumns.IsDefaultOrEmpty
+                    || updateProof.UpdatedColumns.Length != plan.RowIdentityColumns.Length - 1
+                    || !updateProof.UpdatedColumns.SequenceEqual(
+                        plan.RowIdentityColumns.Skip(1), StringComparer.Ordinal)
+                    || updateProof.UpdatedColumns.Distinct(StringComparer.Ordinal).Count()
+                        != updateProof.UpdatedColumns.Length
+                    || plan.InsertRows[0].Count != plan.RowIdentityColumns.Length
+                    || plan.RowIdentityColumns.Any(column => !plan.InsertRows[0].ContainsKey(column))
+                    || !string.Equals(updateProof.MutationFingerprint,
+                        plan.PlanFingerprint, StringComparison.Ordinal)
+                    || !string.Equals(updateProof.TargetQueryFingerprint,
+                        DmlFingerprintService.ComputePlanFingerprint(updateMatch, plan.PolicyVersion),
+                        StringComparison.Ordinal))
+                    throw new InvalidOperationException(
+                        "PostgreSQL conflict UPDATE requires a sealed one-row before/after proof with exact physical key, columns and schema.");
+                return;
+
             case DmlApprovalMode.InsertValues:
                 if (plan.Operation != HsSqlAgent.SqlCore.Enums.DmlOperation.Insert)
                     throw new InvalidOperationException("INSERT VALUES approval mode requires an INSERT operation.");
@@ -504,7 +811,66 @@ public sealed class DmlCoordinator(
                     throw new InvalidOperationException("INSERT VALUES payload exceeds the validated maximum affected row count.");
                 return;
 
+            case DmlApprovalMode.InsertSelect:
+                var physicalComparison = plan.MutationCommand.TargetProvider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL
+                    ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+                if (plan.Operation != DmlOperation.Insert
+                    || plan.MutationCommand.TargetProvider is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer)
+                    || plan.RowIdentityAssurance != DmlRowIdentityAssurance.Strict
+                    || plan.MaxAffectedRows <= 0 || plan.MaxAffectedRows == int.MaxValue
+                    || plan.MatchQueryCommand is not
+                    {
+                        Kind: SqlStatementKind.Select,
+                        TargetProvider: SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer
+                    } match
+                    || match.TargetProvider != plan.MutationCommand.TargetProvider
+                    || plan.SchemaSnapshot is null
+                    || plan.SchemaSnapshot.Provider != plan.MutationCommand.TargetProvider
+                    || plan.SchemaSnapshot.Tables.Count is < 1 or > 2
+                    || !plan.InsertRows.IsDefaultOrEmpty
+                    || plan.RowIdentityColumns.IsDefaultOrEmpty
+                    || plan.NativeInsertSelectProof is not { } sourceProof
+                    || !string.Equals(sourceProof.PhysicalTarget, plan.TableName, StringComparison.Ordinal)
+                    || !string.Equals(plan.SchemaSnapshot.Tables[0].Name, plan.TableName,
+                        physicalComparison)
+                    || (string.Equals(sourceProof.PhysicalSource, plan.TableName,
+                            physicalComparison)
+                        ? plan.SchemaSnapshot.Tables.Count != 1
+                          || (plan.MutationCommand.TargetProvider == SqlAgentToolType.MsSqlServer
+                              && !plan.SchemaSnapshot.Version.StartsWith(
+                                  "native-sqlserver2022-insert-source-v1:", StringComparison.Ordinal))
+                          || (plan.MutationCommand.TargetProvider == SqlAgentToolType.Postgres
+                              && !plan.SchemaSnapshot.Version.StartsWith(
+                                  "native-postgres-insert-source-v1:", StringComparison.Ordinal))
+                          || (plan.MutationCommand.TargetProvider == SqlAgentToolType.MySQL
+                              && !plan.SchemaSnapshot.Version.StartsWith(
+                                  "native-mysql84-innodb-source-v2:", StringComparison.Ordinal))
+                        : plan.SchemaSnapshot.Tables.Count != 2
+                          || (plan.MutationCommand.TargetProvider == SqlAgentToolType.MsSqlServer
+                              && !plan.SchemaSnapshot.Version.StartsWith(
+                                  "native-sqlserver2022-dual-source-v1:", StringComparison.Ordinal))
+                          || (plan.MutationCommand.TargetProvider == SqlAgentToolType.MySQL
+                              && !plan.SchemaSnapshot.Version.StartsWith(
+                                  "native-mysql84-dual-source-v1:", StringComparison.Ordinal))
+                          || !string.Equals(plan.SchemaSnapshot.Tables[1].Name,
+                              sourceProof.PhysicalSource, physicalComparison))
+                    || !string.Equals(sourceProof.SchemaSha256, plan.SchemaSnapshot.Sha256,
+                        StringComparison.Ordinal)
+                    || !string.Equals(sourceProof.MutationFingerprint, plan.PlanFingerprint,
+                        StringComparison.Ordinal)
+                    || !string.Equals(sourceProof.SourceQueryFingerprint,
+                        DmlFingerprintService.ComputePlanFingerprint(match, plan.PolicyVersion),
+                        StringComparison.Ordinal)
+                    || !sourceProof.ProjectedColumns.SequenceEqual(
+                        plan.RowIdentityColumns, StringComparer.OrdinalIgnoreCase))
+                    throw new InvalidOperationException(
+                        "Native INSERT SELECT requires a sealed, bounded, separately attested physical source-row proof.");
+                return;
+
             case DmlApprovalMode.RowSetMutation:
+                if (plan.NativeInsertSelectProof is not null)
+                    throw new InvalidOperationException(
+                        "SQLite INSERT SELECT proof cannot be reused for row-set UPDATE/DELETE.");
                 if (plan.Operation == HsSqlAgent.SqlCore.Enums.DmlOperation.Insert)
                     throw new InvalidOperationException("INSERT cannot use row-set mutation approval mode.");
                 if (plan.MatchQueryCommand is null)
@@ -528,111 +894,150 @@ public sealed class DmlCoordinator(
         }
     }
 
+    private static void ValidateSqlServerMergeInsertPlan(ValidatedDmlPlan plan)
+    {
+        var proof = plan.SqlServerMergeNotMatchedInsertProof;
+        if (plan.Operation != DmlOperation.Insert
+            || plan.MutationCommand.Kind != SqlStatementKind.Merge
+            || plan.MutationCommand.TargetProvider != SqlAgentToolType.MsSqlServer
+            || plan.RowIdentityAssurance != DmlRowIdentityAssurance.Strict
+            || plan.MaxAffectedRows != 1
+            || plan.RowIdentityColumns.Length != 1
+            || plan.SqlServerCteUniqueKeyAssurance is not null
+            || plan.NativeInsertSelectProof is not null
+            || plan.NativeConflictDoNothingProof is not null
+            || plan.NativeConflictDoUpdateProof is not null
+            || plan.SqlServerMergeMatchedDeleteProof is not null
+            || plan.SqlServerMergeMatchedUpdateProof is not null
+            || plan.MatchQueryCommand is not
+            {
+                Kind: SqlStatementKind.Select,
+                TargetProvider: SqlAgentToolType.MsSqlServer
+            } match
+            || plan.SchemaSnapshot is null
+            || plan.SchemaSnapshot.Provider != SqlAgentToolType.MsSqlServer
+            || plan.SchemaSnapshot.Tables.Count != 1
+            || !plan.SchemaSnapshot.Version.StartsWith(
+                "native-sqlserver2022-insert-source-v1:", StringComparison.Ordinal)
+            || proof is null
+            || proof.InsertColumns.IsDefaultOrEmpty
+            || proof.InsertColumns.Length is < 2 or > 4
+            || proof.InsertValues.Length != proof.InsertColumns.Length
+            || plan.InsertRows.IsDefaultOrEmpty
+            || plan.InsertRows.Length != 1
+            || plan.InsertRows[0].Count != proof.InsertColumns.Length
+            || !string.Equals(proof.PhysicalTarget, plan.TableName, StringComparison.Ordinal)
+            || !string.Equals(plan.SchemaSnapshot.Tables[0].Name, plan.TableName,
+                StringComparison.OrdinalIgnoreCase)
+            || plan.SchemaSnapshot.Tables[0].Columns.Count != proof.InsertColumns.Length
+            || plan.SchemaSnapshot.Tables[0].Columns.Any(column =>
+                !proof.InsertColumns.Contains(column, StringComparer.Ordinal))
+            || proof.InsertColumns.Distinct(StringComparer.Ordinal).Count()
+                != proof.InsertColumns.Length
+            || !string.Equals(proof.UniqueKeyColumn, plan.RowIdentityColumns[0],
+                StringComparison.Ordinal)
+            || !string.Equals(proof.UniqueKeyColumn, proof.InsertColumns[0],
+                StringComparison.Ordinal)
+            || proof.KeyValue != proof.InsertValues[0]
+            || proof.InsertColumns.Any(column => column.StartsWith("__", StringComparison.Ordinal))
+            || Enumerable.Range(0, proof.InsertColumns.Length).Any(index =>
+                !plan.InsertRows[0].TryGetValue(proof.InsertColumns[index], out var actual)
+                || actual is not int integer || integer != proof.InsertValues[index])
+            || !string.Equals(proof.SchemaSha256, plan.SchemaSnapshot.Sha256, StringComparison.Ordinal)
+            || !string.Equals(proof.MutationFingerprint, plan.PlanFingerprint,
+                StringComparison.Ordinal)
+            || !string.Equals(proof.TargetQueryFingerprint,
+                DmlFingerprintService.ComputePlanFingerprint(match, plan.PolicyVersion),
+                StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                "SQL Server MERGE INSERT requires a sealed one-row physical absence proof, " +
+                "complete exact INT payload, sole primary key and pinned native schema.");
+    }
+
+    private static void ValidateSqlServerMergePlan(ValidatedDmlPlan plan)
+    {
+        var updateMode = plan.ApprovalMode == DmlApprovalMode.SqlServerMergeMatchedUpdate;
+        var deletion = plan.SqlServerMergeMatchedDeleteProof;
+        var update = plan.SqlServerMergeMatchedUpdateProof;
+        var target = updateMode ? update?.PhysicalTarget : deletion?.PhysicalTarget;
+        var key = updateMode ? update?.UniqueKeyColumn : deletion?.UniqueKeyColumn;
+        var mutation = updateMode ? update?.MutationFingerprint : deletion?.MutationFingerprint;
+        var match = updateMode ? update?.TargetQueryFingerprint : deletion?.TargetQueryFingerprint;
+        var schema = updateMode ? update?.SchemaSha256 : deletion?.SchemaSha256;
+        if (plan.Operation != (updateMode ? DmlOperation.Update : DmlOperation.Delete)
+            || plan.MutationCommand.Kind != SqlStatementKind.Merge
+            || plan.MutationCommand.TargetProvider != SqlAgentToolType.MsSqlServer
+            || plan.RowIdentityAssurance != DmlRowIdentityAssurance.Strict
+            || plan.MaxAffectedRows != 1
+            || !plan.InsertRows.IsDefaultOrEmpty
+            || plan.SqlServerCteUniqueKeyAssurance is not null
+            || plan.NativeInsertSelectProof is not null
+            || plan.NativeConflictDoNothingProof is not null
+            || plan.NativeConflictDoUpdateProof is not null
+            || (updateMode
+                ? deletion is not null || update is null
+                : update is not null || deletion is null)
+            || plan.MatchQueryCommand is not
+            {
+                Kind: SqlStatementKind.Select,
+                TargetProvider: SqlAgentToolType.MsSqlServer
+            } pkMatch
+            || plan.SchemaSnapshot is null
+            || plan.SchemaSnapshot.Provider != SqlAgentToolType.MsSqlServer
+            || plan.SchemaSnapshot.Tables.Count != 1
+            || !plan.SchemaSnapshot.Version.StartsWith(
+                "native-sqlserver2022-insert-source-v1:", StringComparison.Ordinal)
+            || !string.Equals(target, plan.TableName, StringComparison.Ordinal)
+            || !string.Equals(plan.SchemaSnapshot.Tables[0].Name,
+                plan.TableName, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(schema, plan.SchemaSnapshot.Sha256, StringComparison.Ordinal)
+            || plan.RowIdentityColumns.IsDefaultOrEmpty
+            || !string.Equals(key, plan.RowIdentityColumns[0], StringComparison.Ordinal)
+            || !string.Equals(mutation, plan.PlanFingerprint, StringComparison.Ordinal)
+            || !string.Equals(match,
+                DmlFingerprintService.ComputePlanFingerprint(pkMatch, plan.PolicyVersion),
+                StringComparison.Ordinal)
+            || (!updateMode && plan.RowIdentityColumns.Length != 1)
+            || (updateMode && (update!.UpdatedColumns.Length is < 1 or > 3
+                || update.ProposedValues.Length != update.UpdatedColumns.Length
+                || plan.RowIdentityColumns.Length != update.UpdatedColumns.Length + 1
+                || !update.UpdatedColumns.SequenceEqual(
+                    plan.RowIdentityColumns.Skip(1), StringComparer.Ordinal)
+                || update.UpdatedColumns.Distinct(StringComparer.Ordinal).Count()
+                    != update.UpdatedColumns.Length
+                || update.UpdatedColumns.Any(column =>
+                    string.Equals(column, key, StringComparison.Ordinal)
+                    || column.StartsWith("__", StringComparison.Ordinal)))))
+            throw new InvalidOperationException(
+                "SQL Server MERGE approval requires one exact physical INT PRIMARY key, " +
+                "a sealed bounded old/new INT payload and a complete native schema/row-set proof.");
+    }
+
+    // Shared by single and atomic commits. No detached metadata connection,
+    // optimistic preview digest or caller-owned Catalog can discharge this
+    // proof. IsCurrent pins both tables until the active transaction ends.
+    internal static void EnsureLiveSqlServerCteKeyCurrent(
+        ValidatedDmlPlan plan,
+        DbConnection connection,
+        DbTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        if (plan.SqlServerCteUniqueKeyAssurance is not { } proof)
+            return;
+
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!proof.IsCurrent(connection, transaction))
+        {
+            throw new InvalidOperationException(
+                "SQL Server CTE source unique-key metadata changed or cannot be " +
+                "reverified in the actual mutation transaction; write denied.");
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+    }
+
     private static CompiledSqlCommand RequireMatchCommand(ValidatedDmlPlan plan) =>
         plan.MatchQueryCommand
         ?? throw new InvalidOperationException("Row-set DML approval requires a match query command.");
 
-    private static string? ComputeRowSetFingerprint(
-        ValidatedDmlPlan plan,
-        IReadOnlyList<IReadOnlyDictionary<string, object?>> rows)
-    {
-        if (plan.RowIdentityAssurance == DmlRowIdentityAssurance.CountOnly)
-            return null;
 
-        var keys = rows.Select(row =>
-            (IReadOnlyList<object?>)plan.RowIdentityColumns
-                .Select(column => GetRequiredValue(row, column))
-                .ToArray());
-        return DmlFingerprintService.ComputeUnorderedRowSetFingerprint(keys);
-    }
-
-    private static object? GetRequiredValue(
-        IReadOnlyDictionary<string, object?> row,
-        string column)
-    {
-        foreach (var pair in row)
-        {
-            if (string.Equals(pair.Key, column, StringComparison.OrdinalIgnoreCase))
-                return pair.Value;
-        }
-        throw new InvalidOperationException(
-            $"DML match query did not return required row identity column '{column}'.");
-    }
-
-    private static async Task<List<IReadOnlyDictionary<string, object?>>> QueryRowsAsync(
-        DbConnection connection,
-        DbTransaction transaction,
-        CompiledSqlCommand command,
-        CancellationToken cancellationToken)
-    {
-        var parameters = BuildParameters(command);
-        var result = await connection.QueryAsync(
-            new CommandDefinition(
-                command.Sql,
-                parameters,
-                transaction,
-                cancellationToken: cancellationToken));
-
-        return result.Select(ToReadOnlyRow).ToList();
-    }
-
-    private static async Task<MutationExecutionResult> ExecuteMutationAsync(
-        DbConnection connection,
-        DbTransaction transaction,
-        CompiledSqlCommand command,
-        CancellationToken cancellationToken)
-    {
-        if (!command.ReturnsRows)
-        {
-            var affected = await connection.ExecuteAsync(
-                new CommandDefinition(
-                    command.Sql,
-                    BuildParameters(command),
-                    transaction,
-                    cancellationToken: cancellationToken));
-            return new MutationExecutionResult(
-                affected,
-                ImmutableArray<IReadOnlyDictionary<string, object?>>.Empty);
-        }
-
-        var rows = await QueryRowsAsync(
-            connection,
-            transaction,
-            command,
-            cancellationToken);
-        return new MutationExecutionResult(
-            rows.Count,
-            rows.ToImmutableArray());
-    }
-
-    private static DynamicParameters BuildParameters(CompiledSqlCommand command)
-    {
-        var parameters = new DynamicParameters();
-        foreach (var parameter in command.Parameters)
-            parameters.Add(NormalizeParameterName(parameter.Name), parameter.Value);
-        return parameters;
-    }
-
-    private static IReadOnlyDictionary<string, object?> ToReadOnlyRow(dynamic row)
-    {
-        if (row is IDictionary<string, object> dictionary)
-            return dictionary.ToDictionary(
-                pair => pair.Key,
-                pair => (object?)pair.Value,
-                StringComparer.OrdinalIgnoreCase);
-        throw new InvalidOperationException(
-            $"Unexpected query row representation '{row?.GetType().FullName ?? "null"}'.");
-    }
-
-    private static string NormalizeParameterName(string name)
-    {
-        if (string.IsNullOrWhiteSpace(name))
-            throw new InvalidOperationException("Compiled SQL parameter name cannot be empty.");
-        var trimmed = name.Trim();
-        return trimmed[0] is '@' or ':' or '$' ? trimmed[1..] : trimmed;
-    }
-
-    private sealed record MutationExecutionResult(
-        int AffectedRows,
-        ImmutableArray<IReadOnlyDictionary<string, object?>> ReturnedRows);
 }

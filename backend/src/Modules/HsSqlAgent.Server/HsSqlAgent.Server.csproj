@@ -1,7 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
-		<TargetFramework>net10.0</TargetFramework>
+		    <TargetFrameworks Condition="'$(LibraryFrameworks)'==''">net10.0;net8.0;</TargetFrameworks>
+    <TargetFrameworks Condition="'$(LibraryFrameworks)'!=''">$(LibraryFrameworks)</TargetFrameworks>
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
@@ -109,7 +110,9 @@
 		</ItemGroup>
 	</Target>
 
-	<Target Name="CompileFrontend" BeforeTargets="BeforeBuild" Condition="'$(Configuration)' == 'Release'">
+	<!-- Nuxt generation must run once before multi-target inner builds start.
+           Concurrent generators contend on the same .nuxt build lock. -->
+	<Target Name="CompileFrontend" BeforeTargets="DispatchToInnerBuilds" Condition="'$(Configuration)' == 'Release' And '$(IsCrossTargetingBuild)' == 'true'">
 		<Message Importance="high" Text="[HsSqlAgent] Checking frontend dist status..." />
 		<PropertyGroup>
 			<_FrontendExists Condition="Exists('wwwroot\index.html')">true</_FrontendExists>
@@ -121,6 +124,10 @@
 		</ItemGroup>
 		<MakeDir Directories="wwwroot" Condition="'$(_FrontendExists)' != 'true'" />
 		<Copy SourceFiles="@(FrontendDistFiles)" DestinationFiles="wwwroot\%(RecursiveDir)%(Filename)%(Extension)" SkipUnchangedFiles="true" Condition="'$(_FrontendExists)' != 'true'" />
+	</Target>
+
+	<!-- Each framework embeds the assets prepared by the outer build. -->
+	<Target Name="EmbedFrontend" BeforeTargets="BeforeBuild" Condition="'$(Configuration)' == 'Release' And '$(IsCrossTargetingBuild)' != 'true'">
 		<ItemGroup>
 			<EmbeddedResource Include="wwwroot\**" />
 		</ItemGroup>
