@@ -17,7 +17,6 @@ covered. Do not replace physical tests with mocked acknowledgement exceptions.
 | Oracle physical DML, native Query and SQL grammar | Same project families | `sqlagent-oracle-ddl-parity` | Oracle CI service | Native behavior and parity |
 | Firebird physical DML, native Query and SQL grammar | Same project families | `sqlagent-firebird-ddl-parity` | Firebird CI service | Native behavior and parity |
 | SQL grammar matrices | `SqlAgent.Test/Services/SqlCore` | `sqlagent-syntax-matrix` and SQL service jobs | Compiler and provider-specific live jobs | Positive/negative grammar contracts |
-| SqlCore regression baseline | `HsSqlAgent.SqlCore` and test governance | `SqlCore baseline comparison` | Exact PR/develop comparison | Preserve six-provider grammar and validation parity |
 
 The machine-readable `.github/test-suites/server-integration.tsv` is the
 **single source** for Server's excluded test classes and their positive job
@@ -73,7 +72,7 @@ multiple explicit positive owners in the manifest.
    in the `server-test` CI job and does not mutate checked-out sources.
 6. Run `bash .github/scripts/audit-server-integration-ownership.sh` and
    `bash .github/scripts/audit-server-integration-ownership.sh --default-filter`
-   locally, then verify all 18 required Tests jobs and SqlCore baseline on the
+   locally, then verify all 18 required Tests jobs on the
    **exact final PR SHA** before merging to `develop`.
 
 ## Remaining cleanup and security work

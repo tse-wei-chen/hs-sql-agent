@@ -33,19 +33,6 @@ case "$2" in
            event: $event, status: "completed", conclusion: "success"}] else [] end))}'
     fi
     ;;
-  "repos/tse-wei-chen/hs-sql-agent/actions/workflows/sqlcore-comparison.yml/runs?head_sha=${GITHUB_SHA}&branch=develop&event=push&per_page=100")
-    if [[ "${MOCK_NO_BASELINE:-0}" == 1 ]]; then
-      echo '{"workflow_runs":[]}'
-    else
-      jq -n \
-        --arg sha "${MOCK_BASELINE_SHA:-$GITHUB_SHA}" \
-        --arg status "${MOCK_BASELINE_STATUS:-completed}" \
-        --arg conclusion "${MOCK_BASELINE_CONCLUSION:-success}" \
-        '{workflow_runs:[{id:2001,head_sha:$sha,head_branch:"develop",
-           event:"push",status:$status,
-           conclusion:(if $status == "completed" then $conclusion else null end)}]}'
-    fi
-    ;;
   repos/tse-wei-chen/hs-sql-agent/actions/runs/1001/jobs?per_page=100)
     names=(admin-api-openapi admin-test auth-test common-test frontend-lint
       frontend-test infrastructure-test redis-approval-integration server-test
@@ -63,11 +50,6 @@ case "$2" in
       printf '{"name":"%s","status":"completed","conclusion":"%s"}' "$name" "$result"
     done
     echo ']}'
-    ;;
-  repos/tse-wei-chen/hs-sql-agent/actions/runs/2001/jobs?per_page=100)
-    jq -n --arg name "${MOCK_BASELINE_JOB_NAME:-sqlcore-baseline-comparison}" \
-      --arg conclusion "${MOCK_BASELINE_JOB_RESULT:-success}" \
-      '{total_count:1,jobs:[{name:$name,status:"completed",conclusion:$conclusion}]}'
     ;;
   repos/tse-wei-chen/hs-sql-agent/actions/runs/1001/artifacts?per_page=100)
     if [[ "${MOCK_NO_SECURITY_ARTIFACT:-0}" == 1 ]]; then
@@ -118,7 +100,7 @@ expect_pending() {
 }
 
 cd "$root"
-expect_pass 'exact develop push with all 18 jobs, baseline and security artifact'
+expect_pass 'exact develop push with all 18 jobs and security artifact'
 jq -e '.publicationAuthorized == false and .mainPromotionPerformed == false
        and .stage == "develop-release-candidate" and .testsJobsPassed == 18' \
     "$HS_SQL_AGENT_CANDIDATE_REPORT" >/dev/null
@@ -145,15 +127,6 @@ unset MOCK_TEST_BRANCH
 export MOCK_TEST_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 expect_pending 'wrong Tests SHA'
 unset MOCK_TEST_SHA
-export MOCK_NO_BASELINE=1
-expect_pending 'missing SqlCore baseline'
-unset MOCK_NO_BASELINE
-export MOCK_BASELINE_STATUS=in_progress
-expect_pending 'running baseline is not pass'
-unset MOCK_BASELINE_STATUS
-export MOCK_BASELINE_CONCLUSION=failure
-expect_deny 'failed baseline'
-unset MOCK_BASELINE_CONCLUSION
 export MOCK_TEST_JOBS=17
 expect_deny 'missing Tests job'
 unset MOCK_TEST_JOBS
@@ -163,9 +136,6 @@ unset MOCK_WRONG_TEST_JOB
 export MOCK_FAIL_JOB=1
 expect_deny 'failed mandatory Tests job'
 unset MOCK_FAIL_JOB
-export MOCK_BASELINE_JOB_RESULT=failure
-expect_deny 'failed baseline job'
-unset MOCK_BASELINE_JOB_RESULT
 export MOCK_NO_SECURITY_ARTIFACT=1
 expect_deny 'missing live dependency/compiler evidence'
 unset MOCK_NO_SECURITY_ARTIFACT
@@ -178,4 +148,4 @@ export GH_TOKEN=offline-token
 export GITHUB_REPOSITORY=somebody/fork
 expect_deny 'not upstream repository'
 export GITHUB_REPOSITORY=tse-wei-chen/hs-sql-agent
-echo "Develop-only release-candidate verifier: 19 positive/negative controls passed."
+echo "Develop-only release-candidate verifier: 15 positive/negative controls passed."

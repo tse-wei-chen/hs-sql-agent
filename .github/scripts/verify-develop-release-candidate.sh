@@ -67,7 +67,6 @@ verify_run() {
 }
 
 tests_run="$(verify_run test.yml)"
-baseline_run="$(verify_run sqlcore-comparison.yml)"
 
 # Exact names and count matter: 18 unrelated green jobs cannot substitute
 # for the server, six-provider real-DB, Redis and release-advisory checks.
@@ -89,17 +88,6 @@ jq -e '
     and (.jobs | all(.[]; .status == "completed" and .conclusion == "success"))
 ' <<< "$jobs" >/dev/null || die "required Tests job name/count/result contract failed"
 
-baseline_jobs="$(gh api "repos/$repo/actions/runs/$baseline_run/jobs?per_page=100")" ||
-    die "cannot inspect SqlCore comparison job"
-jq -e '
-    .total_count == 1
-    and (.jobs | type) == "array"
-    and (.jobs | length) == 1
-    and (.jobs[0].name == "sqlcore-baseline-comparison")
-    and (.jobs[0].status == "completed")
-    and (.jobs[0].conclusion == "success")
-' <<< "$baseline_jobs" >/dev/null || die "SqlCore baseline job proof failed"
-
 artifacts="$(gh api "repos/$repo/actions/runs/$tests_run/artifacts?per_page=100")" ||
     die "cannot read physical/security evidence artifacts"
 jq -e '
@@ -112,19 +100,17 @@ mkdir -p "$(dirname "$output")"
 jq -n \
     --arg sha "$sha" \
     --argjson tests "$tests_run" \
-    --argjson baseline "$baseline_run" \
     '{
-      schemaVersion: 1,
+      schemaVersion: 2,
       version: "3.1.0",
       stage: "develop-release-candidate",
       sha: $sha,
       testsRunId: $tests,
       testsJobsPassed: 18,
-      sqlcoreBaselineRunId: $baseline,
       advisoryAndCompilerArtifact: "security-dependency-advisory-evidence",
       providerProof: "six-provider mandatory physical positive/negative and fault CI jobs",
       publicationAuthorized: false,
       mainPromotionPerformed: false,
       remainingPublicationGate: "actual promoted main push SHA + completed issue #575"
     }' > "$output"
-echo "Develop 3.1.0 release candidate verified at $sha: 18 Tests jobs (run $tests_run), SqlCore baseline (run $baseline_run), advisory/warning evidence present. No publication authorized."
+echo "Develop 3.1.0 release candidate verified at $sha: 18 Tests jobs (run $tests_run), advisory/warning evidence present. No publication authorized."

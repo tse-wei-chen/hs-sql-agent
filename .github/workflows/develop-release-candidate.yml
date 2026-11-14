@@ -2,7 +2,7 @@ name: Develop 3.1.0 release candidate (read-only)
 
 # This is a pre-publication candidate signal. It NEVER promotes to main,
 # creates tags, closes issues, publishes NuGet or uploads Docker images.
-# On develop push, Tests and SqlCore baseline run independently for the same
+# On develop push, Tests runs for the same
 # SHA; this gate waits a bounded time for their exact commit evidence.
 on:
   push:
@@ -47,7 +47,7 @@ jobs:
                   cat /tmp/release-candidate-verification.log
                   exit 1
                 fi
-                echo "Waiting for exact develop Tests/SqlCore push evidence (attempt $attempt/60)"
+                echo "Waiting for exact develop Tests push evidence (attempt $attempt/60)"
                 sleep 30
                 ;;
               *)

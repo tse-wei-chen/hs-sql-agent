@@ -14,7 +14,7 @@ to `main` is a separate, owner-authorized action.
 | SQL physical network partition | PostgreSQL real in-flight Query/TCP fault; MySQL, SQL Server, Oracle and Firebird healthy→cut→fail→restore; Redis real TCP partition and process stop with lease revocation | Testcontainers / pinned Docker service containers; each exact-count/no-skip check |
 | Distributed SQL admission | Redis `FailOpen` never grants a lease; Sentinel/multi-endpoint SQL coordination is unsupported; two independent Redis primaries each grant locally (physical split-brain **negative proof**); `MaxConcurrentSql` bounds *admitted operations*, **not** all DB connections | Redis 7 split-brain and outage Testcontainers, DI and Doctor tests, explicit deployment contract |
 | Durable DML outcome | Non-replayable `outcome_unknown`, original approval ID, separated COMMIT/ROLLBACK categories; six-provider native transaction + simulated lost acknowledgment, PostgreSQL real post-durable COMMIT wire EOF, independent DB readback | Six real-provider Custom MCP suites plus PostgreSQL socket fault case; **do not** relabel the synthetic cases as true network faults |
-| Four kinds of CI evidence | All **18 named Tests jobs** pass on the exact `develop` *push* SHA, a separate **one-job** SqlCore baseline passes on that SHA, and the same Tests run uploaded nonempty `security-dependency-advisory-evidence` | `.github/workflows/test.yml`, `sqlcore-comparison.yml`, read-only `develop-release-candidate.yml`; verification artifact `develop-3.1.0-release-candidate-proof` |
+| Four kinds of CI evidence | All **18 named Tests jobs** pass on the exact `develop` *push* SHA, the same Tests run uploaded nonempty `security-dependency-advisory-evidence` | `.github/workflows/test.yml`, read-only `develop-release-candidate.yml`; verification artifact `develop-3.1.0-release-candidate-proof` |
 | Dependencies and compiler | Actual current NuGet and production pnpm advisory results; missing/invalid scan or high/critical vulnerability fails closed; compiler warning baseline recorded, not erased; low/moderate reviewed explicitly before promotion | Existing infrastructure-test `audit-dependency-security.sh` and uploaded compiler log |
 | Source and publication contract | `VersionPrefix=3.1.0`, `CHANGELOG.md` contains `[3.1.0] - Unreleased`; supported DB identities/limitations documented; exact-`main` release gates unchanged | `verify-develop-release-candidate.sh`, Query security contract, issue #575 |
 
@@ -81,8 +81,7 @@ those gates actually pass on the merged develop SHA; a completed #575 alone
 does not permit a release. The independent owner/publication issue
 [#634](https://github.com/tse-wei-chen/hs-sql-agent/issues/634) must remain
 open until the owner explicitly approves main promotion and verifies the
-*actual* promoted main push SHA: 18/18 named Tests jobs and a successful
-SqlCore baseline. The 3.1.0 publication preflight now requires **both**
+*actual* promoted main push SHA: 18/18 named Tests jobs. The 3.1.0 publication preflight now requires **both**
 #575 and #634 `closed/completed` with every checkbox checked, *plus* the
 unchanged strict exact-main CI gate. Any open/unchecked issue fails closed.
 Neither issue closure nor a read-only candidate workflow merges main, creates
