@@ -44,9 +44,9 @@ export interface McpClientConfig {
 
 export interface AvailableMcpTool {
   name: string;
-  type: "Query" | "DML";
+  type: "Query" | "DML" | "DDL";
   displayName: string;
-  risk: "low" | "medium" | "high";
+  risk: "low" | "medium" | "high" | "critical";
   isBuiltIn: boolean;
   defaultSelected: boolean;
 }

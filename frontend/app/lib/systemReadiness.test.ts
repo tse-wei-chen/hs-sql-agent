@@ -34,6 +34,7 @@ describe("system readiness", () => {
       "request",
     ]);
     expect(steps.every((step) => step.complete)).toBe(true);
+    expect(steps.find((step) => step.id === "key")?.description).toContain("DML or DDL");
   });
 
   it("treats warnings as reviewable but errors as launch blockers", () => {
