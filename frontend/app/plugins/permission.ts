@@ -2,7 +2,7 @@ import { watch } from "vue"
 import { useAuthStore } from "@/stores/auth"
 import { canAccess } from "@/lib/permissions"
 
- export default defineNuxtPlugin((nuxtApp) => {
+export default defineNuxtPlugin((nuxtApp) => {
   const route = useRoute()
   const auth = useAuthStore()
   const directiveWatchers = new WeakMap<HTMLElement, () => void>()
