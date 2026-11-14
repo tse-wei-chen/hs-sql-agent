@@ -1,6 +1,6 @@
 import { watch } from "vue"
 import { useAuthStore } from "@/stores/auth"
-import { canAccess, type PermissionGrant } from "@/lib/permissions"
+import { canAccess } from "@/lib/permissions"
 
  export default defineNuxtPlugin((nuxtApp) => {
   const route = useRoute()
