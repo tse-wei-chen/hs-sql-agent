@@ -65,7 +65,7 @@ module internal RewriteCatalogIdentifierProof =
             isSimpleAsciiIdentifier name
             && String.Equals(name, name.ToUpperInvariant(), StringComparison.Ordinal)
         let optionalCanonical name =
-            isNull name || canonical name
+            isNull name || canonical (nonNull name)
         let distinctCanonical (values: seq<string>) =
             let all = values |> Seq.toList
             all.Length = (all |> List.distinct).Length
@@ -110,13 +110,13 @@ module internal RewriteCatalogIdentifierProof =
             not (isNull identity)
             && (identity.Parts |> Seq.forall lowercase)
         let lowerConstraint (c: SqlCatalogConstraint) =
-            (isNull c.Name || lowercase c.Name)
+            (isNull c.Name || lowercase (nonNull c.Name))
             && (c.Columns |> Seq.forall lowercase)
             && (c.ReferencedColumns |> Seq.forall lowercase)
             && (isNull c.ReferencedIdentity || lowerIdentity c.ReferencedIdentity)
         not (isNull profile)
-        && profile.Provider = SqlAgentToolType.MySQL
-        && profile.GetSessionSetting("LOWER_CASE_TABLE_NAMES") = "0"
+        && (nonNull profile).Provider = SqlAgentToolType.MySQL
+        && (nonNull profile).GetSessionSetting("LOWER_CASE_TABLE_NAMES") = "0"
         && state.IsClosedWorld
         && (state.Tables |> Seq.forall (fun t ->
             t.Knowledge = SqlCatalogKnowledge.Known

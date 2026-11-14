@@ -41,7 +41,7 @@ module internal RewriteResourceBudget =
 
     // Cancellation belongs to the caller's ambient execution scope, NOT a global
     // compiler setting. Nested entry points must honor every enclosing token.
-    let private cancellationScopes = AsyncLocal<CancellationToken[]>()
+    let private cancellationScopes = AsyncLocal<CancellationToken[] | null>()
 
     let private checkCancellation () =
         match cancellationScopes.Value with
@@ -61,8 +61,9 @@ module internal RewriteResourceBudget =
         else
             let previous = cancellationScopes.Value
             cancellationScopes.Value <-
-                if isNull previous then [| cancellationToken |]
-                else Array.append previous [| cancellationToken |]
+                match previous with
+                | null -> [| cancellationToken |]
+                | tokens -> Array.append tokens [| cancellationToken |]
             try
                 checkCancellation ()
                 let result = action ()

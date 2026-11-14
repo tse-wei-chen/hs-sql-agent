@@ -183,7 +183,7 @@ module internal RewriteSchemaAnalyzer =
         | null -> false
         | value ->
             not (isNull value.ServerVersion)
-            && value.ServerVersion.CompareTo(Version(major, minor)) >= 0
+            && (nonNull value.ServerVersion).CompareTo(Version(major, minor)) >= 0
 
     let private grammar sourceProfile = function
         | SqlAgentToolType.Postgres ->
@@ -1128,9 +1128,9 @@ module internal RewriteSchemaAnalyzer =
                 // in the script: DDL can implicitly commit and other writers
                 // may have modified the rows in the meantime.
                 expect "ADD"
-                let name =
+                let name : string | null =
                     if accept "CONSTRAINT" then namePart ()
-                    else null
+                    else (null : string | null)
                 if not (accept "FOREIGN") then raise OutsideSubset
                 expect "KEY"
                 let localColumns = columnNames ()

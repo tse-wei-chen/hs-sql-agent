@@ -608,8 +608,8 @@ module internal RewriteStages =
     /// row per target only for this closed, nonmultiplying CTE path. A caller
     /// catalog alone is never evidence; the DB-minted object is rechecked in
     /// the host's actual transaction before the approved write.
-    let private sqlServerLiveIntCteProof
-        (proof: SqlServerCteUniqueKeyAssurance | null)
+    let private sqlServerLiveIntCteProofCore
+        (proof: SqlServerCteUniqueKeyAssurance)
         (sourceProfile: SqlProviderCapabilityProfile | null)
         (targetProfile: SqlProviderCapabilityProfile | null)
         (snapshot: SqlSchemaSnapshot | null)
@@ -620,9 +620,9 @@ module internal RewriteStages =
             StringComparer.Ordinal.Equals(left, right)
         let versioned (profile: SqlProviderCapabilityProfile | null) =
             not (isNull profile)
-            && profile.Provider = SqlAgentToolType.MsSqlServer
-            && not (isNull profile.ServerVersion)
-            && profile.ServerVersion.CompareTo(Version(9, 0)) >= 0
+            && (nonNull profile).Provider = SqlAgentToolType.MsSqlServer
+            && not (isNull (nonNull profile).ServerVersion)
+            && (nonNull (nonNull profile).ServerVersion).CompareTo(Version(9, 0)) >= 0
         let qualified (identifier: Identifier) (physical: string) =
             match Identifier.parts identifier, physical.Split('.') with
             | [schema; table], [|expectedSchema; expectedTable|] ->
@@ -736,7 +736,7 @@ module internal RewriteStages =
                      NamedTable(joinedPhysical, Some rightAlias), predicate)
                 when not (isNull proof.JoinedSourceTable)
                      && qualified physical proof.SourceTable
-                     && qualified joinedPhysical proof.JoinedSourceTable
+                     && qualified joinedPhysical (nonNull proof.JoinedSourceTable)
                      && not (same leftAlias.Value rightAlias.Value)
                      && proof.JoinedSourceKeyColumns.Count = proof.SourceKeyColumns.Count ->
                 let primary = proof.SourceKeyColumns |> Seq.toArray
@@ -1074,14 +1074,13 @@ module internal RewriteStages =
                     | _ -> None
                 | _ -> None
 
-        if isNull proof
-           || proof.TargetKeyColumns.Count = 0
+        if proof.TargetKeyColumns.Count = 0
            || proof.TargetKeyColumns.Count <> proof.SourceKeyColumns.Count
            || proof.SourceKeyColumns.Count > 2
            || not (versioned sourceProfile) || not (versioned targetProfile)
            || (not (isNull snapshot)
-               && (snapshot.Provider <> SqlAgentToolType.MsSqlServer
-                   || not (same snapshot.Sha256 proof.SchemaSha256)))
+               && ((nonNull snapshot).Provider <> SqlAgentToolType.MsSqlServer
+                   || not (same (nonNull snapshot).Sha256 proof.SchemaSha256)))
            || not (qualified target proof.TargetTable)
            || targetAlias.IsSome
            || ctes.IsEmpty || ctes.Length > 3 then false
@@ -1098,9 +1097,9 @@ module internal RewriteStages =
                     | [_] -> Some None
                     | [_; NamedTable(physical, Some alias)]
                         when not (isNull proof.JoinedSourceTable)
-                             && qualified physical proof.JoinedSourceTable
-                             && not (same proof.JoinedSourceTable proof.SourceTable)
-                             && not (same proof.JoinedSourceTable proof.TargetTable)
+                             && qualified physical (nonNull proof.JoinedSourceTable)
+                             && not (same (nonNull proof.JoinedSourceTable) proof.SourceTable)
+                             && not (same (nonNull proof.JoinedSourceTable) proof.TargetTable)
                              && proof.JoinedSourceKeyColumns.Count = proof.SourceKeyColumns.Count ->
                         Some(Some alias.Value)
                     | _ -> None
@@ -1256,6 +1255,15 @@ module internal RewriteStages =
             | _ -> false
 
     /// Public CLR mutation statements may be constructed without the native
+    let private sqlServerLiveIntCteProof
+        (proof: SqlServerCteUniqueKeyAssurance | null) sourceProfile targetProfile snapshot
+        ctes target targetAlias sources predicate =
+        match proof with
+        | null -> false
+        | proof ->
+            sqlServerLiveIntCteProofCore proof sourceProfile targetProfile snapshot
+                ctes target targetAlias sources predicate
+
     /// Parser. Never trust an unqualified CTE name as the physical UPDATE/
     /// DELETE write target: SQL Server permits writes through updatable CTEs,
     /// which would bypass the verified physical table identity allowlist.
@@ -1270,9 +1278,9 @@ module internal RewriteStages =
     /// A caller-declared Catalog is NOT a runtime key assurance. Only a
     /// separate, metadata-verified, schema-bound proof may permit this one
     /// physical-source native SQLite UPDATE FROM shape.
-    let private sqliteLivePkUpdateFromProof
-            (assurance: SqliteUpdateFromKeyAssurance | null)
-            (snapshot: SqlSchemaSnapshot | null)
+    let private sqliteLivePkUpdateFromProofCore
+            (assurance: SqliteUpdateFromKeyAssurance)
+            (snapshot: SqlSchemaSnapshot)
             (sourceProfile: SqlProviderCapabilityProfile | null)
             (targetProfile: SqlProviderCapabilityProfile | null)
             (update: Update) =
@@ -1280,12 +1288,11 @@ module internal RewriteStages =
         let same a b = StringComparer.OrdinalIgnoreCase.Equals(a, b)
         let versionProven (profile: SqlProviderCapabilityProfile | null) =
             not (isNull profile)
-            && profile.Provider = SqlAgentToolType.Sqlite
-            && not (isNull profile.ServerVersion)
-            && profile.ServerVersion.CompareTo(Version(3, 33, 0)) >= 0
+            && (nonNull profile).Provider = SqlAgentToolType.Sqlite
+            && not (isNull (nonNull profile).ServerVersion)
+            && (nonNull (nonNull profile).ServerVersion).CompareTo(Version(3, 33, 0)) >= 0
 
-        if isNull assurance || isNull snapshot
-           || snapshot.Provider <> SqlAgentToolType.Sqlite
+        if snapshot.Provider <> SqlAgentToolType.Sqlite
            || not (StringComparer.Ordinal.Equals(snapshot.Sha256, assurance.SchemaSha256))
            || not (versionProven sourceProfile)
            || not (versionProven targetProfile) then false
@@ -1333,6 +1340,17 @@ module internal RewriteStages =
                     | _ -> ()
                 proven
             | _ -> false
+
+    let private sqliteLivePkUpdateFromProof
+        (assurance: SqliteUpdateFromKeyAssurance | null)
+        (snapshot: SqlSchemaSnapshot | null) sourceProfile targetProfile update =
+        match assurance with
+        | null -> false
+        | assurance ->
+            match snapshot with
+            | null -> false
+            | snapshot ->
+                sqliteLivePkUpdateFromProofCore assurance snapshot sourceProfile targetProfile update
 
     let private validateAggregateDocument enforceSource source sourceProfile target targetProfile liveKeyAssurance sqlServerLiveProof schemaSnapshot document =
         match document.Statement with

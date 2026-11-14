@@ -30,7 +30,7 @@ module internal RewriteScalarTypeEvidence =
             Some SqlSchemaValueKind.Numeric
         | SqlFunctionReturnType.Boolean -> Some SqlSchemaValueKind.Boolean
         | SqlFunctionReturnType.Text -> Some SqlSchemaValueKind.Text
-        | SqlFunctionReturnType.Void -> None
+        | _ -> None
 
     let ofLiteral = function
         | ScalarValue.Null -> Unproven

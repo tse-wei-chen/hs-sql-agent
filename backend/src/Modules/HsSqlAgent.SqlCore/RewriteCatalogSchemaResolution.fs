@@ -21,14 +21,17 @@ module internal RewriteCatalogSchemaResolution =
     let scope dialect (profile: SqlProviderCapabilityProfile | null) =
         match dialect, profile with
         | SqlAgentToolType.Postgres, p when not (isNull p) ->
-            let setting = p.GetSessionSetting("SEARCH_PATH")
-            if String.IsNullOrEmpty setting || setting <> setting.Trim()
-               || setting.StartsWith("pg_", StringComparison.OrdinalIgnoreCase)
-               || setting = "information_schema"
-               || setting <> setting.ToLowerInvariant()
-               || not (RewriteCatalogIdentifierProof.isSimpleAsciiIdentifier setting) then
-                Unproven
-            else SingleSchema setting
+            let setting = (nonNull p).GetSessionSetting("SEARCH_PATH") |> Option.ofObj
+            match setting with
+            | None -> Unproven
+            | Some setting ->
+                if String.IsNullOrEmpty setting || setting <> setting.Trim()
+                   || setting.StartsWith("pg_", StringComparison.OrdinalIgnoreCase)
+                   || setting = "information_schema"
+                   || setting <> setting.ToLowerInvariant()
+                   || not (RewriteCatalogIdentifierProof.isSimpleAsciiIdentifier setting) then
+                    Unproven
+                else SingleSchema setting
         | _ -> Unproven
 
     let private partName (parts: string[]) =

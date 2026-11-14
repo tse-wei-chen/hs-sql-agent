@@ -38,8 +38,8 @@ module internal RewriteCatalogBinding =
             if Object.ReferenceEquals(diagnostic.Span, null) then syntax.Span
             else
                 SqlDiagnosticSpan(
-                    syntax.Span.Start + diagnostic.Span.Start,
-                    diagnostic.Span.Length)
+                    syntax.Span.Start + (nonNull diagnostic.Span).Start,
+                    (nonNull diagnostic.Span).Length)
         let adjusted =
             SqlDiagnostic(
                 diagnostic.Code,
@@ -163,10 +163,10 @@ module internal RewriteCatalogBinding =
             with
             | :? SqlCompilationException as ex
                 when not (Object.ReferenceEquals(ex.Diagnostic, null))
-                     && ex.Diagnostic.Category = SqlDiagnosticCategory.Resource ->
+                     && (nonNull ex.Diagnostic).Category = SqlDiagnosticCategory.Resource ->
                 reraise()
             | :? SqlCompilationException as ex when not (Object.ReferenceEquals(ex.Diagnostic, null)) ->
-                rejectedOrUnverified syntax ex.Diagnostic
+                rejectedOrUnverified syntax (nonNull ex.Diagnostic)
             | :? InvalidOperationException as ex
                 when ex.Data.Contains("HsSqlAgent.SqlCore.Diagnostic") ->
                 match ex.Data["HsSqlAgent.SqlCore.Diagnostic"] with
@@ -174,7 +174,7 @@ module internal RewriteCatalogBinding =
                 | _ -> reraise()
             | :? SqlParseException as ex
                 when not (Object.ReferenceEquals(ex.Diagnostic, null))
-                     && ex.Diagnostic.Category = SqlDiagnosticCategory.Resource ->
+                     && (nonNull ex.Diagnostic).Category = SqlDiagnosticCategory.Resource ->
                 reraise()
             | :? SqlParseException as ex ->
                 let diagnostic =

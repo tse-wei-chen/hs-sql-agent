@@ -38,7 +38,7 @@ type SqlCapabilityMatrix private () =
             | SqlAgentToolType.MsSqlServer ->
                 match profile with
                 | null -> SqlCapabilityStatus.Supported, "SQL Server native CROSS/OUTER APPLY on correlated derived SELECT; collection/TVF forms are not modeled."
-                | p when isNull p.ServerVersion || p.ServerVersion.CompareTo(Version(9,0)) >= 0 ->
+                | p when isNull p.ServerVersion || (nonNull p.ServerVersion).CompareTo(Version(9,0)) >= 0 ->
                     SqlCapabilityStatus.Supported, "SQL Server native CROSS/OUTER APPLY on correlated derived SELECT; collection/TVF forms are not modeled."
                 | p ->
                     SqlCapabilityStatus.Rejected, "SQL Server APPLY requires ServerVersion 9.0+; declared " + string p.ServerVersion + "."
@@ -47,7 +47,7 @@ type SqlCapabilityMatrix private () =
                 | null -> SqlCapabilityStatus.Rejected, "Oracle APPLY requires explicit ServerVersion 12.1+."
                 | p when isNull p.ServerVersion ->
                     SqlCapabilityStatus.Rejected, "Oracle APPLY requires explicit ServerVersion 12.1+."
-                | p when p.ServerVersion.CompareTo(SqlApplyJoinCapabilityRules.OracleMinimumVersion) >= 0 ->
+                | p when (nonNull p.ServerVersion).CompareTo(SqlApplyJoinCapabilityRules.OracleMinimumVersion) >= 0 ->
                     SqlCapabilityStatus.Supported, "Oracle 12.1+ native CROSS/OUTER APPLY requires independently proven source and target versions."
                 | p -> SqlCapabilityStatus.Rejected, "Oracle APPLY requires ServerVersion 12.1+; declared " + string p.ServerVersion + "."
             | _ ->
@@ -643,21 +643,21 @@ type SqlCapabilityMatrix private () =
                     (if isNull nullTreatmentError then supported else rejected),
                     if isNull nullTreatmentError then
                         "LAG/LEAD RESPECT NULLS: SQL Server 2022+ or Oracle 12.1+. IGNORE NULLS additionally requires SQL Server 2022 CU4 (16.0.4035.4)+; Oracle 12.1+ is supported. Explicit source/target profiles are required."
-                    else nullTreatmentError)
+                    else nonNull nullTreatmentError)
                 let ignoreError =
                     SqlWindowNullTreatmentCapabilityRules.IgnoreNullsValidationError(provider, profile, "target")
                 yield cap("window.null_treatment.ignore","window",
                     (if isNull ignoreError then supported else rejected),
                     if isNull ignoreError then
                         "LAG/LEAD IGNORE NULLS requires SQL Server 2022 CU4+ or Oracle 12.1+ with matching explicit source and target profiles."
-                    else ignoreError)
+                    else nonNull ignoreError)
                 let firstLastError =
                     SqlWindowNullTreatmentCapabilityRules.ValidationError(provider, profile, "target")
                 yield cap("window.null_treatment.first_last","window",
                     (if isNull firstLastError then supported else rejected),
                     if isNull firstLastError then
                         "FIRST_VALUE/LAST_VALUE IGNORE/RESPECT NULLS: native SQL Server 2022+ or Oracle 12.1+. Explicit ROWS frame controls LAST_VALUE partition semantics; matching source/target version profiles and same-provider compilation required (cross-provider NULL ordering not proven). SQL Server CU4 correctness fence applies to LAG/LEAD IGNORE only."
-                    else firstLastError)
+                    else nonNull firstLastError)
                 yield cap("ordering.ordinal","ordering",translated,"Statement ORDER BY output positions are typed ordinals.")
                 yield cap("ordering.nulls","ordering",nullOrdering,
                     if provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.MsSqlServer then

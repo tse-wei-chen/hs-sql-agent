@@ -483,6 +483,8 @@ public sealed class OracleDdlRuntime(
         id.Value = lockId;
         command.Parameters.Add(id);
         await command.ExecuteNonQueryAsync(token);
+        if (answer.Value is null or DBNull)
+            throw new InvalidOperationException("Oracle lock request returned no status code.");
         return Convert.ToInt32(answer.Value.ToString(), CultureInfo.InvariantCulture);
     }
 

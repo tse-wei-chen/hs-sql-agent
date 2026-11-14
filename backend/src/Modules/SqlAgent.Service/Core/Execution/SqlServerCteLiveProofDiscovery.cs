@@ -1064,8 +1064,8 @@ internal static class SqlServerCteLiveProofDiscovery
             || singleton.Joins.Length != 0
             || singleton.Select.Length != 1
             || singleton.Select[0].Expression is not LiteralExpr
-            || singleton.Select[0].Alias is null
-            || !SafeName(singleton.Select[0].Alias.Value)
+            || singleton.Select[0].Alias is not { } singletonAlias
+            || !SafeName(singletonAlias.Value)
             || singleton.Distinct || singleton.DistinctOn.Length != 0
             || singleton.Where is not null || singleton.GroupBy.Length != 0
             || singleton.Having is not null || singleton.OrderBy.Length != 0

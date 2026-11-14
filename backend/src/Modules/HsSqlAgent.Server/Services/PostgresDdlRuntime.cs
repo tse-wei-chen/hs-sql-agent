@@ -81,11 +81,11 @@ public sealed partial class PostgresDdlRuntime(
             plan = SqlCoreFacade.CompileDdl(
                 sql, new DdlCompilationOptions(SqlAgentToolType.Postgres, SqlAgentToolType.Postgres));
             var change = plan.Changes[0];
-            if (change.ObjectIdentity.Parts.Count != 2)
+            if (change.ObjectIdentity is not { } identity || identity.Parts.Count != 2)
                 return Rejected("ddl.qualified_identity_required",
                     "Live DDL requires an explicit schema.table, not an unqualified search_path target.");
-            schema = change.ObjectIdentity.Parts[0];
-            table = change.ObjectIdentity.Parts[1];
+            schema = identity.Parts[0];
+            table = identity.Parts[1];
             if (!_options.AllowedSchemas.Any(allowed => String.Equals(allowed, schema, StringComparison.Ordinal))
                 || schema is "pg_catalog" or "information_schema"
                 || schema.StartsWith("pg_temp", StringComparison.Ordinal))
@@ -702,7 +702,7 @@ public sealed partial class PostgresDdlRuntime(
 
     private static async Task<object?> ScalarAsync(
         DbConnection connection, DbTransaction? transaction, string sql,
-        CancellationToken cancellationToken, params (string Name, object Value)[] parameters)
+        CancellationToken cancellationToken, params (string Name, object? Value)[] parameters)
     {
         await using var command = Command(connection, transaction, sql, parameters);
         return await command.ExecuteScalarAsync(cancellationToken);
@@ -710,7 +710,7 @@ public sealed partial class PostgresDdlRuntime(
 
     private static async Task ExecuteHostSqlAsync(
         DbConnection connection, DbTransaction transaction, string sql,
-        CancellationToken cancellationToken, params (string Name, object Value)[] parameters)
+        CancellationToken cancellationToken, params (string Name, object? Value)[] parameters)
     {
         await using var command = Command(connection, transaction, sql, parameters);
         await command.ExecuteNonQueryAsync(cancellationToken);
@@ -718,7 +718,7 @@ public sealed partial class PostgresDdlRuntime(
 
     private static DbCommand Command(
         DbConnection connection, DbTransaction? transaction, string sql,
-        params (string Name, object Value)[] parameters)
+        params (string Name, object? Value)[] parameters)
     {
         var cmd = connection.CreateCommand();
         cmd.Transaction = transaction;
@@ -728,7 +728,7 @@ public sealed partial class PostgresDdlRuntime(
         {
             var parameter = cmd.CreateParameter();
             parameter.ParameterName = name;
-            parameter.Value = value;
+            parameter.Value = value ?? DBNull.Value;
             cmd.Parameters.Add(parameter);
         }
         return cmd;

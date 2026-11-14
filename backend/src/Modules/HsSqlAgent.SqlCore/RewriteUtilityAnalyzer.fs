@@ -146,7 +146,7 @@ module internal RewriteUtilityAnalyzer =
                     | :? SqlParseException as ex ->
                         // Preserve resource errors at their original stage.
                         if not (isNull ex.Diagnostic)
-                           && ex.Diagnostic.Category = SqlDiagnosticCategory.Resource then
+                           && (nonNull ex.Diagnostic).Category = SqlDiagnosticCategory.Resource then
                             reraise()
                         InvalidInner "EXPLAIN nested SQL is not accepted by the strict source parser."
 

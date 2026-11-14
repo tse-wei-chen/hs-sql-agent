@@ -331,7 +331,7 @@ module internal RewriteProceduralBodyAnalyzer =
             with
             | :? SqlParseException as ex ->
                 if not (isNull ex.Diagnostic)
-                   && ex.Diagnostic.Category = SqlDiagnosticCategory.Resource then
+                   && (nonNull ex.Diagnostic).Category = SqlDiagnosticCategory.Resource then
                     reraise()
                 None
 

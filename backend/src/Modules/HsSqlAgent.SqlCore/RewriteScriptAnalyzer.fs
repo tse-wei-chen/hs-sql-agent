@@ -545,7 +545,7 @@ module internal RewriteScriptAnalyzer =
             && (match scope with
                 | RewriteCatalogSchemaResolution.Unproven ->
                     not (isNull sourceProfile)
-                    && not (isNull (sourceProfile.GetSessionSetting("SEARCH_PATH")))
+                    && not (isNull ((nonNull sourceProfile).GetSessionSetting("SEARCH_PATH")))
                 | _ -> false)
         let resolve = RewriteCatalogSchemaResolution.resolve scope
         let resolveConstraint (constraintInfo: SqlCatalogConstraint) =
@@ -2437,7 +2437,7 @@ module internal RewriteScriptAnalyzer =
                             // Resolve the entire set against ONE pre-drop
                             // Catalog before publishing any state changes.
                             let removals =
-                                (tableName, constraintName)
+                                (tableName, (constraintName : string | null))
                                 :: (inbound |> List.map (fun (owner, fk) ->
                                     owner.QualifiedName, fk.Name))
                             if removals |> List.exists (fun (_, name) ->
@@ -2446,7 +2446,7 @@ module internal RewriteScriptAnalyzer =
                             else
                                 let next =
                                     RewriteCatalogModel.dropProvenConstraintsAtomically
-                                        state removals
+                                        state (removals |> List.map (fun (table, name) -> table, nonNull name))
                                 let changes =
                                     removals |> List.map (fun (owner, key) ->
                                         changedConstraintExact syntax owner key)
@@ -2697,7 +2697,7 @@ module internal RewriteScriptAnalyzer =
                             SqlCatalogKnowledge.Unknown, SqlCatalogBindingStatus.Rejected,
                             SqlCatalogBindingStatus.Rejected, SqlCatalogBindingStatus.NotApplicable, current, [],
                             (if Object.ReferenceEquals(syntax.Diagnostic, null) then []
-                             else [syntax.Diagnostic])
+                             else [nonNull syntax.Diagnostic])
                         elif syntax.Kind = SqlScriptStatementKind.Transaction then
                             let status, certainty, next, nextSession, newTransaction, changes, diagnostics, parsedControl =
                                 RewriteTransactionAnalyzer.analyze
@@ -2873,7 +2873,7 @@ module internal RewriteScriptAnalyzer =
                             let diagnostics =
                                 let parserDiagnostics =
                                     if Object.ReferenceEquals(syntax.Diagnostic, null) then []
-                                    else [syntax.Diagnostic]
+                                    else [nonNull syntax.Diagnostic]
                                 parserDiagnostics @ catalogErrors
                             status, effects, certainty, bindingStatus, nameStatus, typeStatus, next, [], diagnostics
                     // Unrecognized or invalid SQL has no exhaustive effect proof.
