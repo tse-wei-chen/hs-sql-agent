@@ -1,3 +1,4 @@
+import { readAuthSession } from "@/lib/auth-session";
 import {
   xiorInstance,
   xiorInstanceToken,
@@ -25,8 +26,7 @@ export const refreshToken = async () => {
 };
 
 export const signOut = async () => {
-  const refreshTokenVal = localStorage.getItem("refreshToken");
-  const accessTokenVal = localStorage.getItem("accessToken");
+  const { refreshToken: refreshTokenVal, accessToken: accessTokenVal } = readAuthSession();
   try {
     await xiorInstance.post("/auth/sign-out", {
       refreshToken: refreshTokenVal || undefined,
