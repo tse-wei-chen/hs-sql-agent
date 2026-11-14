@@ -4,7 +4,7 @@ ENV NODE_ENV=production
 RUN corepack enable && corepack prepare pnpm@10.22.0 --activate
 
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --prod=false
 
 COPY frontend/ .
 RUN pnpm run generate
