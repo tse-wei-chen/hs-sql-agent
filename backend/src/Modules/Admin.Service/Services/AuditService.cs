@@ -289,14 +289,30 @@ public class AuditService(
             .Take(Math.Clamp(maxRows, 1, 100_001))
             .Select(x => new AuditLogItem
             {
-                Id = x.Id, EventId = x.EventId, ActorType = x.ActorType, ActorId = x.ActorId,
-                Action = x.Action, Target = x.Target, Detail = x.Detail, Result = x.Result,
-                IpAddress = x.IpAddress, UserAgent = x.UserAgent, RequestId = x.RequestId,
-                SessionId = x.SessionId, AccessKeyId = x.AccessKeyId, DbManagementId = x.DbManagementId,
-                DatabaseName = x.DatabaseName, ToolName = x.ToolName, Operation = x.Operation,
-                DurationMs = x.DurationMs, ReturnedRows = x.ReturnedRows, AffectedRows = x.AffectedRows,
-                ApprovalStatus = x.ApprovalStatus, ErrorCategory = x.ErrorCategory,
-                Definition = x.Definition, CreatedAt = x.CreatedAt
+                Id = x.Id,
+                EventId = x.EventId,
+                ActorType = x.ActorType,
+                ActorId = x.ActorId,
+                Action = x.Action,
+                Target = x.Target,
+                Detail = x.Detail,
+                Result = x.Result,
+                IpAddress = x.IpAddress,
+                UserAgent = x.UserAgent,
+                RequestId = x.RequestId,
+                SessionId = x.SessionId,
+                AccessKeyId = x.AccessKeyId,
+                DbManagementId = x.DbManagementId,
+                DatabaseName = x.DatabaseName,
+                ToolName = x.ToolName,
+                Operation = x.Operation,
+                DurationMs = x.DurationMs,
+                ReturnedRows = x.ReturnedRows,
+                AffectedRows = x.AffectedRows,
+                ApprovalStatus = x.ApprovalStatus,
+                ErrorCategory = x.ErrorCategory,
+                Definition = x.Definition,
+                CreatedAt = x.CreatedAt
             }).ToListAsync(cancellationToken);
     }
 

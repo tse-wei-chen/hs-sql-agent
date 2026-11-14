@@ -76,7 +76,7 @@ public sealed class PostgresDdlRuntimeTests
         provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
         var result = await new PostgresDdlRuntime(options).RunAsync(
             provider.Object, "Host=unused",
-            "CREATE TABLE app.widgets (id INTEGER)", 
+            "CREATE TABLE app.widgets (id INTEGER)",
             new DdlActorContext("mcp-key:1", "db-management:2", "appdb"),
             previewOnly: false, approvalProvider: null,
             TestContext.Current.CancellationToken);

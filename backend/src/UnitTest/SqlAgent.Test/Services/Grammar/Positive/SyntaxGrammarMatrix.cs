@@ -70,8 +70,8 @@ internal static class SyntaxGrammarMatrix
             IReadOnlyList<GrammarVariant<T2>> second)
     {
         foreach (var firstVariant in first)
-        foreach (var secondVariant in second)
-            yield return (firstVariant, secondVariant);
+            foreach (var secondVariant in second)
+                yield return (firstVariant, secondVariant);
     }
 
     public static IEnumerable<(
@@ -84,9 +84,9 @@ internal static class SyntaxGrammarMatrix
             IReadOnlyList<GrammarVariant<T3>> third)
     {
         foreach (var firstVariant in first)
-        foreach (var secondVariant in second)
-        foreach (var thirdVariant in third)
-            yield return (firstVariant, secondVariant, thirdVariant);
+            foreach (var secondVariant in second)
+                foreach (var thirdVariant in third)
+                    yield return (firstVariant, secondVariant, thirdVariant);
     }
 
     public static int ProductCount<T1, T2, T3, T4, T5>(
@@ -111,16 +111,16 @@ internal static class SyntaxGrammarMatrix
             IReadOnlyList<GrammarVariant<T5>> fifth)
     {
         foreach (var firstVariant in first)
-        foreach (var secondVariant in second)
-        foreach (var thirdVariant in third)
-        foreach (var fourthVariant in fourth)
-        foreach (var fifthVariant in fifth)
-            yield return (
-                firstVariant,
-                secondVariant,
-                thirdVariant,
-                fourthVariant,
-                fifthVariant);
+            foreach (var secondVariant in second)
+                foreach (var thirdVariant in third)
+                    foreach (var fourthVariant in fourth)
+                        foreach (var fifthVariant in fifth)
+                            yield return (
+                                firstVariant,
+                                secondVariant,
+                                thirdVariant,
+                                fourthVariant,
+                                fifthVariant);
     }
 
     public static int ProductCount<T1, T2, T3, T4>(
@@ -142,9 +142,9 @@ internal static class SyntaxGrammarMatrix
             IReadOnlyList<GrammarVariant<T4>> fourth)
     {
         foreach (var firstVariant in first)
-        foreach (var secondVariant in second)
-        foreach (var thirdVariant in third)
-        foreach (var fourthVariant in fourth)
-            yield return (firstVariant, secondVariant, thirdVariant, fourthVariant);
+            foreach (var secondVariant in second)
+                foreach (var thirdVariant in third)
+                    foreach (var fourthVariant in fourth)
+                        yield return (firstVariant, secondVariant, thirdVariant, fourthVariant);
     }
 }

@@ -76,7 +76,8 @@ public sealed class SqlCoreMySqlDropPrimaryKeyLiveParityTests
         {
             var builder = new MySqlConnectionStringBuilder(root)
             {
-                Database = database, Pooling = false
+                Database = database,
+                Pooling = false
             };
             await using var db = new MySqlConnection(builder.ConnectionString);
             await db.OpenAsync(TestContext.Current.CancellationToken);
@@ -132,7 +133,8 @@ public sealed class SqlCoreMySqlDropPrimaryKeyLiveParityTests
         {
             var builder = new MySqlConnectionStringBuilder(root)
             {
-                Database = database, Pooling = false
+                Database = database,
+                Pooling = false
             };
             await using var db = new MySqlConnection(builder.ConnectionString);
             await db.OpenAsync(TestContext.Current.CancellationToken);

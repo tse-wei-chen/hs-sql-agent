@@ -159,7 +159,7 @@ public sealed class PostgresDdlBatchLiveTests(PostgresDdlLiveFixture fixture)
             var forged = await Runtime(schema).RunAsync(
                 Provider(), fixture.ConnectionString, sql, Actor(), false,
                 new Approver((request, _) => ValueTask.FromResult(new DdlApprovalDecision(
-                    DdlApprovalState.Approved, request.RequestId, new string('0',64),
+                    DdlApprovalState.Approved, request.RequestId, new string('0', 64),
                     "human:reviewer"))), ct);
             Assert.Equal(DdlRuntimeStatus.Rejected, forged.Status);
             Assert.False(await ExistsAsync(schema, "a"));

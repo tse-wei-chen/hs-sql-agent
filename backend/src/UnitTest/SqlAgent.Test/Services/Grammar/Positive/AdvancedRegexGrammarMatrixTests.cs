@@ -37,14 +37,14 @@ public sealed class AdvancedRegexGrammarMatrixTests
     public static IEnumerable<object[]> PositiveMatrix()
     {
         foreach (var spelling in PositiveSpellings)
-        foreach (var context in Contexts)
-            yield return
-            [
-                $"{spelling.Name}__{context}",
+            foreach (var context in Contexts)
+                yield return
+                [
+                    $"{spelling.Name}__{context}",
                 spelling.Dialect,
                 Query(context, spelling.Expression),
                 spelling.RenderMarker
-            ];
+                ];
     }
 
     public static IEnumerable<object[]> WrongDialectMatrix()
@@ -52,28 +52,28 @@ public sealed class AdvancedRegexGrammarMatrixTests
         var dialects = Enum.GetValues<SqlAgentToolType>();
 
         foreach (var dialect in dialects.Where(value => value != SqlAgentToolType.Postgres))
-        foreach (var expression in new[] { "name ~ '^a'", "name !~ '^a'" })
-            yield return
-            [
-                $"{dialect}__postgres-regex__{expression.Replace(" ", "-", StringComparison.Ordinal)}",
+            foreach (var expression in new[] { "name ~ '^a'", "name !~ '^a'" })
+                yield return
+                [
+                    $"{dialect}__postgres-regex__{expression.Replace(" ", "-", StringComparison.Ordinal)}",
                 dialect,
                 Query("predicate", expression)
-            ];
+                ];
 
         foreach (var dialect in dialects.Where(value => value != SqlAgentToolType.MySQL))
-        foreach (var expression in new[]
-                 {
+            foreach (var expression in new[]
+                     {
                      "name REGEXP '^a'",
                      "name RLIKE '^a'",
                      "name NOT REGEXP '^a'",
                      "name NOT RLIKE '^a'"
                  })
-            yield return
-            [
-                $"{dialect}__mysql-regex__{expression.Replace(" ", "-", StringComparison.Ordinal)}",
+                yield return
+                [
+                    $"{dialect}__mysql-regex__{expression.Replace(" ", "-", StringComparison.Ordinal)}",
                 dialect,
                 Query("predicate", expression)
-            ];
+                ];
     }
 
     [Fact]

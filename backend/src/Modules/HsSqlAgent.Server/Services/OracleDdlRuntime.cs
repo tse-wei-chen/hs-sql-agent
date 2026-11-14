@@ -125,12 +125,19 @@ public sealed class OracleDdlRuntime(
                 + "Object lock duration and affected rows: unknown.";
             var fingerprint = Digest(JsonSerializer.Serialize(new
             {
-                domain = "oracle26ai-ddl-v1", plan.PlanFingerprint,
-                nativeSql = plan.Command.Sql, before.PhysicalIdentity,
-                before.Fingerprint, actor.PrincipalIdentity, actor.TargetIdentity,
-                actor.DatabaseName, policy, requestId,
+                domain = "oracle26ai-ddl-v1",
+                plan.PlanFingerprint,
+                nativeSql = plan.Command.Sql,
+                before.PhysicalIdentity,
+                before.Fingerprint,
+                actor.PrincipalIdentity,
+                actor.TargetIdentity,
+                actor.DatabaseName,
+                policy,
+                requestId,
                 issued = issued.ToUnixTimeMilliseconds(),
-                expires = expires.ToUnixTimeMilliseconds(), summary
+                expires = expires.ToUnixTimeMilliseconds(),
+                summary
             }));
             var preview = new OracleDdlRuntimePreview(staticPreview, before,
                 Array.AsReadOnly(expected), fingerprint, expires, requestId, summary);
@@ -282,168 +289,177 @@ public sealed class OracleDdlRuntime(
         var stage = "session";
         try
         {
-        string dbName, dbUnique, pdb, schema, role, service, version;
-        string cdbId, pdbId, guid;
-        await using (var command = Command(connection,
-            "SELECT SYS_CONTEXT('USERENV','DB_NAME'), "
-            + "SYS_CONTEXT('USERENV','DB_UNIQUE_NAME'), "
-            + "SYS_CONTEXT('USERENV','CON_NAME'), "
-            + "SYS_CONTEXT('USERENV','SESSION_USER'), "
-            + "SYS_CONTEXT('USERENV','CURRENT_SCHEMA'), "
-            + "SYS_CONTEXT('USERENV','DATABASE_ROLE'), "
-            + "SYS_CONTEXT('USERENV','SERVICE_NAME') FROM DUAL"))
-        await using (var reader = await command.ExecuteReaderAsync(token))
-        {
-            if (!await reader.ReadAsync(token)
-                || Enumerable.Range(0, 7).Any(reader.IsDBNull))
-                throw new InvalidOperationException("Oracle session identity is missing.");
-            dbName = reader.GetString(0); dbUnique = reader.GetString(1);
-            pdb = reader.GetString(2); schema = reader.GetString(3);
-            var currentSchema = reader.GetString(4); role = reader.GetString(5);
-            service = reader.GetString(6);
-            if (string.IsNullOrWhiteSpace(dbName) || string.IsNullOrWhiteSpace(dbUnique)
-                || string.IsNullOrWhiteSpace(pdb) || string.IsNullOrWhiteSpace(service)
-                || !string.Equals(currentSchema, schema, StringComparison.Ordinal)
-                || schema is "SYS" or "SYSTEM" or "PUBLIC"
-                || pdb is "CDB$ROOT" or "PDB$SEED"
-                || role != "PRIMARY")
-                throw new InvalidOperationException("Oracle PDB, schema or role is not proven.");
-        }
-
-        stage = "version";
-        // The sole supported executable version is Oracle Database 23.26
-        // (marketed as 26ai), not Oracle 19c or an arbitrary compatible dialect.
-        await using (var command = Command(connection,
-            "SELECT VERSION_FULL FROM PRODUCT_COMPONENT_VERSION "
-            + "WHERE (PRODUCT LIKE 'Oracle Database%' " +
-                "OR PRODUCT LIKE 'Oracle AI Database%') AND VERSION_FULL IS NOT NULL"))
-        {
-            var raw = await command.ExecuteScalarAsync(token);
-            version = raw?.ToString()?.Trim() ?? "";
-            if (!IsProvenOracle26Ai(version))
-                throw new InvalidOperationException("Oracle 26ai engine version proof missing.");
-        }
-
-        stage = "cdb";
-        await using (var command = Command(connection,
-            "SELECT TO_CHAR(DBID) FROM V$DATABASE"))
-        {
-            var raw = await command.ExecuteScalarAsync(token);
-            cdbId = raw?.ToString()?.Trim() ?? "";
-            if (string.IsNullOrWhiteSpace(cdbId))
-                throw new InvalidOperationException("Oracle root database DBID unproven.");
-        }
-        stage = "pdb";
-        await using (var command = Command(connection,
-            "SELECT TO_CHAR(DBID), RAWTOHEX(GUID), OPEN_MODE FROM V$PDBS "
-            + "WHERE CON_ID=TO_NUMBER(SYS_CONTEXT('USERENV','CON_ID'))"))
-        await using (var reader = await command.ExecuteReaderAsync(token))
-        {
-            if (!await reader.ReadAsync(token) || reader.IsDBNull(0)
-                || reader.IsDBNull(1) || reader.IsDBNull(2)
-                || reader.GetString(2) != "READ WRITE")
-                throw new InvalidOperationException("Writable Oracle PDB DBID/GUID missing.");
-            pdbId = reader.GetString(0).Trim();
-            guid = reader.GetString(1).Trim();
-            if (string.IsNullOrWhiteSpace(pdbId) || guid.Length != 32
-                || await reader.ReadAsync(token))
-                throw new InvalidOperationException("Ambiguous Oracle PDB identity.");
-        }
-
-        stage = "ddl-triggers";
-        // Missing dictionary grants must cause a hard failure; ALL_TRIGGERS
-        // does not prove absence of database-scoped triggers owned by others.
-        await using (var command = Command(connection,
-            "SELECT COUNT(*) FROM DBA_TRIGGERS WHERE STATUS = 'ENABLED' "
-            + "AND (BASE_OBJECT_TYPE IN ('DATABASE','PLUGGABLE DATABASE') "
-            + "OR (BASE_OBJECT_TYPE = 'SCHEMA' AND OWNER = :owner))",
-            (":owner", schema)))
-        {
-            var count = await command.ExecuteScalarAsync(token);
-            if (count is null || count is DBNull
-                || Convert.ToInt32(count, CultureInfo.InvariantCulture) != 0)
-                throw new InvalidOperationException("Enabled Oracle DDL triggers are unsupported.");
-        }
-
-        stage = "objects";
-        bool exists = false;
-        await using (var command = Command(connection,
-            "SELECT OBJECT_TYPE FROM USER_OBJECTS WHERE OBJECT_NAME=:object_name",
-            (":object_name", table)))
-        await using (var reader = await command.ExecuteReaderAsync(token))
-        {
-            if (await reader.ReadAsync(token))
-            {
-                if (reader.IsDBNull(0) || reader.GetString(0) != "TABLE"
-                    || await reader.ReadAsync(token))
-                    throw new InvalidOperationException("Oracle object name is not an ordinary table.");
-                exists = true;
-            }
-        }
-
-        stage = "columns";
-        var columns = new List<DdlPhysicalColumn>();
-        if (exists)
-        {
+            string dbName, dbUnique, pdb, schema, role, service, version;
+            string cdbId, pdbId, guid;
             await using (var command = Command(connection,
-                "SELECT TEMPORARY, NESTED, IOT_TYPE, CLUSTER_NAME, PARTITIONED "
-                + "FROM USER_TABLES WHERE TABLE_NAME=:object_name", (":object_name", table)))
+                "SELECT SYS_CONTEXT('USERENV','DB_NAME'), "
+                + "SYS_CONTEXT('USERENV','DB_UNIQUE_NAME'), "
+                + "SYS_CONTEXT('USERENV','CON_NAME'), "
+                + "SYS_CONTEXT('USERENV','SESSION_USER'), "
+                + "SYS_CONTEXT('USERENV','CURRENT_SCHEMA'), "
+                + "SYS_CONTEXT('USERENV','DATABASE_ROLE'), "
+                + "SYS_CONTEXT('USERENV','SERVICE_NAME') FROM DUAL"))
             await using (var reader = await command.ExecuteReaderAsync(token))
             {
-                if (!await reader.ReadAsync(token) || reader.GetString(0) != "N"
-                    || reader.GetString(1) != "NO" || !reader.IsDBNull(2)
-                    || !reader.IsDBNull(3) || reader.GetString(4) != "NO"
-                    || await reader.ReadAsync(token))
-                    throw new InvalidOperationException("Unsupported Oracle physical table shape.");
+                if (!await reader.ReadAsync(token)
+                    || Enumerable.Range(0, 7).Any(reader.IsDBNull))
+                    throw new InvalidOperationException("Oracle session identity is missing.");
+                dbName = reader.GetString(0); dbUnique = reader.GetString(1);
+                pdb = reader.GetString(2); schema = reader.GetString(3);
+                var currentSchema = reader.GetString(4); role = reader.GetString(5);
+                service = reader.GetString(6);
+                if (string.IsNullOrWhiteSpace(dbName) || string.IsNullOrWhiteSpace(dbUnique)
+                    || string.IsNullOrWhiteSpace(pdb) || string.IsNullOrWhiteSpace(service)
+                    || !string.Equals(currentSchema, schema, StringComparison.Ordinal)
+                    || schema is "SYS" or "SYSTEM" or "PUBLIC"
+                    || pdb is "CDB$ROOT" or "PDB$SEED"
+                    || role != "PRIMARY")
+                    throw new InvalidOperationException("Oracle PDB, schema or role is not proven.");
             }
+
+            stage = "version";
+            // The sole supported executable version is Oracle Database 23.26
+            // (marketed as 26ai), not Oracle 19c or an arbitrary compatible dialect.
             await using (var command = Command(connection,
-                "SELECT CONSTRAINT_TYPE, GENERATED FROM USER_CONSTRAINTS "
-                + "WHERE TABLE_NAME=:object_name", (":object_name", table)))
+                "SELECT VERSION_FULL FROM PRODUCT_COMPONENT_VERSION "
+                + "WHERE (PRODUCT LIKE 'Oracle Database%' " +
+                    "OR PRODUCT LIKE 'Oracle AI Database%') AND VERSION_FULL IS NOT NULL"))
+            {
+                var raw = await command.ExecuteScalarAsync(token);
+                version = raw?.ToString()?.Trim() ?? "";
+                if (!IsProvenOracle26Ai(version))
+                    throw new InvalidOperationException("Oracle 26ai engine version proof missing.");
+            }
+
+            stage = "cdb";
+            await using (var command = Command(connection,
+                "SELECT TO_CHAR(DBID) FROM V$DATABASE"))
+            {
+                var raw = await command.ExecuteScalarAsync(token);
+                cdbId = raw?.ToString()?.Trim() ?? "";
+                if (string.IsNullOrWhiteSpace(cdbId))
+                    throw new InvalidOperationException("Oracle root database DBID unproven.");
+            }
+            stage = "pdb";
+            await using (var command = Command(connection,
+                "SELECT TO_CHAR(DBID), RAWTOHEX(GUID), OPEN_MODE FROM V$PDBS "
+                + "WHERE CON_ID=TO_NUMBER(SYS_CONTEXT('USERENV','CON_ID'))"))
             await using (var reader = await command.ExecuteReaderAsync(token))
             {
-                while (await reader.ReadAsync(token))
-                    if (reader.GetString(0) != "C" || reader.GetString(1) != "GENERATED NAME")
-                        throw new InvalidOperationException("Explicit Oracle constraints unproven.");
+                if (!await reader.ReadAsync(token) || reader.IsDBNull(0)
+                    || reader.IsDBNull(1) || reader.IsDBNull(2)
+                    || reader.GetString(2) != "READ WRITE")
+                    throw new InvalidOperationException("Writable Oracle PDB DBID/GUID missing.");
+                pdbId = reader.GetString(0).Trim();
+                guid = reader.GetString(1).Trim();
+                if (string.IsNullOrWhiteSpace(pdbId) || guid.Length != 32
+                    || await reader.ReadAsync(token))
+                    throw new InvalidOperationException("Ambiguous Oracle PDB identity.");
             }
+
+            stage = "ddl-triggers";
+            // Missing dictionary grants must cause a hard failure; ALL_TRIGGERS
+            // does not prove absence of database-scoped triggers owned by others.
             await using (var command = Command(connection,
-                "SELECT COLUMN_NAME, DATA_TYPE, DATA_PRECISION, DATA_SCALE, "
-                + "NULLABLE, DEFAULT_LENGTH, IDENTITY_COLUMN, VIRTUAL_COLUMN, HIDDEN_COLUMN "
-                + "FROM USER_TAB_COLS WHERE TABLE_NAME=:object_name ORDER BY INTERNAL_COLUMN_ID",
+                "SELECT COUNT(*) FROM DBA_TRIGGERS WHERE STATUS = 'ENABLED' "
+                + "AND (BASE_OBJECT_TYPE IN ('DATABASE','PLUGGABLE DATABASE') "
+                + "OR (BASE_OBJECT_TYPE = 'SCHEMA' AND OWNER = :owner))",
+                (":owner", schema)))
+            {
+                var count = await command.ExecuteScalarAsync(token);
+                if (count is null || count is DBNull
+                    || Convert.ToInt32(count, CultureInfo.InvariantCulture) != 0)
+                    throw new InvalidOperationException("Enabled Oracle DDL triggers are unsupported.");
+            }
+
+            stage = "objects";
+            bool exists = false;
+            await using (var command = Command(connection,
+                "SELECT OBJECT_TYPE FROM USER_OBJECTS WHERE OBJECT_NAME=:object_name",
                 (":object_name", table)))
             await using (var reader = await command.ExecuteReaderAsync(token))
             {
-                while (await reader.ReadAsync(token))
+                if (await reader.ReadAsync(token))
                 {
-                    // Oracle 26ai persists native INTEGER as NUMBER with scale 0;
-                    // USER_TAB_COLS may report precision NULL (the live G5 fixture)
-                    // or 38. Both are limited to this compiled INTEGER-only shape.
-                    if (reader.IsDBNull(0) || reader.IsDBNull(1)
-                        || reader.IsDBNull(3)
-                        || reader.IsDBNull(4) || reader.IsDBNull(6)
-                        || reader.IsDBNull(7) || reader.IsDBNull(8)
-                        || columns.Count == 16
-                        || reader.GetString(1) != "NUMBER"
-                        || (!reader.IsDBNull(2)
-                            && Convert.ToInt32(reader.GetValue(2), CultureInfo.InvariantCulture) != 38)
-                        || Convert.ToInt32(reader.GetValue(3), CultureInfo.InvariantCulture) != 0
-                        || !reader.IsDBNull(5)
-                        || reader.GetString(6) != "NO"
-                        || reader.GetString(7) != "NO"
-                        || reader.GetString(8) != "NO")
-                        throw new InvalidOperationException("Unsupported Oracle column semantics.");
-                    columns.Add(new DdlPhysicalColumn(reader.GetString(0),
-                        "NUMBER(38,0)", reader.GetString(4) == "Y"));
+                    if (reader.IsDBNull(0) || reader.GetString(0) != "TABLE"
+                        || await reader.ReadAsync(token))
+                        throw new InvalidOperationException("Oracle object name is not an ordinary table.");
+                    exists = true;
                 }
             }
-        }
-        stage = "fingerprint";
-        var physical = Digest(JsonSerializer.Serialize(new
-        {
-            dbName, dbUnique, pdb, schema, role, service, version, cdbId, pdbId, guid
-        }));
-        var fp = Digest(JsonSerializer.Serialize(new { physical, table, exists, columns }));
-        return new(physical, pdb, schema, table, Digest(schema), exists,
-            columns.AsReadOnly(), fp);
+
+            stage = "columns";
+            var columns = new List<DdlPhysicalColumn>();
+            if (exists)
+            {
+                await using (var command = Command(connection,
+                    "SELECT TEMPORARY, NESTED, IOT_TYPE, CLUSTER_NAME, PARTITIONED "
+                    + "FROM USER_TABLES WHERE TABLE_NAME=:object_name", (":object_name", table)))
+                await using (var reader = await command.ExecuteReaderAsync(token))
+                {
+                    if (!await reader.ReadAsync(token) || reader.GetString(0) != "N"
+                        || reader.GetString(1) != "NO" || !reader.IsDBNull(2)
+                        || !reader.IsDBNull(3) || reader.GetString(4) != "NO"
+                        || await reader.ReadAsync(token))
+                        throw new InvalidOperationException("Unsupported Oracle physical table shape.");
+                }
+                await using (var command = Command(connection,
+                    "SELECT CONSTRAINT_TYPE, GENERATED FROM USER_CONSTRAINTS "
+                    + "WHERE TABLE_NAME=:object_name", (":object_name", table)))
+                await using (var reader = await command.ExecuteReaderAsync(token))
+                {
+                    while (await reader.ReadAsync(token))
+                        if (reader.GetString(0) != "C" || reader.GetString(1) != "GENERATED NAME")
+                            throw new InvalidOperationException("Explicit Oracle constraints unproven.");
+                }
+                await using (var command = Command(connection,
+                    "SELECT COLUMN_NAME, DATA_TYPE, DATA_PRECISION, DATA_SCALE, "
+                    + "NULLABLE, DEFAULT_LENGTH, IDENTITY_COLUMN, VIRTUAL_COLUMN, HIDDEN_COLUMN "
+                    + "FROM USER_TAB_COLS WHERE TABLE_NAME=:object_name ORDER BY INTERNAL_COLUMN_ID",
+                    (":object_name", table)))
+                await using (var reader = await command.ExecuteReaderAsync(token))
+                {
+                    while (await reader.ReadAsync(token))
+                    {
+                        // Oracle 26ai persists native INTEGER as NUMBER with scale 0;
+                        // USER_TAB_COLS may report precision NULL (the live G5 fixture)
+                        // or 38. Both are limited to this compiled INTEGER-only shape.
+                        if (reader.IsDBNull(0) || reader.IsDBNull(1)
+                            || reader.IsDBNull(3)
+                            || reader.IsDBNull(4) || reader.IsDBNull(6)
+                            || reader.IsDBNull(7) || reader.IsDBNull(8)
+                            || columns.Count == 16
+                            || reader.GetString(1) != "NUMBER"
+                            || (!reader.IsDBNull(2)
+                                && Convert.ToInt32(reader.GetValue(2), CultureInfo.InvariantCulture) != 38)
+                            || Convert.ToInt32(reader.GetValue(3), CultureInfo.InvariantCulture) != 0
+                            || !reader.IsDBNull(5)
+                            || reader.GetString(6) != "NO"
+                            || reader.GetString(7) != "NO"
+                            || reader.GetString(8) != "NO")
+                            throw new InvalidOperationException("Unsupported Oracle column semantics.");
+                        columns.Add(new DdlPhysicalColumn(reader.GetString(0),
+                            "NUMBER(38,0)", reader.GetString(4) == "Y"));
+                    }
+                }
+            }
+            stage = "fingerprint";
+            var physical = Digest(JsonSerializer.Serialize(new
+            {
+                dbName,
+                dbUnique,
+                pdb,
+                schema,
+                role,
+                service,
+                version,
+                cdbId,
+                pdbId,
+                guid
+            }));
+            var fp = Digest(JsonSerializer.Serialize(new { physical, table, exists, columns }));
+            return new(physical, pdb, schema, table, Digest(schema), exists,
+                columns.AsReadOnly(), fp);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -502,10 +518,13 @@ public sealed class OracleDdlRuntime(
 
     private string PolicyMaterial() => Digest(JsonSerializer.Serialize(new
     {
-        _options.Enabled, _options.AllowCreateTable, _options.PolicyRevision,
+        _options.Enabled,
+        _options.AllowCreateTable,
+        _options.PolicyRevision,
         schemas = _options.AllowedSchemas.OrderBy(x => x, StringComparer.Ordinal).ToArray(),
         pdbs = _options.AllowedPdbNames.OrderBy(x => x, StringComparer.Ordinal).ToArray(),
-        _options.ApprovalLifetime, _options.ExecutionTimeout
+        _options.ApprovalLifetime,
+        _options.ExecutionTimeout
     }));
 
     private static CompiledDdlPlan Compile(string sql, SqlProviderCapabilityProfile? version) =>

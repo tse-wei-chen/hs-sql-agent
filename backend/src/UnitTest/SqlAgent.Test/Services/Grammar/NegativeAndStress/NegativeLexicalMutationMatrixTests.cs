@@ -104,20 +104,20 @@ public sealed class NegativeLexicalMutationMatrixTests
     public static IEnumerable<object[]> NegativeLexicalMutationMatrix()
     {
         foreach (var dialect in Dialects)
-        foreach (var mutation in SharedMutations)
-        {
-            yield return Case(
-                dialect,
-                mutation);
-        }
+            foreach (var mutation in SharedMutations)
+            {
+                yield return Case(
+                    dialect,
+                    mutation);
+            }
 
         foreach (var dialect in Dialects)
-        foreach (var mutation in ParameterMutations)
-        {
-            yield return Case(
-                dialect,
-                mutation);
-        }
+            foreach (var mutation in ParameterMutations)
+            {
+                yield return Case(
+                    dialect,
+                    mutation);
+            }
 
         foreach (var dialect in Dialects)
         {

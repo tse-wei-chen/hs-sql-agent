@@ -85,163 +85,163 @@ internal sealed class DmlAtomicTransactionCoordinator(
         ExceptionDispatchInfo? primaryFailure = null;
         try
         {
-        await using var connection = _connectionFactory.Create(connectionString);
-        await connection.OpenAsync(cancellationToken);
-        RuntimeServerProfileVerifier.EnsureMatches(connection, expectedServerVersionIdentity);
-        if (requireExecutionFence)
-        {
-            // An opt-in target fence must prove its actual schema, unique
-            // keys, witness and transactional rollback on the same physical
-            // DML identity before starting the approved mutation. A manually
-            // run, possibly stale deployment probe is not sufficient.
-            if (_targetExecutionFence is not RelationalDmlTargetExecutionFence
-                || _targetCommitWitness is not RelationalDmlTargetCommitWitness)
-                throw new InvalidOperationException(
-                    "Production target-fenced DML requires the built-in verified relational " +
-                    "fence and witness implementations; custom components need a separate " +
-                    "audited readiness capability.");
-
-            await new DmlTargetFenceReadinessProbe().VerifyAsync(
-                connection, provider, cancellationToken);
-        }
-
-        await using var transaction = await connection.BeginTransactionAsync(
-            _transactionIsolationPolicy.CommitIsolation(provider),
-            cancellationToken);
-
-        var totalAffected = 0;
-        var returnedRows = ImmutableArray.CreateBuilder<IReadOnlyDictionary<string, object?>>();
-        try
-        {
-            // Oracle dictionary reads during native Schema Freshness can
-            // invalidate earlier uncommitted application DML OR admission.
-            // For all Oracle batches, verify the full immutable plan set
-            // before any application mutation or fencing admission.
-            // Other dialects retain per-step schema revalidation.
-            // Oracle native metadata reads can disrupt an earlier
-            // uncommitted transaction even without a target fence. The
-            // atomic-batch contract must never allow a second statement's
-            // schema proof to invalidate the first statement's DML.
-            var oraclePrevalidated = provider == SqlAgentToolType.Oracle;
-            if (oraclePrevalidated)
+            await using var connection = _connectionFactory.Create(connectionString);
+            await connection.OpenAsync(cancellationToken);
+            RuntimeServerProfileVerifier.EnsureMatches(connection, expectedServerVersionIdentity);
+            if (requireExecutionFence)
             {
-                foreach (var plan in plans)
-                    await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
-                        connection, transaction, plan.MutationCommand,
-                        plan.SchemaSnapshot, _schemaFreshnessVerifier, cancellationToken);
+                // An opt-in target fence must prove its actual schema, unique
+                // keys, witness and transactional rollback on the same physical
+                // DML identity before starting the approved mutation. A manually
+                // run, possibly stale deployment probe is not sufficient.
+                if (_targetExecutionFence is not RelationalDmlTargetExecutionFence
+                    || _targetCommitWitness is not RelationalDmlTargetCommitWitness)
+                    throw new InvalidOperationException(
+                        "Production target-fenced DML requires the built-in verified relational " +
+                        "fence and witness implementations; custom components need a separate " +
+                        "audited readiness capability.");
+
+                await new DmlTargetFenceReadinessProbe().VerifyAsync(
+                    connection, provider, cancellationToken);
             }
 
-            if (requireExecutionFence)
-                await _targetExecutionFence!.AdmitAsync(
-                    connection, transaction, provider, witnessEvidence!, cancellationToken);
+            await using var transaction = await connection.BeginTransactionAsync(
+                _transactionIsolationPolicy.CommitIsolation(provider),
+                cancellationToken);
 
-            for (var index = 0; index < plans.Count; index++)
-            {
-                var plan = plans[index];
-                var approved = approvedPreviews[index];
-
-                // Revalidate each proof after earlier statements in the same atomic
-                // transaction. A changed or unreadable schema aborts the whole batch.
-                // Oracle was schema-attested for the whole immutable batch
-                // immediately before admission. Re-reading Oracle catalogs
-                // after admission could erase that admission; fail closed
-                // rather than silently downgrade the target fence.
-                if (!oraclePrevalidated)
-                    await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
-                        connection, transaction, plan.MutationCommand, plan.SchemaSnapshot,
-                        _schemaFreshnessVerifier, cancellationToken);
-
-                if (requireExecutionFence)
-                    await RelationalDmlTargetExecutionFence.EnsureAdmittedInTransactionAsync(
-                        connection, transaction, provider, witnessEvidence!, cancellationToken);
-
-                // Validate every plan's source uniqueness in this exact
-                // transaction, before its match query or mutation. A later
-                // failed child still rolls back the entire atomic batch.
-                DmlCoordinator.EnsureLiveSqlServerCteKeyCurrent(
-                    plan, connection, transaction, cancellationToken);
-
-                if (approved.AffectedRows < 0)
-                    throw new InvalidOperationException("Approved DML affected row count cannot be negative.");
-
-                if (plan.ApprovalMode == DmlApprovalMode.InsertValues)
-                {
-                    if (approved.AffectedRows != plan.InsertRows.Length)
-                        return await RollbackAsync(transaction, index,
-                            "approved INSERT payload row count no longer matches the immutable plan", cancellationToken);
-                }
-                else
-                {
-                    var matchCommand = plan.MatchQueryCommand
-                        ?? throw new InvalidOperationException("Row-set DML approval requires a match query command.");
-                    var currentRows = await QueryRowsAsync(connection, transaction, matchCommand, cancellationToken);
-                    if (plan.MaxAffectedRows > 0 && currentRows.Count > plan.MaxAffectedRows)
-                        return await RollbackAsync(transaction, index,
-                            $"current affected row count {currentRows.Count} exceeds maximum {plan.MaxAffectedRows}", cancellationToken);
-
-                    var currentFingerprint = ComputeRowSetFingerprint(plan, currentRows);
-                    if (currentRows.Count != approved.AffectedRows
-                        || !string.Equals(currentFingerprint, approved.Challenge.RowSetFingerprint, StringComparison.Ordinal))
-                    {
-                        return await RollbackAsync(transaction, index,
-                            "matched row set changed after approval", cancellationToken);
-                    }
-                }
-
-                var execution = await ExecuteMutationAsync(
-                    connection,
-                    transaction,
-                    plan.MutationCommand,
-                    cancellationToken);
-                if (execution.AffectedRows != approved.AffectedRows)
-                    return await RollbackAsync(transaction, index,
-                        $"affected row count changed after revalidation (approved={approved.AffectedRows}, executed={execution.AffectedRows})",
-                        cancellationToken);
-
-                totalAffected = checked(totalAffected + execution.AffectedRows);
-                returnedRows.AddRange(execution.ReturnedRows);
-            }
-
-            if (witnessEvidence is not null)
-                await _targetCommitWitness!.WriteAsync(connection, transaction, provider,
-                    witnessEvidence, cancellationToken);
-            await DmlTransactionFailureRecovery.CommitAsync(transaction, cancellationToken);
-            if (requireExecutionFence)
-                await DmlTargetCommitEvidenceVerifier.EnsureConfirmedAsync(
-                    connection, provider, witnessEvidence!,
-                    _targetExecutionFence!, _targetCommitWitness!, cancellationToken);
-            acknowledgedCommit = new DmlCommitResult(
-                true,
-                totalAffected,
-                "DML transaction committed atomically after per-statement approval revalidation.")
-            {
-                ReturnedRows = returnedRows.ToImmutable()
-            };
-            return acknowledgedCommit;
-        }
-        catch (DmlRollbackOutcomeUnknownException unconfirmedRollback)
-        {
-            // A refused batch already issued one bounded ROLLBACK. Do not
-            // send a second mutation-control command if its ACK is unknown.
-            primaryFailure = ExceptionDispatchInfo.Capture(unconfirmedRollback);
-            throw;
-        }
-        catch (Exception failure)
-        {
-            await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(transaction, failure);
+            var totalAffected = 0;
+            var returnedRows = ImmutableArray.CreateBuilder<IReadOnlyDictionary<string, object?>>();
             try
             {
-                DmlTransactionFailureRecovery.ThrowIfRollbackUnconfirmed(failure);
+                // Oracle dictionary reads during native Schema Freshness can
+                // invalidate earlier uncommitted application DML OR admission.
+                // For all Oracle batches, verify the full immutable plan set
+                // before any application mutation or fencing admission.
+                // Other dialects retain per-step schema revalidation.
+                // Oracle native metadata reads can disrupt an earlier
+                // uncommitted transaction even without a target fence. The
+                // atomic-batch contract must never allow a second statement's
+                // schema proof to invalidate the first statement's DML.
+                var oraclePrevalidated = provider == SqlAgentToolType.Oracle;
+                if (oraclePrevalidated)
+                {
+                    foreach (var plan in plans)
+                        await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
+                            connection, transaction, plan.MutationCommand,
+                            plan.SchemaSnapshot, _schemaFreshnessVerifier, cancellationToken);
+                }
+
+                if (requireExecutionFence)
+                    await _targetExecutionFence!.AdmitAsync(
+                        connection, transaction, provider, witnessEvidence!, cancellationToken);
+
+                for (var index = 0; index < plans.Count; index++)
+                {
+                    var plan = plans[index];
+                    var approved = approvedPreviews[index];
+
+                    // Revalidate each proof after earlier statements in the same atomic
+                    // transaction. A changed or unreadable schema aborts the whole batch.
+                    // Oracle was schema-attested for the whole immutable batch
+                    // immediately before admission. Re-reading Oracle catalogs
+                    // after admission could erase that admission; fail closed
+                    // rather than silently downgrade the target fence.
+                    if (!oraclePrevalidated)
+                        await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
+                            connection, transaction, plan.MutationCommand, plan.SchemaSnapshot,
+                            _schemaFreshnessVerifier, cancellationToken);
+
+                    if (requireExecutionFence)
+                        await RelationalDmlTargetExecutionFence.EnsureAdmittedInTransactionAsync(
+                            connection, transaction, provider, witnessEvidence!, cancellationToken);
+
+                    // Validate every plan's source uniqueness in this exact
+                    // transaction, before its match query or mutation. A later
+                    // failed child still rolls back the entire atomic batch.
+                    DmlCoordinator.EnsureLiveSqlServerCteKeyCurrent(
+                        plan, connection, transaction, cancellationToken);
+
+                    if (approved.AffectedRows < 0)
+                        throw new InvalidOperationException("Approved DML affected row count cannot be negative.");
+
+                    if (plan.ApprovalMode == DmlApprovalMode.InsertValues)
+                    {
+                        if (approved.AffectedRows != plan.InsertRows.Length)
+                            return await RollbackAsync(transaction, index,
+                                "approved INSERT payload row count no longer matches the immutable plan", cancellationToken);
+                    }
+                    else
+                    {
+                        var matchCommand = plan.MatchQueryCommand
+                            ?? throw new InvalidOperationException("Row-set DML approval requires a match query command.");
+                        var currentRows = await QueryRowsAsync(connection, transaction, matchCommand, cancellationToken);
+                        if (plan.MaxAffectedRows > 0 && currentRows.Count > plan.MaxAffectedRows)
+                            return await RollbackAsync(transaction, index,
+                                $"current affected row count {currentRows.Count} exceeds maximum {plan.MaxAffectedRows}", cancellationToken);
+
+                        var currentFingerprint = ComputeRowSetFingerprint(plan, currentRows);
+                        if (currentRows.Count != approved.AffectedRows
+                            || !string.Equals(currentFingerprint, approved.Challenge.RowSetFingerprint, StringComparison.Ordinal))
+                        {
+                            return await RollbackAsync(transaction, index,
+                                "matched row set changed after approval", cancellationToken);
+                        }
+                    }
+
+                    var execution = await ExecuteMutationAsync(
+                        connection,
+                        transaction,
+                        plan.MutationCommand,
+                        cancellationToken);
+                    if (execution.AffectedRows != approved.AffectedRows)
+                        return await RollbackAsync(transaction, index,
+                            $"affected row count changed after revalidation (approved={approved.AffectedRows}, executed={execution.AffectedRows})",
+                            cancellationToken);
+
+                    totalAffected = checked(totalAffected + execution.AffectedRows);
+                    returnedRows.AddRange(execution.ReturnedRows);
+                }
+
+                if (witnessEvidence is not null)
+                    await _targetCommitWitness!.WriteAsync(connection, transaction, provider,
+                        witnessEvidence, cancellationToken);
+                await DmlTransactionFailureRecovery.CommitAsync(transaction, cancellationToken);
+                if (requireExecutionFence)
+                    await DmlTargetCommitEvidenceVerifier.EnsureConfirmedAsync(
+                        connection, provider, witnessEvidence!,
+                        _targetExecutionFence!, _targetCommitWitness!, cancellationToken);
+                acknowledgedCommit = new DmlCommitResult(
+                    true,
+                    totalAffected,
+                    "DML transaction committed atomically after per-statement approval revalidation.")
+                {
+                    ReturnedRows = returnedRows.ToImmutable()
+                };
+                return acknowledgedCommit;
             }
             catch (DmlRollbackOutcomeUnknownException unconfirmedRollback)
             {
+                // A refused batch already issued one bounded ROLLBACK. Do not
+                // send a second mutation-control command if its ACK is unknown.
                 primaryFailure = ExceptionDispatchInfo.Capture(unconfirmedRollback);
                 throw;
             }
+            catch (Exception failure)
+            {
+                await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(transaction, failure);
+                try
+                {
+                    DmlTransactionFailureRecovery.ThrowIfRollbackUnconfirmed(failure);
+                }
+                catch (DmlRollbackOutcomeUnknownException unconfirmedRollback)
+                {
+                    primaryFailure = ExceptionDispatchInfo.Capture(unconfirmedRollback);
+                    throw;
+                }
 
-            primaryFailure = ExceptionDispatchInfo.Capture(failure);
-            throw;
-        }
+                primaryFailure = ExceptionDispatchInfo.Capture(failure);
+                throw;
+            }
         }
         catch (Exception) when (acknowledgedCommit is not null)
         {

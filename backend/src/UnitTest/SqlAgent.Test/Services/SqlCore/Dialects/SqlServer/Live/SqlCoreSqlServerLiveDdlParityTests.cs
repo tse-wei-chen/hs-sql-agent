@@ -98,7 +98,8 @@ public sealed class SqlCoreSqlServerLiveDdlParityTests
         {
             var isolated = new SqlConnectionStringBuilder(root)
             {
-                InitialCatalog = database, Pooling = false
+                InitialCatalog = database,
+                Pooling = false
             }.ConnectionString;
             await using (var db = new SqlConnection(isolated))
             {

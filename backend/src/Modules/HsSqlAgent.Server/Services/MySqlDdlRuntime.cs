@@ -110,12 +110,19 @@ public sealed class MySqlDdlRuntime(
                 + "Estimated lock duration and affected rows: unknown.";
             var fingerprint = Digest(JsonSerializer.Serialize(new
             {
-                domain = "mysql84-ddl-v1", plan.PlanFingerprint,
-                nativeSql = plan.Command.Sql, before.ServerIdentity,
-                before.Fingerprint, actor.PrincipalIdentity, actor.TargetIdentity,
-                actor.DatabaseName, policy, requestId,
+                domain = "mysql84-ddl-v1",
+                plan.PlanFingerprint,
+                nativeSql = plan.Command.Sql,
+                before.ServerIdentity,
+                before.Fingerprint,
+                actor.PrincipalIdentity,
+                actor.TargetIdentity,
+                actor.DatabaseName,
+                policy,
+                requestId,
                 issued = now.ToUnixTimeMilliseconds(),
-                expires = expires.ToUnixTimeMilliseconds(), summary
+                expires = expires.ToUnixTimeMilliseconds(),
+                summary
             }));
             var preview = new MySqlDdlRuntimePreview(staticPreview, before,
                 Array.AsReadOnly(expected), fingerprint, expires, requestId, summary);
@@ -331,11 +338,23 @@ public sealed class MySqlDdlRuntime(
 
         var identity = Digest(JsonSerializer.Serialize(new
         {
-            uuid, version, versionComment, database, engine, caseMode, autoCommit, user
+            uuid,
+            version,
+            versionComment,
+            database,
+            engine,
+            caseMode,
+            autoCommit,
+            user
         }));
         var fingerprint = Digest(JsonSerializer.Serialize(new
         {
-            identity, database, table, exists, targetEngine, columns
+            identity,
+            database,
+            table,
+            exists,
+            targetEngine,
+            columns
         }));
         return new(identity, database, table, Digest(user), exists,
             targetEngine, columns.AsReadOnly(), fingerprint);
@@ -368,9 +387,12 @@ public sealed class MySqlDdlRuntime(
 
     private string PolicyMaterial() => Digest(JsonSerializer.Serialize(new
     {
-        _options.Enabled, _options.AllowCreateTable, _options.PolicyRevision,
+        _options.Enabled,
+        _options.AllowCreateTable,
+        _options.PolicyRevision,
         databases = _options.AllowedDatabases.OrderBy(x => x, StringComparer.Ordinal).ToArray(),
-        _options.ApprovalLifetime, _options.ExecutionTimeout
+        _options.ApprovalLifetime,
+        _options.ExecutionTimeout
     }));
 
     private static CompiledDdlPlan Compile(string sql, SqlProviderCapabilityProfile? version) =>

@@ -211,11 +211,11 @@ public sealed class NegativeTargetCapabilityMatrixTests
     public static IEnumerable<object[]> NegativeTargetCapabilityMatrix()
     {
         foreach (var family in Families)
-        foreach (var shape in family.Shapes)
-        {
-            yield return
-            [
-                SyntaxGrammarMatrix.CaseName(
+            foreach (var shape in family.Shapes)
+            {
+                yield return
+                [
+                    SyntaxGrammarMatrix.CaseName(
                     family.Name,
                     shape.Name),
                 family.SourceDialect,
@@ -225,8 +225,8 @@ public sealed class NegativeTargetCapabilityMatrixTests
                 family.DiagnosticStage,
                 family.DiagnosticCategory,
                 family.MessageFragments
-            ];
-        }
+                ];
+            }
     }
 
     [Fact]

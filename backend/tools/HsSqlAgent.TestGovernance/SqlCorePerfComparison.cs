@@ -47,7 +47,8 @@ public static class SqlCorePerfComparison
             }
             var row = new Dictionary<string, object>(StringComparer.Ordinal)
             {
-                ["provider"] = key.Provider, ["case"] = key.Case,
+                ["provider"] = key.Provider,
+                ["case"] = key.Case,
             };
             foreach (var (metric, value) in values) row[metric] = value;
             results.Add(row);

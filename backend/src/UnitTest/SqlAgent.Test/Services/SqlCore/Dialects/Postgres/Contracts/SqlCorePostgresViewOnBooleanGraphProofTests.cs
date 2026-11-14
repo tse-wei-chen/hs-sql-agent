@@ -50,12 +50,12 @@ public sealed class SqlCorePostgresViewOnBooleanGraphProofTests
             Assert.Contains("ext_id", binding.Columns);
         }
         foreach (var table in new[] { "a", "b" })
-        foreach (var key in new[] { "id", "ext_id" })
-        {
-            var dropped = Analyze(script + $"ALTER TABLE app.{table} DROP COLUMN {key};");
-            Assert.Equal(SqlStatementAnalysisStatus.Invalid, dropped.Statements[5].Status);
-            Assert.Empty(dropped.Statements[5].Changes);
-        }
+            foreach (var key in new[] { "id", "ext_id" })
+            {
+                var dropped = Analyze(script + $"ALTER TABLE app.{table} DROP COLUMN {key};");
+                Assert.Equal(SqlStatementAnalysisStatus.Invalid, dropped.Statements[5].Status);
+                Assert.Empty(dropped.Statements[5].Changes);
+            }
     }
 
     [Theory]

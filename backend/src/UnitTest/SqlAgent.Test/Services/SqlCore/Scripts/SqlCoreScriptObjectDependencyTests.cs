@@ -126,7 +126,8 @@ public sealed class SqlCoreScriptObjectDependencyTests
 
         var type = typeof(SqlScriptDependencyReference);
         Assert.True(type.IsSealed);
-        Assert.All(type.GetProperties(), property => {
+        Assert.All(type.GetProperties(), property =>
+        {
             Assert.Null(property.SetMethod);
             Assert.DoesNotContain("Microsoft.FSharp",
                 property.PropertyType.FullName ?? "", StringComparison.Ordinal);

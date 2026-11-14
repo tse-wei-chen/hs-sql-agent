@@ -44,7 +44,7 @@ public sealed class SqlCoreMySqlForeignKeyLifecycleTests
         Assert.All(r.Statements, s => Assert.Equal(SqlStatementAnalysisStatus.Analyzed, s.Status));
         Assert.True(r.FinalCatalog.IsClosedWorld);
         Assert.Equal(3, r.FinalCatalog.Tables.Count);
-        Assert.Equal(new[] {"fk_a", "fk_code"},
+        Assert.Equal(new[] { "fk_a", "fk_code" },
             r.FinalCatalog.Tables.Single(t => t.Name == "child_a")
                 .Constraints.Select(c => c.Name).ToArray());
     }
@@ -86,11 +86,11 @@ public sealed class SqlCoreMySqlForeignKeyLifecycleTests
         Assert.Equal(new[] {SqlCatalogOperation.DropConstraint, SqlCatalogOperation.DropConstraint,
             SqlCatalogOperation.DropColumn, SqlCatalogOperation.DropColumn},
             step.Changes.Select(c => c.Operation).ToArray());
-        Assert.Equal(new[] {"fk_a", "fk_code"},
+        Assert.Equal(new[] { "fk_a", "fk_code" },
             step.Changes.Take(2).Select(c => c.ConstraintName).ToArray());
         var child = r.FinalCatalog.Tables.Single(t => t.Name == "child_a");
         Assert.Empty(child.Constraints);
-        Assert.Equal(new[] {"note"}, child.Columns.Select(c => c.Name).ToArray());
+        Assert.Equal(new[] { "note" }, child.Columns.Select(c => c.Name).ToArray());
         Assert.Equal(3, step.CatalogBefore.Tables.Single(t => t.Name == "child_a").Columns.Count);
         Assert.Equal(2, step.CatalogBefore.Tables.Single(t => t.Name == "child_a").Constraints.Count);
     }
@@ -120,7 +120,7 @@ public sealed class SqlCoreMySqlForeignKeyLifecycleTests
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, r.Statements[1].Status);
         var table = Assert.Single(r.FinalCatalog.Tables);
         Assert.Equal(SqlCatalogConstraintKind.PrimaryKey, Assert.Single(table.Constraints).Kind);
-        Assert.Equal(new[] {"id"}, table.Columns.Select(c => c.Name));
+        Assert.Equal(new[] { "id" }, table.Columns.Select(c => c.Name));
     }
 
     [Fact]

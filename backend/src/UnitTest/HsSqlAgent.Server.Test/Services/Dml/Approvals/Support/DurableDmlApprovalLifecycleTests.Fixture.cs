@@ -271,7 +271,7 @@ public sealed partial class DurableDmlApprovalLifecycleTests
                 serviceCollection.AddSingleton(audit.Object);
             }
             serviceCollection.AddSingleton<ICryptoService, CryptoService>();
-        serviceCollection.AddSingleton(Common.Services.TestSecrets.Create());
+            serviceCollection.AddSingleton(Common.Services.TestSecrets.Create());
             serviceCollection.Configure<McpKeySettings>(options => options.HmacSecretKey = HmacSecret);
             return serviceCollection.BuildServiceProvider();
         }

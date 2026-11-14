@@ -117,9 +117,14 @@ public sealed class SqlServerDdlRuntime(
                 nativeSql = plan.Command.Sql,
                 initial.ServerIdentity,
                 initial.Fingerprint,
-                actor.PrincipalIdentity, actor.TargetIdentity, actor.DatabaseName,
-                policy, nonce, issued = now.ToUnixTimeMilliseconds(),
-                expires = expiry.ToUnixTimeMilliseconds(), readable
+                actor.PrincipalIdentity,
+                actor.TargetIdentity,
+                actor.DatabaseName,
+                policy,
+                nonce,
+                issued = now.ToUnixTimeMilliseconds(),
+                expires = expiry.ToUnixTimeMilliseconds(),
+                readable
             }));
             var preview = new SqlServerDdlRuntimePreview(staticPreview, initial,
                 Array.AsReadOnly(expected), fingerprint, expiry, nonce, readable);
@@ -337,7 +342,14 @@ public sealed class SqlServerDdlRuntime(
         }
         var fingerprint = Digest(JsonSerializer.Serialize(new
         {
-            serverIdentity, database, databaseId, schema, schemaId, table, objectId, columns
+            serverIdentity,
+            database,
+            databaseId,
+            schema,
+            schemaId,
+            table,
+            objectId,
+            columns
         }));
         return new(serverIdentity, database, databaseId, schemaId,
             schema, table, objectId, columns.AsReadOnly(), fingerprint);
@@ -375,9 +387,12 @@ public sealed class SqlServerDdlRuntime(
 
     private string PolicyMaterial() => Digest(JsonSerializer.Serialize(new
     {
-        _options.Enabled, _options.AllowCreateTable, _options.PolicyRevision,
+        _options.Enabled,
+        _options.AllowCreateTable,
+        _options.PolicyRevision,
         schemas = _options.AllowedSchemas.OrderBy(s => s, StringComparer.OrdinalIgnoreCase).ToArray(),
-        _options.ApprovalLifetime, _options.ExecutionTimeout
+        _options.ApprovalLifetime,
+        _options.ExecutionTimeout
     }));
 
     private CompiledDdlPlan Compile(string sql, SqlProviderCapabilityProfile? profile) =>

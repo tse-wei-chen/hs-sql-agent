@@ -51,18 +51,18 @@ public sealed class SqlitePhysicalHostInjectionTests
             var attempted = 0;
 
             foreach (var separator in StatementSeparators)
-            foreach (var secondStatement in SecondStatements)
-            {
-                var sql = "SELECT id FROM main.users WHERE id = 1"
-                    + separator + secondStatement;
-                var response = await tool.ExecuteQuerySql(
-                    sql, TestContext.Current.CancellationToken);
+                foreach (var secondStatement in SecondStatements)
+                {
+                    var sql = "SELECT id FROM main.users WHERE id = 1"
+                        + separator + secondStatement;
+                    var response = await tool.ExecuteQuerySql(
+                        sql, TestContext.Current.CancellationToken);
 
-                Assert.False(response.Success, sql);
-                Assert.NotNull(response.Error);
-                Assert.Equal(before, await PhysicalSnapshotAsync(connectionString));
-                attempted++;
-            }
+                    Assert.False(response.Success, sql);
+                    Assert.NotNull(response.Error);
+                    Assert.Equal(before, await PhysicalSnapshotAsync(connectionString));
+                    attempted++;
+                }
 
             Assert.Equal(32, attempted);
         });

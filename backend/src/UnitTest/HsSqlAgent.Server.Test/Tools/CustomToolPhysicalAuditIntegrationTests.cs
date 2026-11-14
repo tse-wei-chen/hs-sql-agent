@@ -212,7 +212,9 @@ public sealed partial class CustomToolPhysicalAuditIntegrationTests
                     "archive_order", 42, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new CustomSqlTool
                 {
-                    Name = "archive_order", Type = "DML", SqlTemplate = MutationSql
+                    Name = "archive_order",
+                    Type = "DML",
+                    SqlTemplate = MutationSql
                 });
             var providerFactory = new Mock<ISqlProviderFactory>();
             providerFactory.Setup(x => x.GetProvider(SqlAgentToolType.Sqlite))

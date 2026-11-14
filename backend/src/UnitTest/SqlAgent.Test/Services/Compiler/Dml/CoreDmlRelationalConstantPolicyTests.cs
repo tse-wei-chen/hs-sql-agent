@@ -32,13 +32,13 @@ public sealed class CoreDmlRelationalConstantPolicyTests
         ];
 
         foreach (var provider in Enum.GetValues<SqlAgentToolType>())
-        foreach (var predicate in predicates)
-        {
-            yield return [provider, $"UPDATE users SET name = 'Blocked' WHERE {predicate}",
+            foreach (var predicate in predicates)
+            {
+                yield return [provider, $"UPDATE users SET name = 'Blocked' WHERE {predicate}",
                 "SQL_POLICY_UPDATE_UNBOUNDED_PREDICATE"];
-            yield return [provider, $"DELETE FROM users WHERE {predicate}",
+                yield return [provider, $"DELETE FROM users WHERE {predicate}",
                 "SQL_POLICY_DELETE_UNBOUNDED_PREDICATE"];
-        }
+            }
     }
 
     [Theory]
@@ -77,11 +77,11 @@ public sealed class CoreDmlRelationalConstantPolicyTests
         ];
 
         foreach (var provider in Enum.GetValues<SqlAgentToolType>())
-        foreach (var predicate in predicates)
-        {
-            yield return [provider, $"UPDATE users SET name = 'Allowed' WHERE {predicate}"];
-            yield return [provider, $"DELETE FROM users WHERE {predicate}"];
-        }
+            foreach (var predicate in predicates)
+            {
+                yield return [provider, $"UPDATE users SET name = 'Allowed' WHERE {predicate}"];
+                yield return [provider, $"DELETE FROM users WHERE {predicate}"];
+            }
     }
 
     [Theory]

@@ -182,8 +182,13 @@ public sealed partial class SqlCoreSqlServerCompositeCteLiveProofTests
                 (antiJoin ? "NOT EXISTS (" : "EXISTS (") + inner + ") ) ";
             if (hops >= 2) prefix += ", picked AS (SELECT a, b FROM seed) ";
             if (hops >= 3) prefix += ", matched AS (SELECT a, b FROM picked) ";
-            var alias = hops switch { 1 => "seed", 2 => "picked", 3 => "matched",
-                _ => throw new ArgumentOutOfRangeException(nameof(hops)) };
+            var alias = hops switch
+            {
+                1 => "seed",
+                2 => "picked",
+                3 => "matched",
+                _ => throw new ArgumentOutOfRangeException(nameof(hops))
+            };
             var sql = prefix + (update
                 ? "UPDATE dbo.[" + dst + "] SET label = 'changed' FROM " + alias
                 : "DELETE FROM dbo.[" + dst + "] FROM " + alias)

@@ -220,7 +220,8 @@ public sealed class DmlNativePostgresPostCommitAckLossTests
                     upstream.Close();
                     try { await toServer; }
                     catch (Exception ex) when (ex is IOException
-                        or ObjectDisposedException or OperationCanceledException) { }
+                        or ObjectDisposedException or OperationCanceledException)
+                    { }
                 }
             }
             catch (OperationCanceledException) when (_stopping.IsCancellationRequested) { }

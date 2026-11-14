@@ -110,12 +110,20 @@ public sealed class FirebirdDdlRuntime(
                 + " External metadata locking, affected rows and duration are not guaranteed.";
             var fingerprint = Digest(JsonSerializer.Serialize(new
             {
-                version = "firebird-ddl-v1", plan.PlanFingerprint,
-                plan.Command.Sql, before.DatabaseGuidFingerprint,
-                before.PhysicalIdentity, before.Fingerprint,
-                actor.PrincipalIdentity, actor.TargetIdentity, actor.DatabaseName,
-                policy, nonce, issued = now.ToUnixTimeMilliseconds(),
-                expires = expiry.ToUnixTimeMilliseconds(), readable
+                version = "firebird-ddl-v1",
+                plan.PlanFingerprint,
+                plan.Command.Sql,
+                before.DatabaseGuidFingerprint,
+                before.PhysicalIdentity,
+                before.Fingerprint,
+                actor.PrincipalIdentity,
+                actor.TargetIdentity,
+                actor.DatabaseName,
+                policy,
+                nonce,
+                issued = now.ToUnixTimeMilliseconds(),
+                expires = expiry.ToUnixTimeMilliseconds(),
+                readable
             }));
             var preview = new FirebirdDdlRuntimePreview(
                 staticPreview, before, Array.AsReadOnly(expected),
@@ -354,12 +362,21 @@ public sealed class FirebirdDdlRuntime(
         // nor a portable SQL Server/PostgreSQL object identity.
         var physicalIdentity = Digest(JsonSerializer.Serialize(new
         {
-            guid, fileId, dbName, creation, engine, principal
+            guid,
+            fileId,
+            dbName,
+            creation,
+            engine,
+            principal
         }));
         var guidHash = Digest(guid);
         var fingerprint = Digest(JsonSerializer.Serialize(new
         {
-            physicalIdentity, guidHash, table, exists, columns
+            physicalIdentity,
+            guidHash,
+            table,
+            exists,
+            columns
         }));
         return (new FirebirdDdlPhysicalSnapshot(guidHash, physicalIdentity,
             Digest(principal), table, exists, columns.AsReadOnly(), fingerprint), guid);
@@ -381,9 +398,12 @@ public sealed class FirebirdDdlRuntime(
 
     private string PolicyMaterial() => Digest(JsonSerializer.Serialize(new
     {
-        _options.Enabled, _options.AllowCreateTable, _options.PolicyRevision,
+        _options.Enabled,
+        _options.AllowCreateTable,
+        _options.PolicyRevision,
         guids = _options.AllowedDatabaseGuids.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray(),
-        _options.ApprovalLifetime, _options.ExecutionTimeout
+        _options.ApprovalLifetime,
+        _options.ExecutionTimeout
     }));
 
     private static CompiledDdlPlan Compile(string sql, SqlProviderCapabilityProfile? profile) =>

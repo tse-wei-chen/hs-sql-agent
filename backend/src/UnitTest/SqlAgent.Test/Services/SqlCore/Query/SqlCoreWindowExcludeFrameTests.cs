@@ -20,9 +20,9 @@ public sealed class SqlCoreWindowExcludeFrameTests
     public static IEnumerable<object[]> NativeCases()
     {
         foreach (var provider in new[] { SqlAgentToolType.Postgres, SqlAgentToolType.Sqlite })
-        foreach (var unit in new[] { Rows, Groups, Range })
-        foreach (var excluded in new[] { "CURRENT ROW", "GROUP", "TIES", "NO OTHERS" })
-            yield return [provider, unit, excluded];
+            foreach (var unit in new[] { Rows, Groups, Range })
+                foreach (var excluded in new[] { "CURRENT ROW", "GROUP", "TIES", "NO OTHERS" })
+                    yield return [provider, unit, excluded];
     }
 
     private static string Query(string frame, string exclusion) =>

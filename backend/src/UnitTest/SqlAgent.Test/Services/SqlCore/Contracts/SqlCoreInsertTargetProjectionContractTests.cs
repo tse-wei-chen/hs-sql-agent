@@ -87,8 +87,8 @@ public sealed class SqlCoreInsertTargetProjectionContractTests
             "INSERT INTO dest SELECT id, label, 3 FROM src"
         ];
         foreach (var dialect in ModeledNames())
-        foreach (var mutation in sql)
-            yield return [dialect[0], dialect[1], dialect[2], mutation];
+            foreach (var mutation in sql)
+                yield return [dialect[0], dialect[1], dialect[2], mutation];
     }
 
     [Theory]

@@ -30,15 +30,15 @@ public sealed class AdvancedJsonPathGrammarMatrixTests
     public static IEnumerable<object[]> PositiveMatrix()
     {
         foreach (var source in JsonExtractSources)
-        foreach (var target in JsonExtractTargets)
-        foreach (var context in ProjectionContexts)
-            yield return
-            [
-                $"{source}__{target}__array-index__{context}",
+            foreach (var target in JsonExtractTargets)
+                foreach (var context in ProjectionContexts)
+                    yield return
+                    [
+                        $"{source}__{target}__array-index__{context}",
                 source,
                 target,
                 Query(context, "JSON_EXTRACT(payload, '$.items[0].name')")
-            ];
+                    ];
     }
 
     public static IEnumerable<object[]> NegativeMatrix()
@@ -52,15 +52,15 @@ public sealed class AdvancedJsonPathGrammarMatrixTests
         };
 
         foreach (var target in mutationTargets)
-        foreach (var context in ProjectionContexts)
-            yield return
-            [
-                $"{target}__mutation-array-index__{context}",
+            foreach (var context in ProjectionContexts)
+                yield return
+                [
+                    $"{target}__mutation-array-index__{context}",
                 SqlAgentToolType.MySQL,
                 target,
                 Query(context, "JSON_SET(payload, '$.items[0].name', 'x')"),
                 "json.path.mutation_array_index"
-            ];
+                ];
 
         var unsupportedExtractTargets = new[]
         {
@@ -70,15 +70,15 @@ public sealed class AdvancedJsonPathGrammarMatrixTests
         };
 
         foreach (var target in unsupportedExtractTargets)
-        foreach (var context in ProjectionContexts)
-            yield return
-            [
-                $"{target}__extract-unsupported__{context}",
+            foreach (var context in ProjectionContexts)
+                yield return
+                [
+                    $"{target}__extract-unsupported__{context}",
                 SqlAgentToolType.MySQL,
                 target,
                 Query(context, "JSON_EXTRACT(payload, '$.items[0].name')"),
                 "JSON_EXTRACT"
-            ];
+                ];
     }
 
     [Fact]

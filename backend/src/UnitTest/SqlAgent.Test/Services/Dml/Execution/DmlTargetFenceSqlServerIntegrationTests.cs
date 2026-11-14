@@ -57,7 +57,9 @@ public sealed class DmlTargetFenceSqlServerIntegrationTests
 
                 var oldLoginCs = new SqlConnectionStringBuilder(target.ConnectionString)
                 {
-                    UserID = login, Password = password, Pooling = false
+                    UserID = login,
+                    Password = password,
+                    Pooling = false
                 }.ConnectionString;
                 await using (var oldSession = new SqlConnection(oldLoginCs))
                 {
@@ -135,7 +137,9 @@ public sealed class DmlTargetFenceSqlServerIntegrationTests
             {
                 var cs = new SqlConnectionStringBuilder(target.ConnectionString)
                 {
-                    UserID = login, Password = password, Pooling = false
+                    UserID = login,
+                    Password = password,
+                    Pooling = false
                 }.ConnectionString;
                 await using var unprivileged = new SqlConnection(cs);
                 await unprivileged.OpenAsync(ct);

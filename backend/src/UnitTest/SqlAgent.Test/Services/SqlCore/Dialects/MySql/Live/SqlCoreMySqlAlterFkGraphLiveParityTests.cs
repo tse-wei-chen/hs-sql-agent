@@ -70,7 +70,7 @@ public sealed class SqlCoreMySqlAlterFkGraphLiveParityTests
             await Execute(db, model.Statements[1].Syntax.Text);
             var initial = await ReadPhysical(db, database);
             Assert.True(Supports(initial, ["p"]));
-            Assert.True(Supports(initial, ["p","q"]));
+            Assert.True(Supports(initial, ["p", "q"]));
             Assert.Equal(new[] { "fk_long", "fk_short" },
                 await ReadForeignKeys(db, database));
             for (var i = 0; i < scenario.Actions.Length; i++)
@@ -80,7 +80,7 @@ public sealed class SqlCoreMySqlAlterFkGraphLiveParityTests
                 Assert.Equal(scenario.RemainingFk, await ReadForeignKeys(db, database));
                 foreach (var currentFk in scenario.RemainingFk)
                 {
-                    var prefix = currentFk == "fk_short" ? new[] { "p" } : ["p","q"];
+                    var prefix = currentFk == "fk_short" ? new[] { "p" } : ["p", "q"];
                     Assert.True(Supports(after, prefix));
                 }
                 Assert.Contains(after, row => row.Name == "PRIMARY" && row.Column == "id");
@@ -143,14 +143,14 @@ public sealed class SqlCoreMySqlAlterFkGraphLiveParityTests
             foreach (var step in model.Statements.Take(2))
                 await Execute(db, step.Syntax.Text);
             var physicalBefore = await ReadPhysical(db, database);
-            Assert.True(Supports(physicalBefore, ["p","q"]));
+            Assert.True(Supports(physicalBefore, ["p", "q"]));
             await Execute(db, model.Statements[2].Syntax.Text);
             var actual = await ReadPhysical(db, database);
             Assert.Contains(actual, x => x.Name == name && x.Column == firstColumn);
             Assert.Equal(string.IsNullOrEmpty(fk) ? [] : [fk],
                 await ReadForeignKeys(db, database));
             if (fk == "fk_short") Assert.True(Supports(actual, ["p"]));
-            if (fk == "fk_long") Assert.True(Supports(actual, ["p","q"]));
+            if (fk == "fk_long") Assert.True(Supports(actual, ["p", "q"]));
             var current = model.FinalCatalog.Tables.Single(t => t.Name == "child");
             Assert.Equal(name, Assert.Single(current.Indexes).Name);
             Assert.Equal(string.IsNullOrEmpty(fk) ? [] : [fk],
@@ -173,11 +173,11 @@ public sealed class SqlCoreMySqlAlterFkGraphLiveParityTests
              ORDER BY INDEX_NAME,SEQ_IN_INDEX
             """;
         var rows = new List<Physical>();
-        await using var cmd = new MySqlCommand(sql,db);
+        await using var cmd = new MySqlCommand(sql, db);
         cmd.Parameters.AddWithValue("@schema", name);
         await using var reader = await cmd.ExecuteReaderAsync(TestContext.Current.CancellationToken);
         while (await reader.ReadAsync(TestContext.Current.CancellationToken))
-            rows.Add(new Physical(reader.GetString(0),reader.GetString(1),
+            rows.Add(new Physical(reader.GetString(0), reader.GetString(1),
                 Convert.ToInt32(reader.GetValue(2))));
         return rows.ToArray();
     }
@@ -190,8 +190,8 @@ public sealed class SqlCoreMySqlAlterFkGraphLiveParityTests
              ORDER BY CONSTRAINT_NAME
             """;
         var symbols = new List<string>();
-        await using var cmd = new MySqlCommand(sql,db);
-        cmd.Parameters.AddWithValue("@schema",name);
+        await using var cmd = new MySqlCommand(sql, db);
+        cmd.Parameters.AddWithValue("@schema", name);
         await using var reader = await cmd.ExecuteReaderAsync(TestContext.Current.CancellationToken);
         while (await reader.ReadAsync(TestContext.Current.CancellationToken))
             symbols.Add(reader.GetString(0));
@@ -202,42 +202,43 @@ public sealed class SqlCoreMySqlAlterFkGraphLiveParityTests
     {
         var value = Environment.GetEnvironmentVariable("TEST_MYSQL_CONNECTION");
         if (!string.IsNullOrWhiteSpace(value)) return value;
-        if (string.Equals(Environment.GetEnvironmentVariable("CI"),"true",
+        if (string.Equals(Environment.GetEnvironmentVariable("CI"), "true",
             StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("TEST_MYSQL_CONNECTION must be set in CI");
         Assert.Skip("Real MySQL requires TEST_MYSQL_CONNECTION");
         throw new InvalidOperationException("Unreachable");
     }
 
-    private static async Task WithDatabase(Func<MySqlConnection,string,Task> run)
+    private static async Task WithDatabase(Func<MySqlConnection, string, Task> run)
     {
         var root = ConnectionString();
         var schema = "sqlcore_alterfk_" + Guid.NewGuid().ToString("N");
         await using var admin = new MySqlConnection(root);
         await admin.OpenAsync(TestContext.Current.CancellationToken);
-        await using (var mode = new MySqlCommand("SELECT @@lower_case_table_names",admin))
-            Assert.Equal(0,Convert.ToInt32(await mode.ExecuteScalarAsync(
+        await using (var mode = new MySqlCommand("SELECT @@lower_case_table_names", admin))
+            Assert.Equal(0, Convert.ToInt32(await mode.ExecuteScalarAsync(
                 TestContext.Current.CancellationToken)));
-        await Execute(admin,"CREATE DATABASE `" + schema + "`");
+        await Execute(admin, "CREATE DATABASE `" + schema + "`");
         try
         {
             var cs = new MySqlConnectionStringBuilder(root)
             {
-                Database = schema,Pooling = false
+                Database = schema,
+                Pooling = false
             };
             await using var db = new MySqlConnection(cs.ConnectionString);
             await db.OpenAsync(TestContext.Current.CancellationToken);
-            await run(db,schema);
+            await run(db, schema);
         }
         finally
         {
-            await Execute(admin,"DROP DATABASE IF EXISTS `" + schema + "`");
+            await Execute(admin, "DROP DATABASE IF EXISTS `" + schema + "`");
         }
     }
 
     private static async Task Execute(MySqlConnection db, string sql)
     {
-        await using var cmd = new MySqlCommand(sql,db);
+        await using var cmd = new MySqlCommand(sql, db);
         await cmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
     }
 }

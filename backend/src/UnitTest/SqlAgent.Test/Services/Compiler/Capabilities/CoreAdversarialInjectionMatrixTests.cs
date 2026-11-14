@@ -87,30 +87,30 @@ public sealed class CoreAdversarialInjectionMatrixTests
     {
         var attempts = 0;
         foreach (var provider in Providers)
-        foreach (var attack in AttackStatements)
-        foreach (var separator in StatementSeparators)
-        {
-            foreach (var prefix in QueryPrefixes)
-            {
-                var sql = prefix + separator + attack;
-                AssertRejected(
-                    () => SqlCoreFacade.TryCompileQuery(
-                        sql, provider, provider, Validation(),
-                        new SqlExecutionPlanPolicy(100)),
-                    provider + " Query " + sql);
-                attempts++;
-            }
+            foreach (var attack in AttackStatements)
+                foreach (var separator in StatementSeparators)
+                {
+                    foreach (var prefix in QueryPrefixes)
+                    {
+                        var sql = prefix + separator + attack;
+                        AssertRejected(
+                            () => SqlCoreFacade.TryCompileQuery(
+                                sql, provider, provider, Validation(),
+                                new SqlExecutionPlanPolicy(100)),
+                            provider + " Query " + sql);
+                        attempts++;
+                    }
 
-            foreach (var prefix in DmlPrefixes)
-            {
-                var sql = prefix + separator + attack;
-                AssertRejected(
-                    () => SqlCoreFacade.TryCompileDml(
-                        sql, provider, provider, Validation()),
-                    provider + " DML " + sql);
-                attempts++;
-            }
-        }
+                    foreach (var prefix in DmlPrefixes)
+                    {
+                        var sql = prefix + separator + attack;
+                        AssertRejected(
+                            () => SqlCoreFacade.TryCompileDml(
+                                sql, provider, provider, Validation()),
+                            provider + " DML " + sql);
+                        attempts++;
+                    }
+                }
 
         // Minimum floor, not a random fuzz count: 6 x 8 x 4 x (2 + 2).
         Assert.Equal(768, attempts);
@@ -121,26 +121,26 @@ public sealed class CoreAdversarialInjectionMatrixTests
     {
         var attempts = 0;
         foreach (var provider in Providers)
-        foreach (var attack in AttackStatements)
-        foreach (var separator in StatementSeparators)
-        {
-            var baseSql = provider == SqlAgentToolType.MsSqlServer
-                ? "CREATE TABLE widgets (id INT)"
-                : "CREATE TABLE widgets (id INTEGER)";
-            var sql = baseSql + separator + attack;
-            var options = new DdlCompilationOptions(provider, provider);
-            var first = SqlCoreFacade.TryCompileDdl(sql, options);
-            var second = SqlCoreFacade.TryCompileDdl(sql, options);
+            foreach (var attack in AttackStatements)
+                foreach (var separator in StatementSeparators)
+                {
+                    var baseSql = provider == SqlAgentToolType.MsSqlServer
+                        ? "CREATE TABLE widgets (id INT)"
+                        : "CREATE TABLE widgets (id INTEGER)";
+                    var sql = baseSql + separator + attack;
+                    var options = new DdlCompilationOptions(provider, provider);
+                    var first = SqlCoreFacade.TryCompileDdl(sql, options);
+                    var second = SqlCoreFacade.TryCompileDdl(sql, options);
 
-            Assert.False(first.Success, provider + " DDL " + sql);
-            Assert.False(second.Success, provider + " DDL repeat " + sql);
-            Assert.Null(first.Value);
-            Assert.Null(second.Value);
-            Assert.False(string.IsNullOrWhiteSpace(first.ErrorCode));
-            Assert.Equal(first.ErrorCode, second.ErrorCode);
-            Assert.Equal(first.ErrorMessage, second.ErrorMessage);
-            attempts++;
-        }
+                    Assert.False(first.Success, provider + " DDL " + sql);
+                    Assert.False(second.Success, provider + " DDL repeat " + sql);
+                    Assert.Null(first.Value);
+                    Assert.Null(second.Value);
+                    Assert.False(string.IsNullOrWhiteSpace(first.ErrorCode));
+                    Assert.Equal(first.ErrorCode, second.ErrorCode);
+                    Assert.Equal(first.ErrorMessage, second.ErrorMessage);
+                    attempts++;
+                }
 
         // The batch compiler is a separate, explicitly authorized API.
         Assert.Equal(192, attempts);
@@ -151,23 +151,23 @@ public sealed class CoreAdversarialInjectionMatrixTests
     {
         var attempts = 0;
         foreach (var provider in Providers)
-        foreach (var tail in MalformedTails)
-        {
-            var query = "SELECT id FROM users WHERE id = 7" + tail;
-            AssertRejected(
-                () => SqlCoreFacade.TryCompileQuery(
-                    query, provider, provider, Validation(),
-                    new SqlExecutionPlanPolicy(100)),
-                provider + " malformed query");
-            attempts++;
+            foreach (var tail in MalformedTails)
+            {
+                var query = "SELECT id FROM users WHERE id = 7" + tail;
+                AssertRejected(
+                    () => SqlCoreFacade.TryCompileQuery(
+                        query, provider, provider, Validation(),
+                        new SqlExecutionPlanPolicy(100)),
+                    provider + " malformed query");
+                attempts++;
 
-            var dml = "DELETE FROM users WHERE id = 7" + tail;
-            AssertRejected(
-                () => SqlCoreFacade.TryCompileDml(
-                    dml, provider, provider, Validation()),
-                provider + " malformed DML");
-            attempts++;
-        }
+                var dml = "DELETE FROM users WHERE id = 7" + tail;
+                AssertRejected(
+                    () => SqlCoreFacade.TryCompileDml(
+                        dml, provider, provider, Validation()),
+                    provider + " malformed DML");
+                attempts++;
+            }
 
         Assert.Equal(48, attempts);
     }
@@ -185,15 +185,15 @@ public sealed class CoreAdversarialInjectionMatrixTests
 
         var attempts = 0;
         foreach (var provider in Providers)
-        foreach (var sql in queries)
-        {
-            AssertRejected(
-                () => SqlCoreFacade.TryCompileQuery(
-                    sql, provider, provider, Validation(),
-                    new SqlExecutionPlanPolicy(100)),
-                provider + " denied physical table " + sql);
-            attempts++;
-        }
+            foreach (var sql in queries)
+            {
+                AssertRejected(
+                    () => SqlCoreFacade.TryCompileQuery(
+                        sql, provider, provider, Validation(),
+                        new SqlExecutionPlanPolicy(100)),
+                    provider + " denied physical table " + sql);
+                attempts++;
+            }
 
         Assert.Equal(24, attempts);
     }
@@ -215,18 +215,18 @@ public sealed class CoreAdversarialInjectionMatrixTests
 
         var attempts = 0;
         foreach (var provider in Providers)
-        foreach (var (sql, code) in cases)
-        {
-            var result = SqlCoreFacade.TryCompileDml(sql, provider, provider, Validation(), TestContext.Current.CancellationToken);
-            Assert.False(result.Success, provider + " " + sql);
-            Assert.Null(result.Value);
-            Assert.Contains(
-                result.TypedDiagnostics,
-                diagnostic => diagnostic.Code == code &&
-                    diagnostic.Stage == SqlDiagnosticStage.Policy &&
-                    diagnostic.Category == SqlDiagnosticCategory.Policy);
-            attempts++;
-        }
+            foreach (var (sql, code) in cases)
+            {
+                var result = SqlCoreFacade.TryCompileDml(sql, provider, provider, Validation(), TestContext.Current.CancellationToken);
+                Assert.False(result.Success, provider + " " + sql);
+                Assert.Null(result.Value);
+                Assert.Contains(
+                    result.TypedDiagnostics,
+                    diagnostic => diagnostic.Code == code &&
+                        diagnostic.Stage == SqlDiagnosticStage.Policy &&
+                        diagnostic.Category == SqlDiagnosticCategory.Policy);
+                attempts++;
+            }
 
         Assert.Equal(24, attempts);
     }
@@ -236,17 +236,17 @@ public sealed class CoreAdversarialInjectionMatrixTests
     {
         var attempts = 0;
         foreach (var provider in Providers)
-        foreach (var payload in LiteralPayloads)
-        {
-            var literal = QuoteSqlLiteral(payload);
-            var query = SqlCoreFacade.CompileQuery("SELECT id FROM users WHERE name = " + literal + " AND id = 7", provider, provider, Validation(), new SqlExecutionPlanPolicy(100), TestContext.Current.CancellationToken);
-            AssertParameterized(query, payload, provider + " Query");
-            attempts++;
+            foreach (var payload in LiteralPayloads)
+            {
+                var literal = QuoteSqlLiteral(payload);
+                var query = SqlCoreFacade.CompileQuery("SELECT id FROM users WHERE name = " + literal + " AND id = 7", provider, provider, Validation(), new SqlExecutionPlanPolicy(100), TestContext.Current.CancellationToken);
+                AssertParameterized(query, payload, provider + " Query");
+                attempts++;
 
-            var dml = SqlCoreFacade.CompileDml("UPDATE users SET name = " + literal + " WHERE id = 7", provider, provider, Validation(), TestContext.Current.CancellationToken);
-            AssertParameterized(dml, payload, provider + " DML");
-            attempts++;
-        }
+                var dml = SqlCoreFacade.CompileDml("UPDATE users SET name = " + literal + " WHERE id = 7", provider, provider, Validation(), TestContext.Current.CancellationToken);
+                AssertParameterized(dml, payload, provider + " DML");
+                attempts++;
+            }
 
         // Legal data, even attack-shaped data, must not be blacklisted.
         Assert.Equal(144, attempts);

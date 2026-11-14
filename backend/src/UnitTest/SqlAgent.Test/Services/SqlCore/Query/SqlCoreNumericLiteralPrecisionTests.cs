@@ -19,20 +19,20 @@ public sealed class SqlCoreNumericLiteralPrecisionTests
     public static IEnumerable<object[]> LossyNumericCases()
     {
         foreach (var provider in Enum.GetValues<SqlAgentToolType>())
-        foreach (var value in new[]
-        {
+            foreach (var value in new[]
+            {
             "1e-29",                                // Smaller than Decimal's minimum step.
             "1e-1000",                              // Long-exponent nonzero underflow.
             "0.00000000000000000000000000001",      // Fractional underflow.
             "1.00000000000000000000000000001",      // Silently rounded mantissa.
             "0.12345678901234567890123456789"      // Over-precision fractional literal.
         })
-        {
-            // PostgreSQL exact NUMERIC is independently proven by the new
-            // AST/parameter-bound tests; other sources still fail closed.
-            if (provider != SqlAgentToolType.Postgres)
-                yield return [provider, value];
-        }
+            {
+                // PostgreSQL exact NUMERIC is independently proven by the new
+                // AST/parameter-bound tests; other sources still fail closed.
+                if (provider != SqlAgentToolType.Postgres)
+                    yield return [provider, value];
+            }
     }
 
     private static void AssertLosslessRejection(

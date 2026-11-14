@@ -637,7 +637,7 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         var token = TestContext.Current.CancellationToken;
         var connectionString = provider == SqlAgentToolType.Firebird
             ? new FirebirdSql.Data.FirebirdClient.FbConnectionStringBuilder(Fixture.ConnectionString)
-                { Pooling = false }.ConnectionString
+            { Pooling = false }.ConnectionString
             : Fixture.ConnectionString;
         var probe = "HSFENCE_" + Guid.NewGuid().ToString("N")[..12].ToUpperInvariant();
         var oracle = provider == SqlAgentToolType.Oracle;
@@ -810,7 +810,7 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         // only for this DDL-heavy integration test, never in production.
         var connectionString = provider == SqlAgentToolType.Firebird
             ? new FirebirdSql.Data.FirebirdClient.FbConnectionStringBuilder(Fixture.ConnectionString)
-                { Pooling = false }.ConnectionString
+            { Pooling = false }.ConnectionString
             : Fixture.ConnectionString;
         await using var connection = ProviderStrategy.CreateConnection(connectionString);
         await connection.OpenAsync(token);

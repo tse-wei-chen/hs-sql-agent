@@ -95,10 +95,10 @@ public sealed class SqlCorePairedReportGateTests
             else
             {
                 foreach (var provider in SqlCoreStageProfile.Providers)
-                foreach (var name in profile is "normalization" or "validation"
-                    ? SqlCoreStageProfile.Cases
-                    : new[] { "workload-a", "workload-b" })
-                    rows.Add(Row(provider, name));
+                    foreach (var name in profile is "normalization" or "validation"
+                        ? SqlCoreStageProfile.Cases
+                        : new[] { "workload-a", "workload-b" })
+                        rows.Add(Row(provider, name));
             }
             var report = new JsonObject { ["results"] = rows };
             for (var i = 1; i <= 3; i++)
@@ -120,22 +120,22 @@ public sealed class SqlCorePairedReportGateTests
                 case "missing-stage":
                     ((JsonArray)first["Stages"]!).RemoveAt(0); break;
                 case "metric-invalid":
-                {
-                    var deep = rows.Select(node => node!.AsObject())
-                        .First(row => row["Case"]!.GetValue<string>() == "query-derived-32");
-                    var validation = ((JsonArray)deep["Stages"]!).Select(node => node!.AsObject())
-                        .First(stage => stage["Name"]!.GetValue<string>() == "Validation");
-                    validation["MedianAllocatedBytes"] = -1;
-                    break;
-                }
+                    {
+                        var deep = rows.Select(node => node!.AsObject())
+                            .First(row => row["Case"]!.GetValue<string>() == "query-derived-32");
+                        var validation = ((JsonArray)deep["Stages"]!).Select(node => node!.AsObject())
+                            .First(stage => stage["Name"]!.GetValue<string>() == "Validation");
+                        validation["MedianAllocatedBytes"] = -1;
+                        break;
+                    }
                 case "zero-baseline":
-                {
-                    var b = JsonNode.Parse(File.ReadAllText(ReportPath("base", 1)))!.AsObject();
-                    ((JsonObject)((JsonArray)b["results"]!)[0]!)["MeanAllocatedBytes"] = 0;
-                    for (var i = 1; i <= 3; i++)
-                        File.WriteAllText(ReportPath("base", i), b.ToJsonString());
-                    return;
-                }
+                    {
+                        var b = JsonNode.Parse(File.ReadAllText(ReportPath("base", 1)))!.AsObject();
+                        ((JsonObject)((JsonArray)b["results"]!)[0]!)["MeanAllocatedBytes"] = 0;
+                        for (var i = 1; i <= 3; i++)
+                            File.WriteAllText(ReportPath("base", i), b.ToJsonString());
+                        return;
+                    }
                 default: throw new ArgumentOutOfRangeException(nameof(mutation));
             }
             for (var i = 1; i <= 3; i++)
@@ -146,8 +146,10 @@ public sealed class SqlCorePairedReportGateTests
         {
             var row = new JsonObject
             {
-                ["Case"] = name, ["OutputDigest"] = new string('A', 64),
-                ["MeanAllocatedBytes"] = 10000, ["MeanMicroseconds"] = 100,
+                ["Case"] = name,
+                ["OutputDigest"] = new string('A', 64),
+                ["MeanAllocatedBytes"] = 10000,
+                ["MeanMicroseconds"] = 100,
             };
             if (_profile != "catalog-lookup") row["Provider"] = provider;
             if (_profile is "normalization" or "validation")
@@ -156,7 +158,8 @@ public sealed class SqlCorePairedReportGateTests
                 foreach (var stage in SqlCoreStageProfile.RequiredStages)
                     stages.Add(new JsonObject
                     {
-                        ["Name"] = stage, ["MedianAllocatedBytes"] = 1000,
+                        ["Name"] = stage,
+                        ["MedianAllocatedBytes"] = 1000,
                         ["MedianMicroseconds"] = 100,
                     });
                 row["Stages"] = stages;

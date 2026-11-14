@@ -511,7 +511,7 @@ public sealed class DmlPostgresInsertSelectApprovalTests
             maxAffectedRows: 2, cancellationToken: TestContext.Current.CancellationToken);
     }
 
-    private static async Task WithTablesAsync(Func<string,string,string,Task> test)
+    private static async Task WithTablesAsync(Func<string, string, string, Task> test)
     {
         var connectionString = Environment.GetEnvironmentVariable("TEST_POSTGRES_CONNECTION");
         if (string.IsNullOrWhiteSpace(connectionString))

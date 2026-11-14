@@ -17,9 +17,9 @@ public sealed class CoreScopedSchemaContinuationTests
     public static IEnumerable<object[]> DeepCases()
     {
         foreach (var provider in Enum.GetValues<SqlAgentToolType>())
-        foreach (var shape in new[] { "function-query", "function-chain", "outer-join", "multi-cte" })
-        foreach (var depth in new[] { 128, 512, 2048 })
-            yield return new object[] { provider, shape, depth };
+            foreach (var shape in new[] { "function-query", "function-chain", "outer-join", "multi-cte" })
+                foreach (var depth in new[] { 128, 512, 2048 })
+                    yield return new object[] { provider, shape, depth };
         foreach (var depth in new[] { 128, 512, 2048 })
             yield return new object[] { SqlAgentToolType.Postgres, "lateral-nested-prefix", depth };
     }
@@ -27,16 +27,16 @@ public sealed class CoreScopedSchemaContinuationTests
     public static IEnumerable<object[]> NegativeCases()
     {
         foreach (var provider in Enum.GetValues<SqlAgentToolType>())
-        foreach (var shape in new[] { "function-query", "function-chain", "outer-join", "multi-cte" })
-        foreach (var typed in new[] { false, true })
-            yield return new object[] { provider, shape, typed };
+            foreach (var shape in new[] { "function-query", "function-chain", "outer-join", "multi-cte" })
+                foreach (var typed in new[] { false, true })
+                    yield return new object[] { provider, shape, typed };
     }
 
     public static IEnumerable<object[]> SharedScopeCases()
     {
         foreach (var provider in Enum.GetValues<SqlAgentToolType>())
-        foreach (var typed in new[] { false, true })
-            yield return new object[] { provider, typed };
+            foreach (var typed in new[] { false, true })
+                yield return new object[] { provider, typed };
     }
 
     private static string Query(string shape, int depth, string leaf = "id")
@@ -148,7 +148,8 @@ public sealed class CoreScopedSchemaContinuationTests
                 try { command = SqlCoreFacade.CompileQuery(sql, source, provider, context, new SqlExecutionPlanPolicy()); }
                 catch (Exception error) { failure = error; }
                 finally { allocated = GC.GetAllocatedBytesForCurrentThread() - before; }
-            }, 256 * 1024) { IsBackground = true };
+            }, 256 * 1024)
+            { IsBackground = true };
             worker.Start();
             Assert.True(worker.Join(TimeSpan.FromSeconds(30)), "General compiler worker timed out.");
             if (shape == "multi-cte" && provider is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird or SqlAgentToolType.MsSqlServer)
@@ -231,7 +232,8 @@ public sealed class CoreScopedSchemaContinuationTests
                 }
                 catch (Exception error) { failure = error; }
                 finally { allocated = GC.GetAllocatedBytesForCurrentThread() - before; }
-            }, 256 * 1024) { IsBackground = true };
+            }, 256 * 1024)
+            { IsBackground = true };
             worker.Start();
             Assert.True(worker.Join(TimeSpan.FromSeconds(30)), "Strict proof worker timed out.");
             Assert.True(failure is null, failure?.ToString());

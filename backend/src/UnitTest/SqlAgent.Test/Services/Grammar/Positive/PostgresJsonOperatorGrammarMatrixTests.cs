@@ -28,12 +28,12 @@ public sealed class PostgresJsonOperatorGrammarMatrixTests
     public static IEnumerable<object[]> PositiveMatrix()
     {
         foreach (var expression in PositiveExpressions)
-        foreach (var context in Contexts)
-            yield return
-            [
-                $"{expression.Replace(" ", "-", StringComparison.Ordinal)}__{context}",
+            foreach (var context in Contexts)
+                yield return
+                [
+                    $"{expression.Replace(" ", "-", StringComparison.Ordinal)}__{context}",
                 Query(context, expression)
-            ];
+                ];
     }
 
     public static IEnumerable<object[]> CrossTargetNegativeMatrix()
@@ -42,14 +42,14 @@ public sealed class PostgresJsonOperatorGrammarMatrixTests
             .Where(value => value != SqlAgentToolType.Postgres);
 
         foreach (var target in targets)
-        foreach (var expression in new[] { "payload->'user'", "payload->>'user'" })
-        foreach (var context in Contexts)
-            yield return
-            [
-                $"{target}__{expression}__{context}",
+            foreach (var expression in new[] { "payload->'user'", "payload->>'user'" })
+                foreach (var context in Contexts)
+                    yield return
+                    [
+                        $"{target}__{expression}__{context}",
                 target,
                 Query(context, expression)
-            ];
+                    ];
     }
 
     public static IEnumerable<object[]> WrongDialectMatrix()
@@ -63,24 +63,24 @@ public sealed class PostgresJsonOperatorGrammarMatrixTests
         };
 
         foreach (var source in sources)
-        foreach (var context in Contexts)
-            yield return
-            [
-                $"{source}__{context}",
+            foreach (var context in Contexts)
+                yield return
+                [
+                    $"{source}__{context}",
                 source,
                 Query(context, "payload->'user'")
-            ];
+                ];
     }
 
     public static IEnumerable<object[]> OldVersionMatrix()
     {
         foreach (var expression in new[] { "payload->'user'", "payload->>'user'" })
-        foreach (var context in Contexts)
-            yield return
-            [
-                $"{expression}__{context}",
+            foreach (var context in Contexts)
+                yield return
+                [
+                    $"{expression}__{context}",
                 Query(context, expression)
-            ];
+                ];
     }
 
     [Fact]

@@ -24,7 +24,7 @@ public sealed class SqlCoreMySqlAtomicDropFkAddIndexTests
         "CONSTRAINT fk_long FOREIGN KEY(p,q) REFERENCES parent(id,code));";
     private static readonly SqlProviderCapabilityProfile Linux = new(
         SqlAgentToolType.MySQL, null, default, null,
-        new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase)
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["LOWER_CASE_TABLE_NAMES"] = "0"
         });

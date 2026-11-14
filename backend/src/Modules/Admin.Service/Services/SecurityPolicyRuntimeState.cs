@@ -5,7 +5,11 @@ namespace Admin.Service.Services;
 
 public class SecurityPolicyRuntimeState : ISecurityPolicyRuntimeState
 {
+#if NET9_0_OR_GREATER
     private readonly Lock _sync = new();
+#else
+    private readonly object _sync = new();
+#endif
     private SecurityPolicyModel _current = new();
 
     public SecurityPolicyModel GetCurrent()

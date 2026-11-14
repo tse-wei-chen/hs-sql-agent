@@ -108,27 +108,27 @@ internal static class SqlServerMergeMatchedDeleteSafety
             case MergeMatchedActionKind.Update
                 when merge.SourceColumns.Length is >= 2 and <= 4
                   && merge.Matched.Assignments.Length == merge.SourceColumns.Length - 1:
-            {
-                var seen = new HashSet<string>(StringComparer.Ordinal);
-                foreach (var assignment in merge.Matched.Assignments)
                 {
-                    var column = RequireDirectField(assignment.Column);
-                    if (string.Equals(column, key, StringComparison.Ordinal)
-                        || !seen.Add(column))
+                    var seen = new HashSet<string>(StringComparer.Ordinal);
+                    foreach (var assignment in merge.Matched.Assignments)
+                    {
+                        var column = RequireDirectField(assignment.Column);
+                        if (string.Equals(column, key, StringComparison.Ordinal)
+                            || !seen.Add(column))
+                            throw new NotSupportedException(
+                                "MERGE cannot assign the physical key or repeat an update column.");
+                        var index = Array.FindIndex(sourceNames, 1, name =>
+                            string.Equals(name, column, StringComparison.Ordinal));
+                        if (index < 1 || !IsExactKey(assignment.Value, "s", column))
+                            throw new NotSupportedException(
+                                "MERGE UPDATE accepts only one direct s.<column> value per physically proven target column.");
+                        updated.Add(new UpdatedInt(column, sourceValues[index]));
+                    }
+                    if (seen.Count != merge.SourceColumns.Length - 1)
                         throw new NotSupportedException(
-                            "MERGE cannot assign the physical key or repeat an update column.");
-                    var index = Array.FindIndex(sourceNames, 1, name =>
-                        string.Equals(name, column, StringComparison.Ordinal));
-                    if (index < 1 || !IsExactKey(assignment.Value, "s", column))
-                        throw new NotSupportedException(
-                            "MERGE UPDATE accepts only one direct s.<column> value per physically proven target column.");
-                    updated.Add(new UpdatedInt(column, sourceValues[index]));
+                            "MERGE UPDATE requires every source payload column to be assigned exactly once.");
+                    break;
                 }
-                if (seen.Count != merge.SourceColumns.Length - 1)
-                    throw new NotSupportedException(
-                        "MERGE UPDATE requires every source payload column to be assigned exactly once.");
-                break;
-            }
             default:
                 throw new NotSupportedException(
                     "MERGE matched approval permits DELETE or bounded direct-column UPDATE only, never INSERT or mixed actions.");

@@ -288,9 +288,13 @@ public sealed class SqliteDdlRuntime(
 
     private string PolicyHash() => Digest(JsonSerializer.Serialize(new
     {
-        _options.Enabled, _options.AllowCreateTable, _options.AllowAddColumn,
-        _options.AllowCreateIndex, _options.PolicyRevision,
-        _options.ApprovalLifetime, _options.ExecutionTimeout
+        _options.Enabled,
+        _options.AllowCreateTable,
+        _options.AllowAddColumn,
+        _options.AllowCreateIndex,
+        _options.PolicyRevision,
+        _options.ApprovalLifetime,
+        _options.ExecutionTimeout
     }));
 
     private static string Digest(string value) =>
@@ -485,7 +489,12 @@ public sealed class SqliteDdlRuntime(
         }
         var fingerprint = Digest(JsonSerializer.Serialize(new
         {
-            identity, schemaVersion, table, tableDefinition, columns, indexes
+            identity,
+            schemaVersion,
+            table,
+            tableDefinition,
+            columns,
+            indexes
         }));
         return new SqliteDdlPhysicalSnapshot(identity, "main", schemaVersion,
             table, tableDefinition, columns.AsReadOnly(), indexes.AsReadOnly(), fingerprint);

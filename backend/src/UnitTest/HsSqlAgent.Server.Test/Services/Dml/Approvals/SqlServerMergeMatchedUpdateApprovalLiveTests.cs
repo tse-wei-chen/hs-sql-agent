@@ -272,7 +272,7 @@ public sealed class SqlServerMergeMatchedUpdateApprovalLiveTests
 
     private static async Task ExecuteWithRetriesAsync(string cs, string sql, CancellationToken ct)
     {
-        for (var attempt=0; ; attempt++)
+        for (var attempt = 0; ; attempt++)
         {
             try { await ExecuteAsync(cs, sql, ct); break; }
             catch (SqlException) when (attempt < 24 && !ct.IsCancellationRequested)

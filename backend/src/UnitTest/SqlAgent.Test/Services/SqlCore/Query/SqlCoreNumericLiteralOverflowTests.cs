@@ -18,19 +18,19 @@ public sealed class SqlCoreNumericLiteralOverflowTests
     public static IEnumerable<object[]> OverflowCases()
     {
         foreach (var provider in Enum.GetValues<SqlAgentToolType>())
-        foreach (var number in new[]
-        {
+            foreach (var number in new[]
+            {
             new string('9', 64),                      // Int64 and Decimal overflow
             "999999999999999999999999999999.0",       // decimal fraction overflow
             "1e1000"                                 // scientific notation overflow
         })
-        {
-            // PostgreSQL's closed ExactNumeric model handles bounded
-            // magnitudes beyond CLR Decimal; 1e1000 exceeds this first
-            // capability envelope and still fails with the same diagnostic.
-            if (provider != SqlAgentToolType.Postgres || number == "1e1000")
-                yield return [provider, number];
-        }
+            {
+                // PostgreSQL's closed ExactNumeric model handles bounded
+                // magnitudes beyond CLR Decimal; 1e1000 exceeds this first
+                // capability envelope and still fails with the same diagnostic.
+                if (provider != SqlAgentToolType.Postgres || number == "1e1000")
+                    yield return [provider, number];
+            }
     }
 
     private static void AssertOverflow(SqlParseException exception, string sql, string number)

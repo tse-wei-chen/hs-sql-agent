@@ -118,18 +118,26 @@ public sealed class SqlCoreComparatorProofTests
             System.IO.Directory.CreateDirectory(Directory);
             var rows = new JsonArray();
             foreach (var provider in SqlCoreStageProfile.Providers)
-            foreach (var name in SqlCoreStageProfile.Cases)
-                rows.Add(new JsonObject
-                {
-                    ["Provider"] = provider, ["Case"] = name, ["Iterations"] = 300,
-                    ["MeanMicroseconds"] = 100.0, ["P95Microseconds"] = 200.0,
-                    ["MeanAllocatedBytes"] = 10000.0, ["OutputDigest"] = new string('A', 64),
-                });
+                foreach (var name in SqlCoreStageProfile.Cases)
+                    rows.Add(new JsonObject
+                    {
+                        ["Provider"] = provider,
+                        ["Case"] = name,
+                        ["Iterations"] = 300,
+                        ["MeanMicroseconds"] = 100.0,
+                        ["P95Microseconds"] = 200.0,
+                        ["MeanAllocatedBytes"] = 10000.0,
+                        ["OutputDigest"] = new string('A', 64),
+                    });
             var baseline = new JsonObject
             {
-                ["schemaVersion"] = 2, ["iterations"] = 300, ["warmup"] = 100,
-                ["framework"] = "test-runtime", ["os"] = "test-os",
-                ["processArchitecture"] = "X64", ["results"] = rows,
+                ["schemaVersion"] = 2,
+                ["iterations"] = 300,
+                ["warmup"] = 100,
+                ["framework"] = "test-runtime",
+                ["os"] = "test-os",
+                ["processArchitecture"] = "X64",
+                ["results"] = rows,
             };
             var candidate = (JsonObject)baseline.DeepClone();
             var candidateRows = (JsonArray)candidate["results"]!;

@@ -191,186 +191,186 @@ public sealed class DmlCoordinator(
         ExceptionDispatchInfo? primaryFailure = null;
         try
         {
-        await using var connection = _connectionFactory.Create(connectionString);
-        await connection.OpenAsync(cancellationToken);
-        RuntimeServerProfileVerifier.EnsureMatches(connection, expectedServerVersionIdentity);
-        if (requireExecutionFence)
-        {
-            // An opt-in target fence must prove its actual schema, unique
-            // keys, witness and transactional rollback on the same physical
-            // DML identity before starting the approved mutation. A manually
-            // run, possibly stale deployment probe is not sufficient.
-            if (_targetExecutionFence is not RelationalDmlTargetExecutionFence
-                || _targetCommitWitness is not RelationalDmlTargetCommitWitness)
-                throw new InvalidOperationException(
-                    "Production target-fenced DML requires the built-in verified relational " +
-                    "fence and witness implementations; custom components need a separate " +
-                    "audited readiness capability.");
-
-            await new DmlTargetFenceReadinessProbe().VerifyAsync(
-                connection, plan.MutationCommand.TargetProvider, cancellationToken);
-        }
-
-        // The native SQLite provider starts a SERIALIZABLE transaction with
-        // BEGIN IMMEDIATE (not a deferred read snapshot). This acquires the
-        // writer reservation before the source-row recheck. Verify that
-        // provider behavior in a real SQLite concurrency test; SqlAgent.Service
-        // must remain driver-free.
-        var commitIsolation = plan.ApprovalMode is DmlApprovalMode.InsertSelect or DmlApprovalMode.SqlServerMergeMatchedDelete or DmlApprovalMode.SqlServerMergeMatchedUpdate or DmlApprovalMode.SqlServerMergeNotMatchedInsert
-            ? IsolationLevel.Serializable
-            : _transactionIsolationPolicy.CommitIsolation(plan.MutationCommand.TargetProvider);
-        await using var transaction = await connection.BeginTransactionAsync(
-            commitIsolation, cancellationToken);
-
-        try
-        {
-            // Catalog verification must finish before durable admission.
-            // Oracle may invalidate an earlier uncommitted target admission
-            // while reading dictionary metadata. Revocation still races the
-            // INSERT below, before any business DML is permitted.
-            await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
-                connection, transaction, plan.MutationCommand, plan.SchemaSnapshot,
-                _schemaFreshnessVerifier, cancellationToken);
-
-            // An approval-time unique index is not a transaction-held proof.
-            // Acquire SQL Server table locks and re-attest on THIS write
-            // connection before even reading the approved row set.
-            EnsureLiveSqlServerCteKeyCurrent(
-                plan, connection, transaction, cancellationToken);
-
+            await using var connection = _connectionFactory.Create(connectionString);
+            await connection.OpenAsync(cancellationToken);
+            RuntimeServerProfileVerifier.EnsureMatches(connection, expectedServerVersionIdentity);
             if (requireExecutionFence)
             {
-                await _targetExecutionFence!.AdmitAsync(connection, transaction,
-                    plan.MutationCommand.TargetProvider, witnessEvidence!, cancellationToken);
-                await RelationalDmlTargetExecutionFence.EnsureAdmittedInTransactionAsync(
-                    connection, transaction, plan.MutationCommand.TargetProvider,
-                    witnessEvidence!, cancellationToken);
+                // An opt-in target fence must prove its actual schema, unique
+                // keys, witness and transactional rollback on the same physical
+                // DML identity before starting the approved mutation. A manually
+                // run, possibly stale deployment probe is not sufficient.
+                if (_targetExecutionFence is not RelationalDmlTargetExecutionFence
+                    || _targetCommitWitness is not RelationalDmlTargetCommitWitness)
+                    throw new InvalidOperationException(
+                        "Production target-fenced DML requires the built-in verified relational " +
+                        "fence and witness implementations; custom components need a separate " +
+                        "audited readiness capability.");
+
+                await new DmlTargetFenceReadinessProbe().VerifyAsync(
+                    connection, plan.MutationCommand.TargetProvider, cancellationToken);
             }
 
-            if (plan.ApprovalMode == DmlApprovalMode.InsertValues)
-            {
-                var insertResult = await CommitInsertValuesAsync(
-                    connection,
-                    transaction,
-                    plan,
-                    approvedChallenge,
-                    cancellationToken,
-                    witnessEvidence,
-                    requireExecutionFence);
-                if (insertResult.Committed)
-                    acknowledgedCommit = insertResult;
-                return insertResult;
-            }
+            // The native SQLite provider starts a SERIALIZABLE transaction with
+            // BEGIN IMMEDIATE (not a deferred read snapshot). This acquires the
+            // writer reservation before the source-row recheck. Verify that
+            // provider behavior in a real SQLite concurrency test; SqlAgent.Service
+            // must remain driver-free.
+            var commitIsolation = plan.ApprovalMode is DmlApprovalMode.InsertSelect or DmlApprovalMode.SqlServerMergeMatchedDelete or DmlApprovalMode.SqlServerMergeMatchedUpdate or DmlApprovalMode.SqlServerMergeNotMatchedInsert
+                ? IsolationLevel.Serializable
+                : _transactionIsolationPolicy.CommitIsolation(plan.MutationCommand.TargetProvider);
+            await using var transaction = await connection.BeginTransactionAsync(
+                commitIsolation, cancellationToken);
 
-            var matchCommand = RequireMatchCommand(plan);
-            var currentRows = await QueryRowsAsync(
-                connection,
-                transaction,
-                matchCommand,
-                cancellationToken);
-
-            if (plan.MaxAffectedRows > 0 && currentRows.Count > plan.MaxAffectedRows)
-            {
-                await DmlTransactionFailureRecovery.RollbackForRefusalAsync(transaction);
-                return new DmlCommitResult(
-                    false,
-                    0,
-                    $"DML execution cancelled: current affected row count {currentRows.Count} exceeds maximum {plan.MaxAffectedRows}.");
-            }
-
-            var currentFingerprint = ComputeRowSetFingerprint(plan, currentRows);
-
-            if (plan.ApprovalMode is DmlApprovalMode.InsertConflictDoNothing or DmlApprovalMode.InsertConflictDoUpdate or DmlApprovalMode.SqlServerMergeNotMatchedInsert
-                && currentRows.Count > 1)
-            {
-                await DmlTransactionFailureRecovery.RollbackForRefusalAsync(transaction);
-                return new DmlCommitResult(false, 0,
-                    "Native conflict skip cancelled: target key is no longer uniquely identifiable.");
-            }
-            var currentAffectedRows = plan.ApprovalMode switch
-            {
-                DmlApprovalMode.InsertConflictDoNothing => 1 - currentRows.Count,
-                DmlApprovalMode.SqlServerMergeNotMatchedInsert => 1 - currentRows.Count,
-                DmlApprovalMode.InsertConflictDoUpdate => 1,
-                _ => currentRows.Count
-            };
-            if (currentAffectedRows != approvedChallenge.AffectedRows
-                || !string.Equals(
-                    currentFingerprint,
-                    approvedChallenge.RowSetFingerprint,
-                    StringComparison.Ordinal))
-            {
-                await DmlTransactionFailureRecovery.RollbackForRefusalAsync(transaction);
-                return new DmlCommitResult(
-                    false,
-                    0,
-                    plan.ApprovalMode == DmlApprovalMode.InsertSelect
-                        ? "INSERT SELECT execution cancelled: the source row values or count changed after approval."
-                        : plan.ApprovalMode == DmlApprovalMode.InsertConflictDoNothing
-                            ? "Native DO NOTHING cancelled: the target UNIQUE key conflict changed after approval."
-                            : plan.ApprovalMode == DmlApprovalMode.InsertConflictDoUpdate
-                                ? "PostgreSQL conflict UPDATE cancelled: the target row or conflict state changed after approval."
-                                : plan.ApprovalMode == DmlApprovalMode.SqlServerMergeNotMatchedInsert
-                                    ? "SQL Server MERGE INSERT cancelled: the approved physical target key absence/presence changed."
-                                    : "DML execution cancelled: the matched row set changed after approval.");
-            }
-
-            var execution = await ExecuteMutationAsync(
-                connection,
-                transaction,
-                plan.MutationCommand,
-                cancellationToken);
-
-            if (execution.AffectedRows != approvedChallenge.AffectedRows)
-            {
-                await DmlTransactionFailureRecovery.RollbackForRefusalAsync(transaction);
-                return new DmlCommitResult(
-                    false,
-                    0,
-                    $"DML execution cancelled: affected row count changed after revalidation " +
-                    $"(approved={approvedChallenge.AffectedRows}, executed={execution.AffectedRows}).");
-            }
-
-            await WriteWitnessAsync(connection, transaction, plan.MutationCommand.TargetProvider,
-                witnessEvidence, cancellationToken);
-            await DmlTransactionFailureRecovery.CommitAsync(transaction, cancellationToken);
-            if (requireExecutionFence)
-                await DmlTargetCommitEvidenceVerifier.EnsureConfirmedAsync(
-                    connection, plan.MutationCommand.TargetProvider, witnessEvidence!,
-                    _targetExecutionFence!, _targetCommitWitness!, cancellationToken);
-            acknowledgedCommit = new DmlCommitResult(
-                true,
-                execution.AffectedRows,
-                "DML operation committed after approval and row-set revalidation.")
-            {
-                ReturnedRows = execution.ReturnedRows
-            };
-            return acknowledgedCommit;
-        }
-        catch (DmlRollbackOutcomeUnknownException unconfirmedRollback)
-        {
-            // An explicit refusal already attempted bounded cleanup. NEVER
-            // issue a second blind ROLLBACK after the native ACK was lost.
-            // Preserve its typed non-replayable uncertainty across disposal.
-            primaryFailure = ExceptionDispatchInfo.Capture(unconfirmedRollback);
-            throw;
-        }
-        catch (Exception failure)
-        {
-            await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(transaction, failure);
             try
             {
-                DmlTransactionFailureRecovery.ThrowIfRollbackUnconfirmed(failure);
+                // Catalog verification must finish before durable admission.
+                // Oracle may invalidate an earlier uncommitted target admission
+                // while reading dictionary metadata. Revocation still races the
+                // INSERT below, before any business DML is permitted.
+                await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
+                    connection, transaction, plan.MutationCommand, plan.SchemaSnapshot,
+                    _schemaFreshnessVerifier, cancellationToken);
+
+                // An approval-time unique index is not a transaction-held proof.
+                // Acquire SQL Server table locks and re-attest on THIS write
+                // connection before even reading the approved row set.
+                EnsureLiveSqlServerCteKeyCurrent(
+                    plan, connection, transaction, cancellationToken);
+
+                if (requireExecutionFence)
+                {
+                    await _targetExecutionFence!.AdmitAsync(connection, transaction,
+                        plan.MutationCommand.TargetProvider, witnessEvidence!, cancellationToken);
+                    await RelationalDmlTargetExecutionFence.EnsureAdmittedInTransactionAsync(
+                        connection, transaction, plan.MutationCommand.TargetProvider,
+                        witnessEvidence!, cancellationToken);
+                }
+
+                if (plan.ApprovalMode == DmlApprovalMode.InsertValues)
+                {
+                    var insertResult = await CommitInsertValuesAsync(
+                        connection,
+                        transaction,
+                        plan,
+                        approvedChallenge,
+                        cancellationToken,
+                        witnessEvidence,
+                        requireExecutionFence);
+                    if (insertResult.Committed)
+                        acknowledgedCommit = insertResult;
+                    return insertResult;
+                }
+
+                var matchCommand = RequireMatchCommand(plan);
+                var currentRows = await QueryRowsAsync(
+                    connection,
+                    transaction,
+                    matchCommand,
+                    cancellationToken);
+
+                if (plan.MaxAffectedRows > 0 && currentRows.Count > plan.MaxAffectedRows)
+                {
+                    await DmlTransactionFailureRecovery.RollbackForRefusalAsync(transaction);
+                    return new DmlCommitResult(
+                        false,
+                        0,
+                        $"DML execution cancelled: current affected row count {currentRows.Count} exceeds maximum {plan.MaxAffectedRows}.");
+                }
+
+                var currentFingerprint = ComputeRowSetFingerprint(plan, currentRows);
+
+                if (plan.ApprovalMode is DmlApprovalMode.InsertConflictDoNothing or DmlApprovalMode.InsertConflictDoUpdate or DmlApprovalMode.SqlServerMergeNotMatchedInsert
+                    && currentRows.Count > 1)
+                {
+                    await DmlTransactionFailureRecovery.RollbackForRefusalAsync(transaction);
+                    return new DmlCommitResult(false, 0,
+                        "Native conflict skip cancelled: target key is no longer uniquely identifiable.");
+                }
+                var currentAffectedRows = plan.ApprovalMode switch
+                {
+                    DmlApprovalMode.InsertConflictDoNothing => 1 - currentRows.Count,
+                    DmlApprovalMode.SqlServerMergeNotMatchedInsert => 1 - currentRows.Count,
+                    DmlApprovalMode.InsertConflictDoUpdate => 1,
+                    _ => currentRows.Count
+                };
+                if (currentAffectedRows != approvedChallenge.AffectedRows
+                    || !string.Equals(
+                        currentFingerprint,
+                        approvedChallenge.RowSetFingerprint,
+                        StringComparison.Ordinal))
+                {
+                    await DmlTransactionFailureRecovery.RollbackForRefusalAsync(transaction);
+                    return new DmlCommitResult(
+                        false,
+                        0,
+                        plan.ApprovalMode == DmlApprovalMode.InsertSelect
+                            ? "INSERT SELECT execution cancelled: the source row values or count changed after approval."
+                            : plan.ApprovalMode == DmlApprovalMode.InsertConflictDoNothing
+                                ? "Native DO NOTHING cancelled: the target UNIQUE key conflict changed after approval."
+                                : plan.ApprovalMode == DmlApprovalMode.InsertConflictDoUpdate
+                                    ? "PostgreSQL conflict UPDATE cancelled: the target row or conflict state changed after approval."
+                                    : plan.ApprovalMode == DmlApprovalMode.SqlServerMergeNotMatchedInsert
+                                        ? "SQL Server MERGE INSERT cancelled: the approved physical target key absence/presence changed."
+                                        : "DML execution cancelled: the matched row set changed after approval.");
+                }
+
+                var execution = await ExecuteMutationAsync(
+                    connection,
+                    transaction,
+                    plan.MutationCommand,
+                    cancellationToken);
+
+                if (execution.AffectedRows != approvedChallenge.AffectedRows)
+                {
+                    await DmlTransactionFailureRecovery.RollbackForRefusalAsync(transaction);
+                    return new DmlCommitResult(
+                        false,
+                        0,
+                        $"DML execution cancelled: affected row count changed after revalidation " +
+                        $"(approved={approvedChallenge.AffectedRows}, executed={execution.AffectedRows}).");
+                }
+
+                await WriteWitnessAsync(connection, transaction, plan.MutationCommand.TargetProvider,
+                    witnessEvidence, cancellationToken);
+                await DmlTransactionFailureRecovery.CommitAsync(transaction, cancellationToken);
+                if (requireExecutionFence)
+                    await DmlTargetCommitEvidenceVerifier.EnsureConfirmedAsync(
+                        connection, plan.MutationCommand.TargetProvider, witnessEvidence!,
+                        _targetExecutionFence!, _targetCommitWitness!, cancellationToken);
+                acknowledgedCommit = new DmlCommitResult(
+                    true,
+                    execution.AffectedRows,
+                    "DML operation committed after approval and row-set revalidation.")
+                {
+                    ReturnedRows = execution.ReturnedRows
+                };
+                return acknowledgedCommit;
             }
             catch (DmlRollbackOutcomeUnknownException unconfirmedRollback)
             {
+                // An explicit refusal already attempted bounded cleanup. NEVER
+                // issue a second blind ROLLBACK after the native ACK was lost.
+                // Preserve its typed non-replayable uncertainty across disposal.
                 primaryFailure = ExceptionDispatchInfo.Capture(unconfirmedRollback);
                 throw;
             }
+            catch (Exception failure)
+            {
+                await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(transaction, failure);
+                try
+                {
+                    DmlTransactionFailureRecovery.ThrowIfRollbackUnconfirmed(failure);
+                }
+                catch (DmlRollbackOutcomeUnknownException unconfirmedRollback)
+                {
+                    primaryFailure = ExceptionDispatchInfo.Capture(unconfirmedRollback);
+                    throw;
+                }
 
-            primaryFailure = ExceptionDispatchInfo.Capture(failure);
-            throw;
-        }
+                primaryFailure = ExceptionDispatchInfo.Capture(failure);
+                throw;
+            }
         }
         catch (Exception) when (acknowledgedCommit is not null)
         {
@@ -633,12 +633,12 @@ public sealed class DmlCoordinator(
         var expectedKind = plan.ApprovalMode is DmlApprovalMode.SqlServerMergeMatchedDelete or DmlApprovalMode.SqlServerMergeMatchedUpdate or DmlApprovalMode.SqlServerMergeNotMatchedInsert
             ? SqlStatementKind.Merge
             : plan.Operation switch
-        {
-            HsSqlAgent.SqlCore.Enums.DmlOperation.Insert => SqlStatementKind.Insert,
-            HsSqlAgent.SqlCore.Enums.DmlOperation.Update => SqlStatementKind.Update,
-            HsSqlAgent.SqlCore.Enums.DmlOperation.Delete => SqlStatementKind.Delete,
-            _ => throw new InvalidOperationException($"Unsupported DML operation {plan.Operation}.")
-        };
+            {
+                HsSqlAgent.SqlCore.Enums.DmlOperation.Insert => SqlStatementKind.Insert,
+                HsSqlAgent.SqlCore.Enums.DmlOperation.Update => SqlStatementKind.Update,
+                HsSqlAgent.SqlCore.Enums.DmlOperation.Delete => SqlStatementKind.Delete,
+                _ => throw new InvalidOperationException($"Unsupported DML operation {plan.Operation}.")
+            };
         if (plan.MutationCommand.Kind != expectedKind)
             throw new InvalidOperationException("DML operation does not match its compiled mutation command kind.");
 
@@ -718,8 +718,11 @@ public sealed class DmlCoordinator(
                     || plan.MaxAffectedRows != 1
                     || plan.InsertRows.Length != 1
                     || plan.RowIdentityColumns.Length != 1
-                    || plan.MatchQueryCommand is not { Kind: SqlStatementKind.Select,
-                        TargetProvider: SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres } pkMatch
+                    || plan.MatchQueryCommand is not
+                    {
+                        Kind: SqlStatementKind.Select,
+                        TargetProvider: SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres
+                    } pkMatch
                     || pkMatch.TargetProvider != plan.MutationCommand.TargetProvider
                     || plan.SchemaSnapshot is null
                     || plan.SchemaSnapshot.Provider != plan.MutationCommand.TargetProvider
@@ -758,8 +761,11 @@ public sealed class DmlCoordinator(
                     || plan.MaxAffectedRows != 1
                     || plan.InsertRows.Length != 1
                     || plan.RowIdentityColumns.Length is < 2 or > 5
-                    || plan.MatchQueryCommand is not { Kind: SqlStatementKind.Select,
-                        TargetProvider: SqlAgentToolType.Postgres } updateMatch
+                    || plan.MatchQueryCommand is not
+                    {
+                        Kind: SqlStatementKind.Select,
+                        TargetProvider: SqlAgentToolType.Postgres
+                    } updateMatch
                     || plan.SchemaSnapshot is null
                     || plan.SchemaSnapshot.Provider != SqlAgentToolType.Postgres
                     || plan.SchemaSnapshot.Tables.Count != 1
@@ -812,8 +818,11 @@ public sealed class DmlCoordinator(
                     || plan.MutationCommand.TargetProvider is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer)
                     || plan.RowIdentityAssurance != DmlRowIdentityAssurance.Strict
                     || plan.MaxAffectedRows <= 0 || plan.MaxAffectedRows == int.MaxValue
-                    || plan.MatchQueryCommand is not { Kind: SqlStatementKind.Select,
-                        TargetProvider: SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer } match
+                    || plan.MatchQueryCommand is not
+                    {
+                        Kind: SqlStatementKind.Select,
+                        TargetProvider: SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer
+                    } match
                     || match.TargetProvider != plan.MutationCommand.TargetProvider
                     || plan.SchemaSnapshot is null
                     || plan.SchemaSnapshot.Provider != plan.MutationCommand.TargetProvider
@@ -900,8 +909,11 @@ public sealed class DmlCoordinator(
             || plan.NativeConflictDoUpdateProof is not null
             || plan.SqlServerMergeMatchedDeleteProof is not null
             || plan.SqlServerMergeMatchedUpdateProof is not null
-            || plan.MatchQueryCommand is not { Kind: SqlStatementKind.Select,
-                TargetProvider: SqlAgentToolType.MsSqlServer } match
+            || plan.MatchQueryCommand is not
+            {
+                Kind: SqlStatementKind.Select,
+                TargetProvider: SqlAgentToolType.MsSqlServer
+            } match
             || plan.SchemaSnapshot is null
             || plan.SchemaSnapshot.Provider != SqlAgentToolType.MsSqlServer
             || plan.SchemaSnapshot.Tables.Count != 1
@@ -965,8 +977,11 @@ public sealed class DmlCoordinator(
             || (updateMode
                 ? deletion is not null || update is null
                 : update is not null || deletion is null)
-            || plan.MatchQueryCommand is not { Kind: SqlStatementKind.Select,
-                TargetProvider: SqlAgentToolType.MsSqlServer } pkMatch
+            || plan.MatchQueryCommand is not
+            {
+                Kind: SqlStatementKind.Select,
+                TargetProvider: SqlAgentToolType.MsSqlServer
+            } pkMatch
             || plan.SchemaSnapshot is null
             || plan.SchemaSnapshot.Provider != SqlAgentToolType.MsSqlServer
             || plan.SchemaSnapshot.Tables.Count != 1

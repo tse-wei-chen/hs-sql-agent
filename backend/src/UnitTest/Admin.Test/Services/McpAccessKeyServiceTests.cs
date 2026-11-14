@@ -344,9 +344,12 @@ public class McpAccessKeyServiceTests
     {
         var key = new McpAccessKey
         {
-            Id = 3, Name = "limited", KeyPrefix = "12345678",
+            Id = 3,
+            Name = "limited",
+            KeyPrefix = "12345678",
             KeyHash = GenerateTestHash("12345678-secret"),
-            IsActive = true, AllowedTools = "get_tables"
+            IsActive = true,
+            AllowedTools = "get_tables"
         };
         _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey> { key });
 
@@ -364,8 +367,11 @@ public class McpAccessKeyServiceTests
     {
         var key = new McpAccessKey
         {
-            Id = 7, Name = "legacy", KeyPrefix = "12345678",
-            KeyHash = GenerateTestHash("12345678-secret"), IsActive = true,
+            Id = 7,
+            Name = "legacy",
+            KeyPrefix = "12345678",
+            KeyHash = GenerateTestHash("12345678-secret"),
+            IsActive = true,
             AllowedTools = null
         };
         _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey> { key });
@@ -383,8 +389,11 @@ public class McpAccessKeyServiceTests
     {
         var key = new McpAccessKey
         {
-            Id = 7, Name = "legacy", KeyPrefix = "12345678",
-            KeyHash = GenerateTestHash("12345678-secret"), IsActive = true,
+            Id = 7,
+            Name = "legacy",
+            KeyPrefix = "12345678",
+            KeyHash = GenerateTestHash("12345678-secret"),
+            IsActive = true,
             AllowedTools = null
         };
         _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey> { key });
@@ -404,8 +413,11 @@ public class McpAccessKeyServiceTests
     {
         var key = new McpAccessKey
         {
-            Id = 1, Name = "old", KeyPrefix = "12345678",
-            KeyHash = GenerateTestHash("12345678-secret"), IsActive = true
+            Id = 1,
+            Name = "old",
+            KeyPrefix = "12345678",
+            KeyHash = GenerateTestHash("12345678-secret"),
+            IsActive = true
         };
         _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey> { key });
 
@@ -453,9 +465,13 @@ public class McpAccessKeyServiceTests
     {
         var key = new McpAccessKey
         {
-            Id = 1, Name = "production", KeyPrefix = "12345678",
-            KeyHash = GenerateTestHash("12345678-secret"), IsActive = true,
-            AllowedTools = "get_tables", DbManagementId = 5
+            Id = 1,
+            Name = "production",
+            KeyPrefix = "12345678",
+            KeyHash = GenerateTestHash("12345678-secret"),
+            IsActive = true,
+            AllowedTools = "get_tables",
+            DbManagementId = 5
         };
         var keys = new List<McpAccessKey> { key };
         _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(keys);
@@ -501,8 +517,11 @@ public class McpAccessKeyServiceTests
     {
         var key = new McpAccessKey
         {
-            Id = 1, Name = "production", KeyPrefix = "12345678",
-            KeyHash = GenerateTestHash("12345678-secret"), IsActive = true
+            Id = 1,
+            Name = "production",
+            KeyPrefix = "12345678",
+            KeyHash = GenerateTestHash("12345678-secret"),
+            IsActive = true
         };
         _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey> { key });
         var before = DateTime.UtcNow.AddMinutes(14);
@@ -541,10 +560,15 @@ public class McpAccessKeyServiceTests
     {
         var source = new McpAccessKey
         {
-            Id = 1, Name = "source", KeyPrefix = "12345678",
-            KeyHash = GenerateTestHash("12345678-secret"), IsActive = false,
-            AllowedTools = "get_tables", CorsAllowedOrigins = "https://app.example.com",
-            DbManagementId = 5, TableWhitelist = "public.users",
+            Id = 1,
+            Name = "source",
+            KeyPrefix = "12345678",
+            KeyHash = GenerateTestHash("12345678-secret"),
+            IsActive = false,
+            AllowedTools = "get_tables",
+            CorsAllowedOrigins = "https://app.example.com",
+            DbManagementId = 5,
+            TableWhitelist = "public.users",
             RateLimitMode = McpKeyRateLimitMode.Unlimited
         };
         _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey> { source });

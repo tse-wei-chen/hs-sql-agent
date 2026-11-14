@@ -1,4 +1,5 @@
 namespace Common.Services;
+
 public sealed class SecretProtectionSettings
 {
     public SecretKeyRing DatabasePasswords { get; set; } = new();

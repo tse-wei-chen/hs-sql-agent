@@ -41,7 +41,7 @@ public sealed class SqlCoreDeclaredSchemaResolutionTests
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
         Assert.Equal(SqlCatalogBindingStatus.Verified, result.Statements[4].CatalogBinding);
         var table = Assert.Single(result.FinalCatalog.Tables);
-        Assert.Equal(new[] {"app", "users"}, table.QualifiedName.Parts);
+        Assert.Equal(new[] { "app", "users" }, table.QualifiedName.Parts);
         Assert.Equal(3, table.Columns.Count);
         Assert.Equal(2, result.Statements[3].CatalogBefore.Tables[0].Columns.Count);
     }
@@ -78,7 +78,7 @@ public sealed class SqlCoreDeclaredSchemaResolutionTests
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[1].Status);
         var child = result.Statements[1].CatalogAfter.Tables.Single(t => t.Name == "app.child");
         var fk = Assert.Single(child.Constraints);
-        Assert.Equal(new [] { "app", "parent" }, fk.ReferencedIdentity.Parts);
+        Assert.Equal(new[] { "app", "parent" }, fk.ReferencedIdentity.Parts);
         Assert.Equal(SqlStatementAnalysisStatus.Invalid, result.Statements[2].Status);
         Assert.Empty(result.Statements[2].Changes);
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);

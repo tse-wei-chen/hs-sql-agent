@@ -33,10 +33,10 @@ public sealed class TemporalDateMathGrammarMatrixTests
     public static IEnumerable<object[]> DateAddCases()
     {
         foreach (var target in Targets)
-        foreach (var unit in Units)
-        foreach (var context in Contexts)
-            if (SupportsDateAdd(target, unit))
-                yield return [target, unit, context];
+            foreach (var unit in Units)
+                foreach (var context in Contexts)
+                    if (SupportsDateAdd(target, unit))
+                        yield return [target, unit, context];
     }
 
     private static bool SupportsDateAdd(SqlAgentToolType target, string unit) =>

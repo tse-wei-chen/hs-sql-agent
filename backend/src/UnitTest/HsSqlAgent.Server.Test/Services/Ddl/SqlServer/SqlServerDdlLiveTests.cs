@@ -107,7 +107,8 @@ public sealed class SqlCoreSqlServerDdlHostLiveTests
         {
             var target = new SqlConnectionStringBuilder(cs)
             {
-                InitialCatalog = database, Pooling = false
+                InitialCatalog = database,
+                Pooling = false
             }.ConnectionString;
             var actor = new DdlActorContext("mcp-key:1", "db-management:2", database);
             var provider = Provider();

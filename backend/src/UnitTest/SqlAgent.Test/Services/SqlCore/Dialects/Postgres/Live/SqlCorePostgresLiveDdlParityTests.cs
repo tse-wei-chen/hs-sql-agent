@@ -799,7 +799,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
             await Execute(db, tx, stmt.Syntax.Text);
         await Execute(db, tx, $"INSERT INTO {schema}.orders(id) VALUES (1);");
         await Execute(db, tx, $"INSERT INTO {schema}.details(id,order_id) VALUES (3,999);");
-        var actual = new List<(int?,int?)>();
+        var actual = new List<(int?, int?)>();
         await using (var cmd = new NpgsqlCommand(
             $"SELECT public_id, detail_id FROM {schema}.v", db, tx))
         await using (var reader = await cmd.ExecuteReaderAsync(TestContext.Current.CancellationToken))
@@ -853,7 +853,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
         await Execute(db, tx,
             $"INSERT INTO {schema}.shipments(ship_id,line_id,tenant) VALUES (100,10,7),(101,11,8),(102,999,8);");
 
-        var observed = new List<(int?,int?,int?)>();
+        var observed = new List<(int?, int?, int?)>();
         await using (var cmd = new NpgsqlCommand(
             $"SELECT order_id, line_id, ship_id FROM {schema}.v", db, tx))
         await using (var reader = await cmd.ExecuteReaderAsync(TestContext.Current.CancellationToken))

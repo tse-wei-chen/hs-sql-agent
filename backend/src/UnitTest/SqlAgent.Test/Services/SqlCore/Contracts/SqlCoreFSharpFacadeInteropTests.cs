@@ -325,8 +325,8 @@ public sealed class SqlCoreFSharpFacadeInteropTests
             AssertClrFriendly(type.BaseType);
 
             foreach (var constructor in type.GetConstructors())
-            foreach (var parameter in constructor.GetParameters())
-                AssertClrFriendly(parameter.ParameterType);
+                foreach (var parameter in constructor.GetParameters())
+                    AssertClrFriendly(parameter.ParameterType);
 
             foreach (var property in type.GetProperties())
                 AssertClrFriendly(property.PropertyType);
@@ -398,8 +398,8 @@ public sealed class SqlCoreFSharpFacadeInteropTests
             yield return property.PropertyType;
 
         foreach (var constructor in type.GetConstructors(flags))
-        foreach (var parameter in constructor.GetParameters())
-            yield return parameter.ParameterType;
+            foreach (var parameter in constructor.GetParameters())
+                yield return parameter.ParameterType;
 
         foreach (var method in type.GetMethods(flags))
         {

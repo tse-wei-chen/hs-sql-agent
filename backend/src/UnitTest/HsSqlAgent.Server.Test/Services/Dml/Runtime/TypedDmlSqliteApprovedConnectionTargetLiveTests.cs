@@ -130,9 +130,9 @@ public sealed class TypedDmlSqliteApprovedConnectionTargetLiveTests
         var folder = Path.Combine(Path.GetTempPath(), $"hsa-dml-target-{Guid.NewGuid():N}");
         Directory.CreateDirectory(folder);
         var fileA = new SqliteConnectionStringBuilder
-            { DataSource = Path.Combine(folder, "target-a.sqlite"), Pooling = false }.ToString();
+        { DataSource = Path.Combine(folder, "target-a.sqlite"), Pooling = false }.ToString();
         var fileB = new SqliteConnectionStringBuilder
-            { DataSource = Path.Combine(folder, "target-b.sqlite"), Pooling = false }.ToString();
+        { DataSource = Path.Combine(folder, "target-b.sqlite"), Pooling = false }.ToString();
         try
         {
             const string schema = """

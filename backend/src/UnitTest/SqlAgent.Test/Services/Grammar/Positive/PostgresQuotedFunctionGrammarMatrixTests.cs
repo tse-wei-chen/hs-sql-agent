@@ -77,16 +77,16 @@ public sealed class PostgresQuotedFunctionGrammarMatrixTests
     public static IEnumerable<object[]> Matrix()
     {
         foreach (var identifier in Identifiers)
-        foreach (var context in Contexts)
-        {
-            yield return
-            [
-                SyntaxGrammarMatrix.CaseName(identifier.Name, context.Name),
+            foreach (var context in Contexts)
+            {
+                yield return
+                [
+                    SyntaxGrammarMatrix.CaseName(identifier.Name, context.Name),
                 context.Build(identifier.Sql),
                 identifier.Rendered,
                 context.Tables
-            ];
-        }
+                ];
+            }
     }
 
     public static IEnumerable<object[]> NativeQuotedSourceMatrix()

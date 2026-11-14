@@ -231,7 +231,10 @@ public sealed class SqlCoreSqlServerMergeHoldLockLiveTests
         await ExecuteAsync(connection, $"CREATE TABLE dbo.[{table}] (" +
             "id INT NOT NULL PRIMARY KEY, quantity INT NOT NULL)", token);
         try { await test(cs!, connection, table, token); }
-        finally { await ExecuteAsync(connection,
-            $"DROP TABLE IF EXISTS dbo.[{table}]", token); }
+        finally
+        {
+            await ExecuteAsync(connection,
+            $"DROP TABLE IF EXISTS dbo.[{table}]", token);
+        }
     }
 }

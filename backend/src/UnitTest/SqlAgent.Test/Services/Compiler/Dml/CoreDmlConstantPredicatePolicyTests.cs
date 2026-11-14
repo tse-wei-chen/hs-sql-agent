@@ -13,9 +13,9 @@ public sealed class CoreDmlConstantPredicatePolicyTests
     public static IEnumerable<object[]> DeepPolicyCases()
     {
         foreach (var provider in Enum.GetValues<SqlAgentToolType>())
-        foreach (var depth in new[] { 128, 512, 2048 })
-        foreach (var selective in new[] { false, true })
-            yield return new object[] { provider, depth, selective };
+            foreach (var depth in new[] { 128, 512, 2048 })
+                foreach (var selective in new[] { false, true })
+                    yield return new object[] { provider, depth, selective };
     }
 
     [Theory]

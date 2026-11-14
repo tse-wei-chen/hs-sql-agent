@@ -14,9 +14,9 @@ public sealed class CoreCompatibilityProjectionStackTests
     public static IEnumerable<object[]> Cases()
     {
         foreach (var dialect in Enum.GetValues<SqlAgentToolType>())
-        foreach (var shape in new[] { "derived", "cte", "scalar", "mixed", "function-query", "outer-join" })
-        foreach (var depth in new[] { 128, 512, 2048 })
-            yield return new object[] { dialect, shape, depth };
+            foreach (var shape in new[] { "derived", "cte", "scalar", "mixed", "function-query", "outer-join" })
+                foreach (var depth in new[] { 128, 512, 2048 })
+                    yield return new object[] { dialect, shape, depth };
     }
 
     [Theory]
@@ -57,7 +57,8 @@ public sealed class CoreCompatibilityProjectionStackTests
             {
                 failure = error;
             }
-        }, 256 * 1024) { IsBackground = true };
+        }, 256 * 1024)
+        { IsBackground = true };
         worker.Start();
         Assert.True(worker.Join(TimeSpan.FromSeconds(20)), "Public parser/projection worker timed out.");
         Assert.True(failure is null, failure?.ToString());

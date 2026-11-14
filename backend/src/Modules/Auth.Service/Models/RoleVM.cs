@@ -2,6 +2,7 @@ using System.Linq.Expressions;
 using Auth.Service.Data.Entites;
 
 namespace Auth.Service.Models;
+
 public class RoleVM
 {
     public int Id { get; set; }

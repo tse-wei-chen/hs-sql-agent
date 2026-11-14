@@ -107,8 +107,12 @@ public static class SqlCorpusLedger
             }
             reports.Add(new
             {
-                id, file, statementFamily = family, cases = cases.GetArrayLength(),
-                byProvider = counts, versionProfiledCases = versioned.Values.Sum(),
+                id,
+                file,
+                statementFamily = family,
+                cases = cases.GetArrayLength(),
+                byProvider = counts,
+                versionProfiledCases = versioned.Values.Sum(),
             });
         }
 

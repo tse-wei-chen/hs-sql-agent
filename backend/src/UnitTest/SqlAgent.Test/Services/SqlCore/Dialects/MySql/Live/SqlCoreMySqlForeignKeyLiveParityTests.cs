@@ -78,7 +78,7 @@ public sealed class SqlCoreMySqlForeignKeyLiveParityTests
         var script = Scenarios.Single(s => s.Name == id).Script;
         var premise = new SqlProviderCapabilityProfile(
             SqlAgentToolType.MySQL, null, default, null,
-            new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase)
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["LOWER_CASE_TABLE_NAMES"] = "0"
             });
@@ -100,7 +100,8 @@ public sealed class SqlCoreMySqlForeignKeyLiveParityTests
         {
             var builder = new MySqlConnectionStringBuilder(root)
             {
-                Database = database, Pooling = false
+                Database = database,
+                Pooling = false
             };
             await using var connection = new MySqlConnection(builder.ConnectionString);
             await connection.OpenAsync(TestContext.Current.CancellationToken);
@@ -129,7 +130,7 @@ public sealed class SqlCoreMySqlForeignKeyLiveParityTests
                 }
                 var actualCols = await ReadColumns(connection, database);
                 var expectedCols = step.CatalogAfter.Tables
-                    .SelectMany(t => t.Columns.Select(c => (Owner:t.QualifiedName!.Parts[^1], Name:c.Name)))
+                    .SelectMany(t => t.Columns.Select(c => (Owner: t.QualifiedName!.Parts[^1], Name: c.Name)))
                     .OrderBy(x => x.Owner, StringComparer.Ordinal)
                     .ThenBy(x => x.Name, StringComparer.Ordinal).ToArray();
                 Assert.Equal(expectedCols, actualCols);

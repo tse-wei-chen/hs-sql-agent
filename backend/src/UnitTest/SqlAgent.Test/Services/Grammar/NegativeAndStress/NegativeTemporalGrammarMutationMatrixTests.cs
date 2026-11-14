@@ -18,9 +18,9 @@ public sealed class NegativeTemporalGrammarMutationMatrixTests
         var contexts = new[] { "select", "predicate", "order" };
 
         foreach (var target in targets)
-        foreach (var unit in units)
-        foreach (var context in contexts)
-            yield return [target, unit, context];
+            foreach (var unit in units)
+                foreach (var context in contexts)
+                    yield return [target, unit, context];
     }
 
     [Theory]

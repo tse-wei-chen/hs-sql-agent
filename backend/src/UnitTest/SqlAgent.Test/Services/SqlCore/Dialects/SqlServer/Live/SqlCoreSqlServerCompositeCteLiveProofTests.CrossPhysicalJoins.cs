@@ -246,18 +246,18 @@ public sealed partial class SqlCoreSqlServerCompositeCteLiveProofTests
             }
             // Full ordinary key-to-key equality is mandatory in JOIN ON.
             if (!separateSources)
-            foreach (var invalid in new[]
-            {
+                foreach (var invalid in new[]
+                {
                 sql.Replace(" AND s.k2 = j.j2", "", StringComparison.Ordinal),
                 sql.Replace(" AND s.k2 = j.j2", " OR s.k2 = j.j2", StringComparison.Ordinal),
                 sql.Replace("s.k2 = j.j2", "s.k2 + 0 = j.j2", StringComparison.Ordinal),
                 sql.Replace("s.k2 = j.j2", "s.k1 = j.j2", StringComparison.Ordinal),
                 sql.Replace("j.j2", "CAST(j.j2 AS BIGINT)", StringComparison.Ordinal)
             })
-                Assert.Throws<SqlCompilationException>(() => SqlCoreFacade.CompileDml(
-                    CoreSqlTextParser.ParseDml(invalid, SqlAgentToolType.MsSqlServer, profile),
-                    SqlAgentToolType.MsSqlServer, context,
-                    new DmlCompilationPolicy(), profile, null));
+                    Assert.Throws<SqlCompilationException>(() => SqlCoreFacade.CompileDml(
+                        CoreSqlTextParser.ParseDml(invalid, SqlAgentToolType.MsSqlServer, profile),
+                        SqlAgentToolType.MsSqlServer, context,
+                        new DmlCompilationPolicy(), profile, null));
 
             // Unverified second table cannot borrow primary table's key proof.
             var noSecondary = SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
@@ -395,7 +395,8 @@ public sealed partial class SqlCoreSqlServerCompositeCteLiveProofTests
             {
                 var unique = variant is "nonunique" or "nullable-nonunique" ? "" : "UNIQUE ";
                 var columns = variant == "reversed" ? "(j2,j1)" : "(j1,j2)";
-                var filter = variant switch {
+                var filter = variant switch
+                {
                     "filtered" => " WHERE j2 > 0",
                     "nullable-filtered" => " WHERE j2 IS NOT NULL",
                     _ => ""

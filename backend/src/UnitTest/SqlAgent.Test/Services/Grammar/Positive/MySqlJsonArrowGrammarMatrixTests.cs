@@ -24,13 +24,13 @@ public sealed class MySqlJsonArrowGrammarMatrixTests
     public static IEnumerable<object?[]> PositiveMatrix()
     {
         foreach (var target in Targets)
-        foreach (var context in Contexts)
-            yield return
-            [
-                $"{target}__{context}",
+            foreach (var context in Contexts)
+                yield return
+                [
+                    $"{target}__{context}",
                 target,
                 Query(context, "payload->'$.items[0].name'")
-            ];
+                ];
     }
 
     public static IEnumerable<object?[]> WrongDialectMatrix()
@@ -38,13 +38,13 @@ public sealed class MySqlJsonArrowGrammarMatrixTests
         foreach (var source in Enum.GetValues<SqlAgentToolType>().Where(
                      value => value != SqlAgentToolType.MySQL
                               && value != SqlAgentToolType.Postgres))
-        foreach (var context in Contexts)
-            yield return
-            [
-                $"{source}__{context}",
+            foreach (var context in Contexts)
+                yield return
+                [
+                    $"{source}__{context}",
                 source,
                 Query(context, "payload->'$.id'")
-            ];
+                ];
     }
 
     public static IEnumerable<object?[]> VersionProofMatrix()

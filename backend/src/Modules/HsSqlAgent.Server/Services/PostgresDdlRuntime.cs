@@ -670,8 +670,14 @@ public sealed partial class PostgresDdlRuntime(
 
         var normalized = JsonSerializer.Serialize(new
         {
-            identity.ServerIdentity, identity.DatabaseName, schema, schemaOid, table, oid,
-            columns, indexes
+            identity.ServerIdentity,
+            identity.DatabaseName,
+            schema,
+            schemaOid,
+            table,
+            oid,
+            columns,
+            indexes
         });
         return new DdlPhysicalSnapshot(identity.ServerIdentity, identity.DatabaseName,
             schema, schemaOid, table, oid, columns.AsReadOnly(), indexes.AsReadOnly(), Digest(normalized));

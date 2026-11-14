@@ -225,38 +225,38 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
     public static IEnumerable<object?[]> PositiveMatrix()
     {
         foreach (var type in Types)
-        foreach (var context in Contexts)
-        {
-            yield return
-            [
-                SyntaxGrammarMatrix.CaseName(type.Name, context.Name),
+            foreach (var context in Contexts)
+            {
+                yield return
+                [
+                    SyntaxGrammarMatrix.CaseName(type.Name, context.Name),
                 type.Provider,
                 type.Profile,
                 context.Build($"CAST(value AS {type.TypeSql})"),
                 type.TypeSql
-            ];
-        }
+                ];
+            }
     }
 
     public static IEnumerable<object?[]> PostgresPostfixMatrix()
     {
         foreach (var type in PostgresPostfixTypes)
-        foreach (var context in Contexts)
-        {
-            var normalizedName = type
-                .Replace("(", "-", StringComparison.Ordinal)
-                .Replace(")", "", StringComparison.Ordinal)
-                .Replace(",", "-", StringComparison.Ordinal)
-                .Replace(" ", "-", StringComparison.Ordinal)
-                .ToLowerInvariant();
+            foreach (var context in Contexts)
+            {
+                var normalizedName = type
+                    .Replace("(", "-", StringComparison.Ordinal)
+                    .Replace(")", "", StringComparison.Ordinal)
+                    .Replace(",", "-", StringComparison.Ordinal)
+                    .Replace(" ", "-", StringComparison.Ordinal)
+                    .ToLowerInvariant();
 
-            yield return
-            [
-                SyntaxGrammarMatrix.CaseName("postgres-postfix", normalizedName, context.Name),
+                yield return
+                [
+                    SyntaxGrammarMatrix.CaseName("postgres-postfix", normalizedName, context.Name),
                 context.Build($"value::{type}"),
                 type
-            ];
-        }
+                ];
+            }
     }
 
     public static IEnumerable<object?[]> CrossProviderMatrix()

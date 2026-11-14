@@ -90,12 +90,12 @@ public sealed class SqlCorePostgresViewInnerUsingProofTests
             "CREATE VIEW app.v AS SELECT o.title FROM app.orders o " +
             "JOIN app.lines l USING (id,tenant);";
         foreach (var table in new[] { "orders", "lines" })
-        foreach (var column in new[] { "id", "tenant" })
-        {
-            var blocked = Analyze(setup + $"ALTER TABLE app.{table} DROP COLUMN {column};");
-            Assert.Equal(SqlStatementAnalysisStatus.Invalid, blocked.Statements[4].Status);
-            Assert.Empty(blocked.Statements[4].Changes);
-        }
+            foreach (var column in new[] { "id", "tenant" })
+            {
+                var blocked = Analyze(setup + $"ALTER TABLE app.{table} DROP COLUMN {column};");
+                Assert.Equal(SqlStatementAnalysisStatus.Invalid, blocked.Statements[4].Status);
+                Assert.Empty(blocked.Statements[4].Changes);
+            }
         var allowed = Analyze(setup + "ALTER TABLE app.lines DROP COLUMN amount;");
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, allowed.Statements[4].Status);
     }

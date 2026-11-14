@@ -54,15 +54,15 @@ public sealed class PostgresPhysicalHostInjectionTests(PostgresPhysicalQueryFixt
             var tool = Tool(schema);
             var attempted = 0;
             foreach (var separator in Separators)
-            foreach (var second in next)
-            {
-                var sql = "SELECT id FROM " + schema + ".users WHERE id=1" + separator + second;
-                var result = await tool.ExecuteQuerySql(sql, TestContext.Current.CancellationToken);
-                Assert.False(result.Success, sql);
-                Assert.Empty(result.Rows);
-                Assert.Equal(before, await SnapshotAsync(schema));
-                attempted++;
-            }
+                foreach (var second in next)
+                {
+                    var sql = "SELECT id FROM " + schema + ".users WHERE id=1" + separator + second;
+                    var result = await tool.ExecuteQuerySql(sql, TestContext.Current.CancellationToken);
+                    Assert.False(result.Success, sql);
+                    Assert.Empty(result.Rows);
+                    Assert.Equal(before, await SnapshotAsync(schema));
+                    attempted++;
+                }
             Assert.Equal(32, attempted);
         });
     }

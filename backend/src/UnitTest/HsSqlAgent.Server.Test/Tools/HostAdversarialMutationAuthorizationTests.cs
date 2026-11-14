@@ -77,22 +77,22 @@ public sealed class HostAdversarialMutationAuthorizationTests
     {
         var count = 0;
         foreach (var grant in MissingOrForgedDmlGrants)
-        foreach (var sql in AttackerSql)
-        {
-            var fixture = CreateTool(grant);
-            var result = await fixture.Tool.ExecuteDmlSql(
-                sql, null!, TestContext.Current.CancellationToken);
+            foreach (var sql in AttackerSql)
+            {
+                var fixture = CreateTool(grant);
+                var result = await fixture.Tool.ExecuteDmlSql(
+                    sql, null!, TestContext.Current.CancellationToken);
 
-            Assert.False(result.Committed, grant + " " + sql);
-            Assert.Equal("failed", result.Status);
-            Assert.Equal("authorization.denied", result.Error?.Code);
-            Assert.Equal("Authorization", result.Error?.Stage);
-            Assert.Equal(0, result.StatementCount);
-            fixture.Providers.VerifyNoOtherCalls();
-            fixture.Limiter.VerifyNoOtherCalls();
-            fixture.SecurityPolicy.VerifyNoOtherCalls();
-            count++;
-        }
+                Assert.False(result.Committed, grant + " " + sql);
+                Assert.Equal("failed", result.Status);
+                Assert.Equal("authorization.denied", result.Error?.Code);
+                Assert.Equal("Authorization", result.Error?.Stage);
+                Assert.Equal(0, result.StatementCount);
+                fixture.Providers.VerifyNoOtherCalls();
+                fixture.Limiter.VerifyNoOtherCalls();
+                fixture.SecurityPolicy.VerifyNoOtherCalls();
+                count++;
+            }
 
         Assert.Equal(112, count);
     }
@@ -138,19 +138,19 @@ public sealed class HostAdversarialMutationAuthorizationTests
         };
         var count = 0;
         foreach (var grant in grants)
-        foreach (var sql in sqls)
-        {
-            var fixture = CreateTool(grant);
-            var result = await fixture.Tool.ExecuteQuerySql(
-                sql, TestContext.Current.CancellationToken);
+            foreach (var sql in sqls)
+            {
+                var fixture = CreateTool(grant);
+                var result = await fixture.Tool.ExecuteQuerySql(
+                    sql, TestContext.Current.CancellationToken);
 
-            Assert.False(result.Success);
-            Assert.Equal("authorization.denied", result.Error?.Code);
-            fixture.Providers.VerifyNoOtherCalls();
-            fixture.Limiter.VerifyNoOtherCalls();
-            fixture.QueryRuntime.VerifyNoOtherCalls();
-            count++;
-        }
+                Assert.False(result.Success);
+                Assert.Equal("authorization.denied", result.Error?.Code);
+                fixture.Providers.VerifyNoOtherCalls();
+                fixture.Limiter.VerifyNoOtherCalls();
+                fixture.QueryRuntime.VerifyNoOtherCalls();
+                count++;
+            }
         Assert.Equal(24, count);
     }
 

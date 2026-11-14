@@ -174,7 +174,8 @@ public sealed class SqlCoreMySqlFkAlternativeIndexLiveParityTests
         {
             var cs = new MySqlConnectionStringBuilder(root)
             {
-                Database = database, Pooling = false
+                Database = database,
+                Pooling = false
             };
             await using var db = new MySqlConnection(cs.ConnectionString);
             await db.OpenAsync(TestContext.Current.CancellationToken);

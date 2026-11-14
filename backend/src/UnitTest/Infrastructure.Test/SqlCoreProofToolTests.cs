@@ -62,8 +62,12 @@ public sealed class SqlCoreProofToolTests
         Assert.Equal(6, report.GetProperty("suites").GetArrayLength());
         var expected = new Dictionary<string, int>
         {
-            ["Postgres"] = 543, ["MySQL"] = 987, ["MsSqlServer"] = 571,
-            ["Sqlite"] = 864, ["Oracle"] = 979, ["Firebird"] = 939,
+            ["Postgres"] = 543,
+            ["MySQL"] = 987,
+            ["MsSqlServer"] = 571,
+            ["Sqlite"] = 864,
+            ["Oracle"] = 979,
+            ["Firebird"] = 939,
         };
         foreach (var (provider, count) in expected)
         {
@@ -121,13 +125,18 @@ public sealed class SqlCoreProofToolTests
             {
                 _query.Add(new JsonObject
                 {
-                    ["name"] = provider + "-query", ["dialect"] = provider,
-                    ["targetDialect"] = provider, ["sourceVersion"] = "16.0",
-                    ["targetVersion"] = "16.0", ["sql"] = "SELECT 1",
+                    ["name"] = provider + "-query",
+                    ["dialect"] = provider,
+                    ["targetDialect"] = provider,
+                    ["sourceVersion"] = "16.0",
+                    ["targetVersion"] = "16.0",
+                    ["sql"] = "SELECT 1",
                 });
                 _dml.Add(new JsonObject
                 {
-                    ["name"] = provider + "-dml", ["dialect"] = provider, ["sql"] = "DELETE FROM t WHERE id = 1",
+                    ["name"] = provider + "-dml",
+                    ["dialect"] = provider,
+                    ["sql"] = "DELETE FROM t WHERE id = 1",
                 });
             }
             var expected = new JsonObject();
@@ -187,21 +196,27 @@ public sealed class SqlCoreProofToolTests
         {
             var rows = new JsonArray();
             foreach (var provider in SqlCoreStageProfile.Providers)
-            foreach (var name in SqlCoreStageProfile.Cases)
-            {
-                var stages = new JsonArray();
-                foreach (var stage in SqlCoreStageProfile.RequiredStages)
-                    stages.Add(new JsonObject
-                    {
-                        ["Name"] = stage, ["Samples"] = 2, ["MedianMicroseconds"] = 4.0,
-                        ["MedianAllocatedBytes"] = 128.0, ["MedianWorkUnits"] = 5.0, ["AllSucceeded"] = true,
-                    });
-                rows.Add(new JsonObject
+                foreach (var name in SqlCoreStageProfile.Cases)
                 {
-                    ["Provider"] = provider, ["Case"] = name, ["OutputDigest"] = new string('A', 64),
-                    ["Stages"] = stages,
-                });
-            }
+                    var stages = new JsonArray();
+                    foreach (var stage in SqlCoreStageProfile.RequiredStages)
+                        stages.Add(new JsonObject
+                        {
+                            ["Name"] = stage,
+                            ["Samples"] = 2,
+                            ["MedianMicroseconds"] = 4.0,
+                            ["MedianAllocatedBytes"] = 128.0,
+                            ["MedianWorkUnits"] = 5.0,
+                            ["AllSucceeded"] = true,
+                        });
+                    rows.Add(new JsonObject
+                    {
+                        ["Provider"] = provider,
+                        ["Case"] = name,
+                        ["OutputDigest"] = new string('A', 64),
+                        ["Stages"] = stages,
+                    });
+                }
             _report = new JsonObject { ["schemaVersion"] = 1, ["iterations"] = 2, ["warmup"] = 1, ["results"] = rows };
             Save();
         }

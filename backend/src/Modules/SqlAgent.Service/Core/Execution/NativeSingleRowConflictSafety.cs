@@ -134,7 +134,7 @@ internal static class NativeSingleRowConflictSafety
                 && (target != SqlAgentToolType.Postgres
                     || insert.Returning.Length != 1
                     || insert.Returning[0] is not DmlReturningColumnItem
-                        { Identifier.Parts.Length: 1 } returnedKey
+                    { Identifier.Parts.Length: 1 } returnedKey
                     || !string.Equals(returnedKey.Identifier.Parts[0].Value,
                         key, StringComparison.Ordinal)))
                 throw new NotSupportedException(

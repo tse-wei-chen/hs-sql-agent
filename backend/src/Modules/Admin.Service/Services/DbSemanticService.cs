@@ -173,18 +173,33 @@ public class DbSemanticService(IAdminContext context) : IDbSemanticService
 
     private static DbSemanticRelationshipModel ToRelationshipModel(DbSemanticRelationship x) => new()
     {
-        Id = x.Id, DbManagementId = x.DbManagementId, Name = x.Name,
-        SourceSchema = x.SourceSchema, SourceTable = x.SourceTable, SourceColumn = x.SourceColumn,
-        TargetSchema = x.TargetSchema, TargetTable = x.TargetTable, TargetColumn = x.TargetColumn,
-        Cardinality = x.Cardinality, Direction = x.Direction, Description = x.Description
+        Id = x.Id,
+        DbManagementId = x.DbManagementId,
+        Name = x.Name,
+        SourceSchema = x.SourceSchema,
+        SourceTable = x.SourceTable,
+        SourceColumn = x.SourceColumn,
+        TargetSchema = x.TargetSchema,
+        TargetTable = x.TargetTable,
+        TargetColumn = x.TargetColumn,
+        Cardinality = x.Cardinality,
+        Direction = x.Direction,
+        Description = x.Description
     };
 
     private static DbSemanticMetricModel ToMetricModel(DbSemanticMetric x) => new()
     {
-        Id = x.Id, DbManagementId = x.DbManagementId, Name = x.Name,
-        SchemaName = x.SchemaName, TableName = x.TableName,
-        DisplayName = x.DisplayName, Description = x.Description, Formula = x.Formula,
-        Aggregation = x.Aggregation, Grain = x.Grain, Filter = x.Filter,
+        Id = x.Id,
+        DbManagementId = x.DbManagementId,
+        Name = x.Name,
+        SchemaName = x.SchemaName,
+        TableName = x.TableName,
+        DisplayName = x.DisplayName,
+        Description = x.Description,
+        Formula = x.Formula,
+        Aggregation = x.Aggregation,
+        Grain = x.Grain,
+        Filter = x.Filter,
         Synonyms = SemanticSynonymNormalizer.Deserialize(x.SynonymsJson)
     };
 

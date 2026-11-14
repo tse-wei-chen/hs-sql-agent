@@ -79,7 +79,8 @@ public sealed class SqlCoreMySqlKeyIndexNamespaceLiveParityTests
         {
             var connectionString = new MySqlConnectionStringBuilder(root)
             {
-                Database = dbName, Pooling = false
+                Database = dbName,
+                Pooling = false
             }.ConnectionString;
             await using var db = new MySqlConnection(connectionString);
             await db.OpenAsync(TestContext.Current.CancellationToken);
@@ -134,7 +135,8 @@ public sealed class SqlCoreMySqlKeyIndexNamespaceLiveParityTests
         {
             var options = new MySqlConnectionStringBuilder(root)
             {
-                Database = dbName, Pooling = false
+                Database = dbName,
+                Pooling = false
             };
             await using var db = new MySqlConnection(options.ConnectionString);
             await db.OpenAsync(TestContext.Current.CancellationToken);

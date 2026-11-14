@@ -25,7 +25,8 @@ public sealed partial class PostgresDdlRuntime
         DdlBatchRuntimePreview preview, string reason) =>
         new(DdlRuntimeStatus.OutcomeUnknown, null,
             reason + " Never retry the batch automatically; reconcile all physical objects.",
-            "ddl.batch_outcome_unknown") { BatchPreview = preview };
+            "ddl.batch_outcome_unknown")
+        { BatchPreview = preview };
 
     private async Task<DdlRuntimeResult> RunBatchAsync(
         ISqlProvider provider, string connectionString, string sql,
@@ -170,7 +171,8 @@ public sealed partial class PostgresDdlRuntime
                 if (plan.Topology == DdlBatchTopology.DependentCreateChain)
                     virtualState = prior with
                     {
-                        TableOid = -1L, Columns = projected.Columns,
+                        TableOid = -1L,
+                        Columns = projected.Columns,
                         Indexes = projected.Indexes
                     };
             }
@@ -198,8 +200,11 @@ public sealed partial class PostgresDdlRuntime
                 nativeSql = plan.Plans.Select(p => p.Command.Sql).ToArray(),
                 before = original.Select(s => s.Fingerprint).ToArray(),
                 serverIdentity = original[0].ServerIdentity,
-                actor.PrincipalIdentity, actor.TargetIdentity, actor.DatabaseName,
-                policy, nonce,
+                actor.PrincipalIdentity,
+                actor.TargetIdentity,
+                actor.DatabaseName,
+                policy,
+                nonce,
                 issuedAt = now.ToUnixTimeMilliseconds(),
                 expiresAt = expiry.ToUnixTimeMilliseconds(),
                 readable

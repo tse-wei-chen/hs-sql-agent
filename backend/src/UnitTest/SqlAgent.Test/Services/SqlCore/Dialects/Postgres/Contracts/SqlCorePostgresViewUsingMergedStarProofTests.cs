@@ -90,12 +90,12 @@ public sealed class SqlCorePostgresViewUsingMergedStarProofTests
             "CREATE VIEW app.v AS SELECT * FROM app.orders o JOIN app.lines l USING (tenant,id);" +
             "CREATE VIEW app.child AS SELECT tenant, active FROM app.v;";
         foreach (var table in new[] { "orders", "lines" })
-        foreach (var col in new[] { "tenant", "id" })
-        {
-            var result = Analyze(setup + $"ALTER TABLE app.{table} DROP COLUMN {col};");
-            Assert.Equal(SqlStatementAnalysisStatus.Invalid, result.Statements[4].Status);
-            Assert.Empty(result.Statements[4].Changes);
-        }
+            foreach (var col in new[] { "tenant", "id" })
+            {
+                var result = Analyze(setup + $"ALTER TABLE app.{table} DROP COLUMN {col};");
+                Assert.Equal(SqlStatementAnalysisStatus.Invalid, result.Statements[4].Status);
+                Assert.Empty(result.Statements[4].Changes);
+            }
         foreach (var (table, col) in new[] { ("orders", "title"), ("lines", "amount") })
         {
             var result = Analyze(setup + $"ALTER TABLE app.{table} DROP COLUMN {col};");

@@ -113,7 +113,8 @@ public sealed partial class SqlCoreSqlServerCompositeCteLiveProofTests
             if (shape != "missing")
             {
                 var unique = shape is "nonunique" or "nullable-nonunique" ? "" : "UNIQUE ";
-                var predicate = shape switch {
+                var predicate = shape switch
+                {
                     "filtered" => " WHERE k2 > 0",
                     "nullable-filtered" => " WHERE k2 IS NOT NULL",
                     _ => ""

@@ -302,61 +302,61 @@ public sealed class TypedDmlRuntime(
 
         try
         {
-        var statements = builder.ToImmutable();
-        var totalLong = statements.Sum(x => (long)x.Preview.AffectedRows);
-        if (totalLong > int.MaxValue)
-        {
-            throw new UnauthorizedAccessException("DML transaction affected row count exceeds the supported integer range.");
-        }
-        var total = (int)totalLong;
-        if (policy.DmlMaxAffectedRows > 0 && total > policy.DmlMaxAffectedRows)
-        {
-            throw new UnauthorizedAccessException(
-                $"Security policy denied DML transaction: affectedRows={total} exceeds maximum {policy.DmlMaxAffectedRows}.");
-        }
+            var statements = builder.ToImmutable();
+            var totalLong = statements.Sum(x => (long)x.Preview.AffectedRows);
+            if (totalLong > int.MaxValue)
+            {
+                throw new UnauthorizedAccessException("DML transaction affected row count exceeds the supported integer range.");
+            }
+            var total = (int)totalLong;
+            if (policy.DmlMaxAffectedRows > 0 && total > policy.DmlMaxAffectedRows)
+            {
+                throw new UnauthorizedAccessException(
+                    $"Security policy denied DML transaction: affectedRows={total} exceeds maximum {policy.DmlMaxAffectedRows}.");
+            }
 
-        var policyVersion = statements[0].Plan.PolicyVersion;
-        if (statements.Any(x => !string.Equals(x.Plan.PolicyVersion, policyVersion, StringComparison.Ordinal)))
-        {
-            throw new InvalidOperationException("DML transaction statements were compiled under different security policy versions.");
-        }
+            var policyVersion = statements[0].Plan.PolicyVersion;
+            if (statements.Any(x => !string.Equals(x.Plan.PolicyVersion, policyVersion, StringComparison.Ordinal)))
+            {
+                throw new InvalidOperationException("DML transaction statements were compiled under different security policy versions.");
+            }
 
-        var serverVersion = statements[0].VerifiedServerVersionIdentity;
-        if (string.IsNullOrWhiteSpace(serverVersion)
-            || statements.Any(x => !string.Equals(x.VerifiedServerVersionIdentity, serverVersion, StringComparison.Ordinal)))
-        {
-            throw new InvalidOperationException("DML transaction statements were previewed against different runtime server versions.");
-        }
+            var serverVersion = statements[0].VerifiedServerVersionIdentity;
+            if (string.IsNullOrWhiteSpace(serverVersion)
+                || statements.Any(x => !string.Equals(x.VerifiedServerVersionIdentity, serverVersion, StringComparison.Ordinal)))
+            {
+                throw new InvalidOperationException("DML transaction statements were previewed against different runtime server versions.");
+            }
 
-        var planFingerprint = ComputeTransactionPlanFingerprint(statements);
-        var evidenceFingerprint = ComputeTransactionEvidenceFingerprint(statements);
-        var approvalContextFingerprint = ComputeApprovalContextFingerprint(approvalContext);
-        var now = _timeProvider.GetUtcNow();
-        var expiresAt = statements.Min(x => x.Preview.Challenge.ExpiresAt);
-        if (expiresAt <= now)
-        {
-            throw new InvalidOperationException("DML transaction approval expired during preview.");
-        }
+            var planFingerprint = ComputeTransactionPlanFingerprint(statements);
+            var evidenceFingerprint = ComputeTransactionEvidenceFingerprint(statements);
+            var approvalContextFingerprint = ComputeApprovalContextFingerprint(approvalContext);
+            var now = _timeProvider.GetUtcNow();
+            var expiresAt = statements.Min(x => x.Preview.Challenge.ExpiresAt);
+            if (expiresAt <= now)
+            {
+                throw new InvalidOperationException("DML transaction approval expired during preview.");
+            }
 
-        var challenge = new DmlApprovalChallenge(
-            planFingerprint,
-            evidenceFingerprint,
-            total,
-            policyVersion,
-            approvalContextFingerprint,
-            now,
-            expiresAt,
-            Guid.NewGuid().ToString("N"));
-        // Redis and in-memory stores atomically swap all child approvals for
-        // this aggregate. A failed promotion must never expose a usable batch
-        // or partially consume its child challenges.
-        if (!await _challengeStore.TryPromoteAsync(
-                statements.Select(x => x.Preview.Challenge).ToArray(),
-                challenge,
-                cancellationToken))
-            throw new InvalidOperationException(
-                "DML transaction approval promotion failed: a child was changed, consumed or expired, or the aggregate nonce was already registered.");
-        return new TypedDmlTransactionApprovalSession(statements, challenge);
+            var challenge = new DmlApprovalChallenge(
+                planFingerprint,
+                evidenceFingerprint,
+                total,
+                policyVersion,
+                approvalContextFingerprint,
+                now,
+                expiresAt,
+                Guid.NewGuid().ToString("N"));
+            // Redis and in-memory stores atomically swap all child approvals for
+            // this aggregate. A failed promotion must never expose a usable batch
+            // or partially consume its child challenges.
+            if (!await _challengeStore.TryPromoteAsync(
+                    statements.Select(x => x.Preview.Challenge).ToArray(),
+                    challenge,
+                    cancellationToken))
+                throw new InvalidOperationException(
+                    "DML transaction approval promotion failed: a child was changed, consumed or expired, or the aggregate nonce was already registered.");
+            return new TypedDmlTransactionApprovalSession(statements, challenge);
         }
         catch
         {

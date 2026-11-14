@@ -227,7 +227,7 @@ public sealed class TypedDmlSqliteApprovalReplayToctouLiveTests
         var file = Path.Combine(Path.GetTempPath(),
             $"hsa-dml-replay-{Guid.NewGuid():N}.sqlite");
         var connectionString = new SqliteConnectionStringBuilder
-            { DataSource = file, Pooling = false }.ToString();
+        { DataSource = file, Pooling = false }.ToString();
         try
         {
             await ExecuteAsync(connectionString, """

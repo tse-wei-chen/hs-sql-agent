@@ -155,7 +155,7 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
         var trigger = "TR_" + table;
         // Avoid Firebird pooled attachments holding DDL metadata locks in tests.
         var connectionString = new FbConnectionStringBuilder(Fixture.ConnectionString)
-            { Pooling = false }.ConnectionString;
+        { Pooling = false }.ConnectionString;
         var native = new NativeDmlSchemaSnapshotService();
         await using var db = new FbConnection(connectionString);
         await db.OpenAsync(token);

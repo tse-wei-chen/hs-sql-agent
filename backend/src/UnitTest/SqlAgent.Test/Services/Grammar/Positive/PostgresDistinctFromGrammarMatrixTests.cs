@@ -136,18 +136,18 @@ public sealed class CrossDialectDistinctFromGrammarMatrixTests
     public static IEnumerable<object?[]> PositiveMatrix()
     {
         foreach (var op in Operators)
-        foreach (var operands in Operands)
-        foreach (var context in Contexts)
-        {
-            var expression = $"{operands.Value.Left} {op.Value.Sql} {operands.Value.Right}";
-            yield return
-            [
-                SyntaxGrammarMatrix.CaseName("postgres", op.Name, operands.Name, context.Name),
+            foreach (var operands in Operands)
+                foreach (var context in Contexts)
+                {
+                    var expression = $"{operands.Value.Left} {op.Value.Sql} {operands.Value.Right}";
+                    yield return
+                    [
+                        SyntaxGrammarMatrix.CaseName("postgres", op.Name, operands.Name, context.Name),
                 context.Value.Build(expression),
                 op.Value.Sql,
                 context.Value.Tables
-            ];
-        }
+                    ];
+                }
     }
 
     public static IEnumerable<object?[]> NativeSourceMatrix()
@@ -176,19 +176,19 @@ public sealed class CrossDialectDistinctFromGrammarMatrixTests
     public static IEnumerable<object?[]> CrossProviderTargetMatrix()
     {
         foreach (var target in CrossTargets)
-        foreach (var op in Operators)
-        foreach (var context in CrossTargetContexts)
-        {
-            var expression = $"a {op.Value.Sql} b";
-            yield return
-            [
-                SyntaxGrammarMatrix.CaseName(target.Name, op.Name, context.Name),
+            foreach (var op in Operators)
+                foreach (var context in CrossTargetContexts)
+                {
+                    var expression = $"a {op.Value.Sql} b";
+                    yield return
+                    [
+                        SyntaxGrammarMatrix.CaseName(target.Name, op.Name, context.Name),
                 target.Provider,
                 target.Profile,
                 context.Build(expression),
                 target.ExpectedMarker
-            ];
-        }
+                    ];
+                }
     }
 
     public static IEnumerable<object?[]> UnsupportedSourceMatrix()

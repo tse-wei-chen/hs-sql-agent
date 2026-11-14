@@ -91,9 +91,9 @@ public sealed class SqlCoreDepthGateTests
             if (profile == "paging")
             {
                 foreach (var provider in SqlCoreStageProfile.Providers)
-                foreach (var shape in new[] { "nested-paging-typed-schema", "invalid-nested-paging" })
-                foreach (var depth in new[] { 128, 512, 2048 })
-                    observations.Add(Sample(shape, depth, provider, invalid: shape.StartsWith("invalid-", StringComparison.Ordinal)));
+                    foreach (var shape in new[] { "nested-paging-typed-schema", "invalid-nested-paging" })
+                        foreach (var depth in new[] { 128, 512, 2048 })
+                            observations.Add(Sample(shape, depth, provider, invalid: shape.StartsWith("invalid-", StringComparison.Ordinal)));
             }
             else
             {
@@ -192,16 +192,22 @@ public sealed class SqlCoreDepthGateTests
             };
             return new JsonObject
             {
-                ["shape"] = shape, ["dialect"] = dialect, ["depth"] = depth,
-                ["processExitCode"] = 0, ["stackBytes"] = 262144,
+                ["shape"] = shape,
+                ["dialect"] = dialect,
+                ["depth"] = depth,
+                ["processExitCode"] = 0,
+                ["stackBytes"] = 262144,
                 ["worker"] = worker,
             };
         }
 
         private static JsonObject Phase(string stage, int depth, bool success = true) => new()
         {
-            ["Stage"] = stage, ["Success"] = success,
-            ["ElapsedMicroseconds"] = 10, ["AllocatedBytes"] = 1024, ["WorkUnits"] = depth + 1,
+            ["Stage"] = stage,
+            ["Success"] = success,
+            ["ElapsedMicroseconds"] = 10,
+            ["AllocatedBytes"] = 1024,
+            ["WorkUnits"] = depth + 1,
         };
         private void Save()
         {

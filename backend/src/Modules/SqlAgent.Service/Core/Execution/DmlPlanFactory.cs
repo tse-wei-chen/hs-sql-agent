@@ -824,22 +824,22 @@ public sealed class DmlPlanFactory(
             // count. PostgreSQL's full-definition catalog proof already rejects
             // all user triggers, rules, partitioning and RLS.
             if (targetProvider == SqlAgentToolType.Sqlite)
-            await using (var triggers = metadataConnection.CreateCommand())
-            {
-                triggers.CommandText =
-                    "SELECT COUNT(*) FROM main.sqlite_master " +
-                    "WHERE type = 'trigger' AND tbl_name = @target COLLATE NOCASE";
-                var targetName = triggers.CreateParameter();
-                targetName.ParameterName = "@target";
-                targetName.Value = targetResolution.Table;
-                triggers.Parameters.Add(targetName);
-                var triggerCount = Convert.ToInt64(
-                    await triggers.ExecuteScalarAsync(cancellationToken));
-                if (triggerCount != 0)
-                    throw new InvalidOperationException(
-                        "SQLite conflict skip cannot approve a trigger-bearing physical target: " +
-                        "trigger side effects are outside the one-row affected-count proof.");
-            }
+                await using (var triggers = metadataConnection.CreateCommand())
+                {
+                    triggers.CommandText =
+                        "SELECT COUNT(*) FROM main.sqlite_master " +
+                        "WHERE type = 'trigger' AND tbl_name = @target COLLATE NOCASE";
+                    var targetName = triggers.CreateParameter();
+                    targetName.ParameterName = "@target";
+                    targetName.Value = targetResolution.Table;
+                    triggers.Parameters.Add(targetName);
+                    var triggerCount = Convert.ToInt64(
+                        await triggers.ExecuteScalarAsync(cancellationToken));
+                    if (triggerCount != 0)
+                        throw new InvalidOperationException(
+                            "SQLite conflict skip cannot approve a trigger-bearing physical target: " +
+                            "trigger side effects are outside the one-row affected-count proof.");
+                }
 
             var column = SqlIdentifier.Unquoted(skip.UniqueKeyColumn, SourceSpan.Unknown);
             var keyExpr = new ColumnExpr(column, SourceSpan.Unknown);
@@ -1194,12 +1194,12 @@ public sealed class DmlPlanFactory(
 
     private static (DmlOperation Operation, NamedTableSource Target, SqlExpr? Predicate) MutationShape(
         SqlStatement statement) => statement switch
-    {
-        UpdateStatement update => (DmlOperation.Update, update.Target, update.Predicate),
-        DeleteStatement delete => (DmlOperation.Delete, delete.Target, delete.Predicate),
-        _ => throw new InvalidOperationException(
-            $"Statement '{statement.GetType().Name}' is not a supported row-set DML mutation.")
-    };
+        {
+            UpdateStatement update => (DmlOperation.Update, update.Target, update.Predicate),
+            DeleteStatement delete => (DmlOperation.Delete, delete.Target, delete.Predicate),
+            _ => throw new InvalidOperationException(
+                $"Statement '{statement.GetType().Name}' is not a supported row-set DML mutation.")
+        };
 
     private static ParsedStatement CloneParsedWithStatement(
         ParsedStatement source,
@@ -1217,47 +1217,47 @@ public sealed class DmlPlanFactory(
         switch (statement)
         {
             case UpdateStatement update:
-            {
-                var clone = new UpdateStatement(
-                    resolvedTarget,
-                    update.Assignments,
-                    update.Predicate,
-                    update.Span)
                 {
-                    From = update.From,
-                    FromSources = update.FromSources,
-                    Ctes = update.Ctes,
-                    Returning = update.Returning
-                };
-                return clone;
-            }
+                    var clone = new UpdateStatement(
+                        resolvedTarget,
+                        update.Assignments,
+                        update.Predicate,
+                        update.Span)
+                    {
+                        From = update.From,
+                        FromSources = update.FromSources,
+                        Ctes = update.Ctes,
+                        Returning = update.Returning
+                    };
+                    return clone;
+                }
             case DeleteStatement delete:
-            {
-                var clone = new DeleteStatement(
-                    resolvedTarget,
-                    delete.Predicate,
-                    delete.Span)
                 {
-                    Using = delete.Using,
-                    UsingSources = delete.UsingSources,
-                    Ctes = delete.Ctes,
-                    Returning = delete.Returning
-                };
-                return clone;
-            }
+                    var clone = new DeleteStatement(
+                        resolvedTarget,
+                        delete.Predicate,
+                        delete.Span)
+                    {
+                        Using = delete.Using,
+                        UsingSources = delete.UsingSources,
+                        Ctes = delete.Ctes,
+                        Returning = delete.Returning
+                    };
+                    return clone;
+                }
             case InsertStatement insert:
-            {
-                var clone = new InsertStatement(
-                    resolvedTarget,
-                    insert.Columns,
-                    insert.Source,
-                    insert.Span)
                 {
-                    Conflict = insert.Conflict,
-                    Returning = insert.Returning
-                };
-                return clone;
-            }
+                    var clone = new InsertStatement(
+                        resolvedTarget,
+                        insert.Columns,
+                        insert.Source,
+                        insert.Span)
+                    {
+                        Conflict = insert.Conflict,
+                        Returning = insert.Returning
+                    };
+                    return clone;
+                }
             default:
                 throw new InvalidOperationException(
                     $"Statement '{statement.GetType().Name}' is not a supported DML mutation.");
