@@ -1,13 +1,22 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-        <!-- Executable test governance runs on a single framework compatible with
-         both net8 and net10 test-project references. -->
-    <TargetFramework Condition="'$(LibraryFrameworks)'==''">net8.0</TargetFramework>
-    <RollForward>Major</RollForward>
+    <!-- CI runs the CLI on the newer runtime so reflection can load either target.
+         Tests reference the matching target when validating framework compatibility. -->
+    <TargetFrameworks Condition="'$(LibraryFrameworks)'==''">net10.0;net8.0</TargetFrameworks>
     <TargetFrameworks Condition="'$(LibraryFrameworks)'!=''">$(LibraryFrameworks)</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" />
+    <!-- PackageConsumer.cs.txt has a .cs segment that the SDK can treat as a culture. -->
+    <!-- Keep the consumer source in the main CLI assembly (not a Czech satellite). -->
+    <EmbeddedResource Include="Resources/PackageConsumer.cs.txt">
+      <WithCulture>false</WithCulture>
+      <LogicalName>HsSqlAgent.TestGovernance.Resources.PackageConsumer.cs.txt</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources/server-integration.tsv" />
+  </ItemGroup>
 </Project>

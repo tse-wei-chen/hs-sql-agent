@@ -43,7 +43,7 @@ deny/allow decisions for provably true and selective predicates.
 Run from repository root:
 
 ```bash
-dotnet run -c Release --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- --iterations 1000 --warmup 100 --output artifacts/sqlcore-perf.json
+dotnet run -c Release --project backend/tools/HsSqlAgent.SqlCore.Benchmarks -- --iterations 1000 --warmup 100 --output artifacts/sqlcore-perf.json
 ```
 
 Use `--smoke` for a **quick compilation/determinism check only**; do not compare smoke
@@ -98,7 +98,7 @@ Run a subprocess-isolated sweep (results are observational, **not** compiler
 capability guarantees):
 
 ```bash
-dotnet run -c Release --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- --depth-probe --output artifacts/sqlcore-depth.json
+dotnet run -c Release --project backend/tools/HsSqlAgent.SqlCore.Benchmarks -- --depth-probe --output artifacts/sqlcore-depth.json
 ```
 
 The sweep launches a fresh process for each combination of all six dialects,
@@ -252,9 +252,9 @@ not counted as a zero-cost stage.
 Reproduce from repository root:
 
 ```bash
-dotnet run -c Release --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- \
+dotnet run -c Release --project backend/tools/HsSqlAgent.SqlCore.Benchmarks -- \
   --stage-profile --iterations 5 --warmup 3 --output artifacts/stage-profile.json
-python3 .github/scripts/verify_sqlcore_stage_profile.py artifacts/stage-profile.json
+dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- stage-profile --file artifacts/stage-profile.json
 ```
 
 This is diagnostic, **not** the paired timing baseline: DiagnosticListener

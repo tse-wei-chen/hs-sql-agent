@@ -27,4 +27,8 @@
     <Project Path="src/UnitTest/Infrastructure.Test/Infrastructure.Test.csproj" />
   </Folder>
   <Folder Name="/src/Modules/" />
+  <Folder Name="/tools/">
+    <Project Path="tools/HsSqlAgent.SqlCore.Benchmarks/HsSqlAgent.SqlCore.Benchmarks.csproj" />
+    <Project Path="tools/HsSqlAgent.TestGovernance/HsSqlAgent.TestGovernance.csproj" />
+  </Folder>
 </Solution>

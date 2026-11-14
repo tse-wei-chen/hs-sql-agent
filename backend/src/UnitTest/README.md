@@ -103,8 +103,8 @@ handler tests remain under `Authorization/`.
 ### Commands
 
 ```bash
-dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- layout --root .
-dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- audit --root .
+dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- layout --root .
+dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- audit --root .
 dotnet test --project backend/src/UnitTest/Infrastructure.Test/Infrastructure.Test.csproj
 dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
 dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj

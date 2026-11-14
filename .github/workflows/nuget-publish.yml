@@ -35,13 +35,15 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: |
+            8.0.x
+            10.0.x
 
       - name: Verify GitHub Release tag matches stable package version and changelog
         if: github.event_name == 'release'
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- release-version --root . --tag "$RELEASE_TAG"
+        run: dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- release-version --root . --tag "$RELEASE_TAG"
 
       - name: Enforce security release gate 575 before packing or registry credentials
         env:
@@ -54,12 +56,12 @@ jobs:
             # Manual prereleases still use the shared VersionPrefix; a suffix is no bypass.
             package_version="$(dotnet msbuild backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.fsproj -getProperty:VersionPrefix -nologo)"
           fi
-          bash .github/scripts/verify-release-security-gate.sh "$package_version"
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- release-security "$package_version"
 
       - name: Require exact-main successful Tests before any NuGet package publication
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash .github/scripts/verify-release-head-ci-gate.sh
+        run: dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- release-head
 
       - name: Block untagged stable package publication
         if: github.event_name == 'workflow_dispatch' && inputs.version_suffix == ''
@@ -96,7 +98,7 @@ jobs:
 
       - name: Smoke test packed Hosting package
         shell: bash
-        run: bash .github/scripts/nuget-consumer-smoke.sh "${{ github.workspace }}/nupkg"
+        run: dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- package-smoke "${{ github.workspace }}/nupkg"
 
       - name: Log in to NuGet.org
         id: nuget_login

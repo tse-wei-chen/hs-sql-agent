@@ -43,7 +43,7 @@ public sealed class SqlCoreComparatorProofTests
         var before = f.Commit();
         f.Write("backend/src/Modules/HsSqlAgent.SqlCore/RewriteParser.fs", "new\nkeep\nextra\n");
         f.Write("backend/src/UnitTest/SqlAgent.Test/Smoke.cs", "test1\ntest2\n");
-        f.Write(".github/scripts/test_code_delta_contract.py", "assert True\n");
+        f.Write("backend/src/UnitTest/Infrastructure.Test/GovernanceFixture.cs", "test\n");
         f.Write("backend/src/Modules/HsSqlAgent.SqlCore/README.md", "documentation\n");
         f.Write("backend/src/Modules/SqlAgent.Service/Migrations/Initial.cs", "up\ndown\n");
         f.Write(".github/workflows/test.yml", "workflow\n");
@@ -201,6 +201,12 @@ public sealed class SqlCoreComparatorProofTests
             Assert.True(p.ExitCode == 0, error);
             return output;
         }
-        public void Dispose() => System.IO.Directory.Delete(Directory, recursive: true);
+        public void Dispose()
+        {
+            // Git marks object files read-only on Windows.
+            foreach (var file in System.IO.Directory.EnumerateFiles(Directory, "*", SearchOption.AllDirectories))
+                File.SetAttributes(file, FileAttributes.Normal);
+            System.IO.Directory.Delete(Directory, recursive: true);
+        }
     }
 }
