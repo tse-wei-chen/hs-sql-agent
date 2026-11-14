@@ -861,12 +861,15 @@ jobs:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
           SQLCORE_EXACT_NUMERIC_LIVE_PROVIDER: MsSqlServer
       - name: Verify bounded SQL Server INSERT SELECT source-row approval against live physical tables
-        # These transactional TABLOCKX/HOLDLOCK tests must not race unrelated
-        # sys-catalog DDL fixtures running in parallel within the same DB.
-        # Keep ALL cases; isolate only this class, in the existing SQL Server job.
-        run: >
-          dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
-          --filter 'FullyQualifiedName~DmlSqlServerInsertSelectApprovalTests'
+        # TABLOCKX/HOLDLOCK tests must not race each other across net8/net10
+        # against the same physical database. Execute every case on both TFMs.
+        shell: bash
+        run: |
+          set -euo pipefail
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --framework "$framework" \
+              --filter 'FullyQualifiedName~DmlSqlServerInsertSelectApprovalTests'
+          done
         env:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
       - name: Verify SQL Server M10 MERGE HOLDLOCK, live unique-key and key-range serialization
