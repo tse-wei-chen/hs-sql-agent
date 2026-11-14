@@ -1,4 +1,4 @@
-import { computed, ref, watch } from "vue"
+import { computed, onScopeDispose, ref, watch } from "vue"
 import { defineStore } from "pinia"
 import {
   exchangeOidcCode,
@@ -75,6 +75,18 @@ export const useAuthStore = defineStore("auth", () => {
   }
 
   watch(authSessionRevision, hydrate, { flush: "sync" })
+  if (typeof window !== "undefined") {
+    const onStorage = (event: StorageEvent) => {
+      if (event.storageArea === window.localStorage &&
+          (event.key === null || [
+            "accessToken", "refreshToken", "permissions", "userEmail", "userName",
+          ].includes(event.key))) {
+        hydrate()
+      }
+    }
+    window.addEventListener("storage", onStorage)
+    onScopeDispose(() => window.removeEventListener("storage", onStorage))
+  }
   hydrate()
 
   function persist(payload: AuthSessionPayload) {
@@ -89,6 +101,10 @@ export const useAuthStore = defineStore("auth", () => {
   function completeTokens(response: AuthSessionPayload) {
     if (!response?.accessToken || !response?.refreshToken)
       return false
+    // A new identity must never inherit the previous user's optional grants
+    // or display identity when the API response omits these fields. Token
+    // refresh, in contrast, intentionally retains omitted optional fields.
+    clearAuthSession()
     persist(response)
     if (typeof sessionStorage !== "undefined") sessionStorage.removeItem("mfaToken")
     return true
