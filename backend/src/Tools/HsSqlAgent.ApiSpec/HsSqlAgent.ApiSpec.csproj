@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
-        <TargetFrameworks Condition="'$(LibraryFrameworks)'==''">net10.0;net8.0;</TargetFrameworks>
+        <!-- CLI entry point; published libraries and test projects stay multi-targeted. -->
+    <TargetFramework Condition="'$(LibraryFrameworks)'==''">net10.0</TargetFramework>
     <TargetFrameworks Condition="'$(LibraryFrameworks)'!=''">$(LibraryFrameworks)</TargetFrameworks>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
