@@ -52,6 +52,28 @@ public class McpBuiltInToolContractTests
         Assert.Equal("high", dml.Risk);
     }
 
+    [Fact]
+    public void AdminSelectableCatalog_OffersOnlyFourQueryToolsAndOptInDml()
+    {
+        Assert.Equal(
+            new[]
+            {
+                McpBuiltInTools.GetSchemas,
+                McpBuiltInTools.GetTables,
+                McpBuiltInTools.GetColumns,
+                McpBuiltInTools.ExecuteQuerySql,
+                McpBuiltInTools.ExecuteDmlSql
+            },
+            McpBuiltInTools.AdminSelectableCatalog.Select(tool => tool.Name).ToArray());
+        Assert.Equal(4, McpBuiltInTools.AdminSelectableCatalog.Count(tool => tool.DefaultSelected));
+        Assert.False(Assert.Single(McpBuiltInTools.AdminSelectableCatalog,
+            tool => tool.Name == McpBuiltInTools.ExecuteDmlSql).DefaultSelected);
+        Assert.DoesNotContain(McpBuiltInTools.AdminSelectableCatalog,
+            tool => tool.Name == McpBuiltInTools.ExecuteDdlSql);
+        Assert.Contains(McpBuiltInTools.Catalog,
+            tool => tool.Name == McpBuiltInTools.ExecuteDdlSql);
+    }
+
     [Theory]
     [InlineData(nameof(SqlAgentTool.ExecuteQuerySql), typeof(McpQueryToolResult))]
     [InlineData(nameof(SqlAgentTool.GetSchemas), typeof(McpSchemasToolResult))]

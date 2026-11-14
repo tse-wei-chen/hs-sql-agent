@@ -33,6 +33,13 @@ public static class McpBuiltInTools
         new(ExecuteDdlSql, "DDL", "Execute DDL", "critical", true, false)
     ];
 
+    // Admin MCP-key tool selection is release-scoped, unlike the canonical runtime
+    // catalog. DDL remains recognized by the MCP runtime but is not offered as a
+    // selectable grant in this release. Keep the four Query defaults and opt-in DML.
+    public static IReadOnlyList<McpToolDescriptor> AdminSelectableCatalog { get; } = Catalog
+        .Where(tool => !string.Equals(tool.Type, "DDL", StringComparison.OrdinalIgnoreCase))
+        .ToArray();
+
     public static FrozenSet<string> Names { get; } = Catalog
         .Select(tool => tool.Name)
         .ToFrozenSet(StringComparer.OrdinalIgnoreCase);

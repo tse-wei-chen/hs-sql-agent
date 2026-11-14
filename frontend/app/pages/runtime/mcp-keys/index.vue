@@ -773,7 +773,7 @@ onMounted(load);
               class="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
             >
               Disables only this key's request quota. IP throttling, SQL concurrency,
-              row limits, timeouts, and DML/DDL safeguards still apply.
+              row limits, timeouts, and applicable approval safeguards still apply.
             </div>
             <VeeField name="dbManagementId" rules="required" v-slot="{ errorMessage, meta: fieldMeta }">
               <Field>
@@ -898,7 +898,7 @@ onMounted(load);
                 </template>
               </MultiSelect>
               <p v-if="toolCatalogReady" class="mt-2 text-xs text-muted-foreground">
-                New keys start with four safe read/query tools. At least one tool must remain selected; DML and DDL are opt-in.
+                New keys start with four safe read/query tools. At least one tool must remain selected; DML is opt-in.
               </p>
               <div
                 v-if="toolCatalogReady"

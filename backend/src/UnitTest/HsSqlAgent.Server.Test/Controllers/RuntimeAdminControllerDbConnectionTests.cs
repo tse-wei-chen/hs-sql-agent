@@ -1,8 +1,10 @@
 using System.Reflection;
 using System.Text.Json;
+using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
+using Common.Models;
 using HsSqlAgent.Server.Controllers;
 using HsSqlAgent.Server.Models;
 using HsSqlAgent.SqlCore.Enums;
@@ -17,6 +19,54 @@ namespace HsSqlAgent.Server.Test.Controllers;
 
 public sealed class RuntimeAdminControllerDbConnectionTests
 {
+    [Fact]
+    public async Task ListAvailableTools_WithoutDatabase_ReturnsOnlyFiveSelectableBuiltIns()
+    {
+        var fixture = CreateControllerContext();
+
+        var result = await fixture.Controller.ListAvailableTools(
+            null, TestContext.Current.CancellationToken);
+
+        var tools = Assert.IsAssignableFrom<IEnumerable<McpToolDescriptor>>(
+            Assert.IsType<OkObjectResult>(result).Value).ToArray();
+        Assert.Equal(5, tools.Length);
+        Assert.Equal(4, tools.Count(tool => tool.DefaultSelected));
+        Assert.Contains(tools, tool => tool.Name == McpBuiltInTools.ExecuteDmlSql
+            && !tool.DefaultSelected);
+        Assert.DoesNotContain(tools, tool => tool.Name == McpBuiltInTools.ExecuteDdlSql);
+    }
+
+    [Fact]
+    public async Task ListAvailableTools_WithDatabase_OmitsDdlAndPreservesPublishedQueryDml()
+    {
+        var fixture = CreateControllerContext();
+        fixture.CustomSqlToolService
+            .Setup(service => service.GetPublishedToolsForDbAsync(
+                1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(
+            [
+                new CustomSqlTool { Name = "lookup_order", Type = "Query" },
+                new CustomSqlTool { Name = "archive_order", Type = "DML" },
+                // Legacy or malformed custom records must not reintroduce DDL.
+                new CustomSqlTool { Name = "old_schema_change", Type = "DDL" },
+                new CustomSqlTool { Name = McpBuiltInTools.ExecuteDdlSql, Type = "Query" }
+            ]);
+
+        var result = await fixture.Controller.ListAvailableTools(
+            1, TestContext.Current.CancellationToken);
+
+        var tools = Assert.IsAssignableFrom<IEnumerable<McpToolDescriptor>>(
+            Assert.IsType<OkObjectResult>(result).Value).ToArray();
+        Assert.Equal(7, tools.Length);
+        Assert.Equal(4, tools.Count(tool => tool.DefaultSelected));
+        Assert.Contains(tools, tool => tool.Name == "lookup_order" && !tool.IsBuiltIn);
+        Assert.Contains(tools, tool => tool.Name == "archive_order"
+            && tool.Type == "DML" && !tool.DefaultSelected);
+        Assert.DoesNotContain(tools, tool => tool.Type.Equals(
+            "DDL", StringComparison.OrdinalIgnoreCase)
+            || tool.Name.Equals(McpBuiltInTools.ExecuteDdlSql, StringComparison.OrdinalIgnoreCase));
+    }
+
     [Fact]
     public void TestDbConnectionHttpRequest_ExistingModeFields_AreNullableInClrMetadata()
     {
@@ -188,12 +238,14 @@ public sealed class RuntimeAdminControllerDbConnectionTests
             controller,
             tester,
             dbManagementService,
-            cryptoService);
+            cryptoService,
+            customSqlToolService);
     }
 
     private sealed record ControllerContextFixture(
         RuntimeAdminController Controller,
         Mock<IDbSetterService> Tester,
         Mock<IDbManagementService> DbManagementService,
-        Mock<ICryptoService> CryptoService);
+        Mock<ICryptoService> CryptoService,
+        Mock<ICustomSqlToolService> CustomSqlToolService);
 }
