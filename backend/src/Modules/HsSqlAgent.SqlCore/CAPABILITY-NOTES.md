@@ -1,0 +1,199 @@
+# Detailed capability notes
+
+Moved from the package README. These bounded implementation notes are not a complete support matrix. Later extensions can supersede earlier restrictions; Host-only capabilities are outside SqlCore. Consult current Host gates for execution authority.
+
+[Package overview](README.md)
+
+### 3.1 bounded SQL Server ordered-key CTE / derived admission
+
+Native SQL Server 2022 UPDATE/DELETE with independently live-attested
+physical UNIQUE keys can traverse **up to three** non-lateral, read-only
+derived SELECT layers that preserve the full ordered physical key tuple as
+direct, unambiguous, injective column projections. CTE renaming and derived
+projections now share the same ordered-key mapping rule. Expressions,
+reordered or duplicated keys, filters, extra/multiplying joins, and four or
+more derived layers remain fail-closed. Static Catalog cardinality does
+not authorize execution: Host still verifies the physical index, current
+schema, Preview row set, one-use Approval and transaction-time key freshness.
+No additional provider, MCP tool or CLR public API is enabled.
+
+### 3.1 observed SQL coverage ledger (compiler evidence, not a support percentage)
+
+The six-provider coverage ledger reads the *existing checked-in positive compiler
+regression corpora* and verifies exact counts, statement family, native source/target
+identity, unique case IDs, and declared version profiles. It is not an official
+SQL grammar denominator, a proof of arbitrary SQL support, or a Host/real-DB
+execution claim. DDL/DCL/TCL/Session/Utility/Procedural coverage is not
+implied by DQL or DML cases. Negative fail-closed and real DB parity remain
+independently gated by the existing test jobs.
+
+To regenerate the CI evidence locally from the repository root:
+
+```bash
+python3 -m unittest discover -s .github/scripts -p 'test_sqlcore_coverage_ledger.py'
+python3 .github/scripts/sqlcore_coverage_ledger.py --check \
+  --manifest backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sqlcore-coverage-manifest.json \
+  --output artifacts/sqlcore-coverage-ledger.json
+```
+
+The output records observed case totals per dialect and semantic family. A new
+regression corpus must be added explicitly to the manifest; changing a corpus
+without updating its declared counts fails CI. Evidence is generated as an
+artifact by the existing syntax-matrix job; no additional Compiler, NuGet, MCP,
+database driver, approval path or SQL execution capability is introduced.
+
+### Native SQL Server/Oracle LAG/LEAD NULL treatment (G10/Q02)
+
+Oracle 12.1+ supports explicit `LAG(value) IGNORE NULLS OVER (...)`
+and `LEAD(value) RESPECT NULLS OVER (...)`. SQL Server 2022+ supports
+`RESPECT NULLS`; `LAG/LEAD IGNORE NULLS` requires SQL Server 2022 CU4+
+(build 16.0.4035.4+) because earlier SQL Server 2022 builds have a native
+IGNORE NULLS correctness defect. A 16.0-only profile does not attest CU4. The closed F# window AST carries
+`WindowNullTreatment` rather than discarding the modifier during parsing.
+An explicit matching source and target ServerVersion profile is required;
+PostgreSQL, MySQL, SQLite and Firebird remain fail-closed.
+Only LAG and LEAD are proven. The CLR `WindowSpec.NullTreatment` property
+and structured `WindowDefinition.NullTreatment` DTO share the same
+validation; the original CLR constructor and default LAG/LEAD behavior
+are unchanged. Invalid or repeated modifiers, missing OVER and unsupported
+window functions reject. Real SQL Server 2022 and Oracle 26ai row-parity
+tests prove NULL-skipping semantics; SqlCore does not execute SQL or grant
+permissions.
+
+### Native FIRST_VALUE/LAST_VALUE NULL treatment with full-frame proof (G10/Q02)
+
+SQL Server 2022+ and Oracle 12.1+ now preserve explicit
+`FIRST_VALUE(value) IGNORE NULLS OVER (...)` and
+`LAST_VALUE(value) RESPECT NULLS OVER (...)` in the same closed F# window
+AST. The modifier must appear between the function call and `OVER`.
+Unlike LAG/LEAD's offset behavior, FIRST/LAST evaluate the selected
+**window frame**: `LAST_VALUE` with the default frame often stops at the
+current row. Use an explicit
+`ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING`
+for full-partition behavior; real SQL Server 2022 / Oracle 26ai tests
+compare both NULL modes, both functions, and native/compiled results.
+
+A matching explicit source and target ServerVersion is required;
+SQL Server 2022 RTM (16.0) and Oracle 12.1+ are supported. The SQL Server
+CU4 correctness requirement remains **specific to LAG/LEAD IGNORE NULLS**,
+not FIRST/LAST. Four unsupported providers, malformed functions/modifiers
+and unproven profiles are rejected. Cross-provider SQL Server/Oracle
+lowering remains fail-closed: their implicit NULL ordering may differ, and
+this feature only proves same-provider native window semantics. Existing
+C# CLR/structured DTOs reuse
+the same typed proof; SqlCore grants no SQL execution or permission.
+
+### Bounded conditional DISTINCT COUNT (G10/Q02)
+
+A valid FILTER source such as PostgreSQL
+`COUNT(DISTINCT amount) FILTER (WHERE status = 1)` can compile to
+MySQL `COUNT(DISTINCT CASE WHEN status = 1 THEN amount END)` and
+SQL Server `COUNT_BIG(DISTINCT CASE WHEN status = 1 THEN amount END)`.
+Only a direct local column, one DISTINCT argument and a proven bounded
+predicate are authorized. NULLs, duplicates, no-match zero counts and
+group-by results are regression-tested in PostgreSQL, MySQL and SQL Server.
+`DISTINCT` window aggregates remain rejected on both targets (they are not
+supported in MySQL 8.4 or SQL Server 2022); computed DISTINCT arguments,
+multi-argument DISTINCT, other FILTER aggregates and invalid source syntax
+remain fail-closed. Cross-database string collations and type coercions are
+provider-specific and are **not** claimed equivalent by this numeric parity
+evidence; SqlCore does not execute SQL.
+
+### Bounded cross-provider COUNT FILTER lowering (G10/Q02)
+
+PostgreSQL `COUNT(*) FILTER (WHERE status = 1)` and
+`COUNT(amount) FILTER (WHERE status = 1)` can now compile for MySQL as
+`COUNT(CASE WHEN ... THEN 1/amount END)`, and for SQL Server as
+`COUNT_BIG(CASE WHEN ... THEN 1/amount END)`. The SQL Server form
+preserves 64-bit counts. Both preserve empty-group results (zero, not NULL), NULL-sensitive
+`COUNT(amount)` and window-frame counts. Only unqualified, non-DISTINCT
+COUNT over `*` or a direct local column with bounded column/literal
+predicates is proven. `SUM`, DISTINCT, computed COUNT operands, functions,
+subqueries and outer references remain rejected; raw MySQL/SQL Server
+`FILTER` source syntax is still invalid. The separate
+`aggregate.filtered_count` capability does not weaken generic
+`expression.filter` rules. No SQL execution or approval is added.
+
+### Native EXCLUDE frame membership (G10/Q02)
+
+PostgreSQL 11+ and SQLite 3.28+ preserve `EXCLUDE CURRENT ROW`, `EXCLUDE GROUP`,
+`EXCLUDE TIES`, and explicit `EXCLUDE NO OTHERS` for `ROWS`, `RANGE`
+and `GROUPS` window frames. These alter which *peer rows* are visible to
+frame-sensitive functions; they are **not** interchangeable with a WHERE
+filter or another frame unit. Both raw SQL and structured
+`WindowFrameDefinition.Exclusion` carry the explicit mode through the F#
+AST and CLR compatibility layer. Other four source/target providers and
+explicitly old runtime versions reject before SQL emission; the Host still
+must verify its actual database engine before execution.
+
+### SQL Server RANGE source-dialect fence (G10/Q02)
+
+SQL Server does not permit numeric `PRECEDING` or `FOLLOWING` offsets for
+`RANGE` frames. SqlCore rejects these as **source syntax** even when targeting
+PostgreSQL or SQLite; it also rejects them when SQL Server is the target of
+a structured query. Numeric `ROWS` offsets and supported
+`RANGE UNBOUNDED PRECEDING/CURRENT ROW` forms remain valid.
+PostgreSQL and SQLite retain their native numeric `RANGE` semantics.
+
+### Native GROUPS peer-frame queries (G10/Q02)
+
+For PostgreSQL 11+ and SQLite 3.28+, the F# query compiler can preserve a
+bounded `GROUPS BETWEEN ... AND ...` window frame natively. Unlike `ROWS`,
+`GROUPS` counts ordered peer groups rather than individual rows. An explicit
+window `ORDER BY` is required; backward bounds and other unsupported shapes
+fail closed. The source and target dialect are both checked, and an explicitly
+declared server version older than the required minimum is rejected. An absent
+version profile uses the current-supported-release compilation baseline, **not**
+a claim that an arbitrary older runtime can execute the plan. The Host must
+verify its actual runtime version; no fallback to `ROWS` or `RANGE` exists.
+MySQL, SQL Server, Oracle and Firebird remain rejected for this capability.
+
+### SQL Server single-row MERGE target locking
+
+The narrowly modeled native SQL Server `MERGE` (one explicit `USING (VALUES (...))` row, full metadata-assured UNIQUE/PRIMARY match key) compiles with `WITH (HOLDLOCK)` on the **target** to retain a serializable key-range fence, including absent keys. Real SQL Server tests verify key resolution, matched/unmatched actions and competing writes. SqlCore still does not open a transaction or grant execution authority. The Hosting/Server typed DML approval path still **rejects MERGE/Upsert** until existing-row impact and approval are independently proven.
+
+### Strict SQLite single-key conflict-skip schema validation
+
+The closed F# Strict Schema Snapshot validates the *physical target-column shape* of exactly one SQLite `INSERT ... VALUES (...) ON CONFLICT (id) DO NOTHING` row with a single explicit conflict target. This structural validation **does not prove that `id` has a physically enforced UNIQUE constraint**: only the Host can inspect a real SQLite PRIMARY KEY or simple UNIQUE key, ensure it is the sole enforced unique key, verify the native table/index/trigger definition, bind the preview conflict state and revalidate it in the write transaction. The typed Host currently permits this one-row DO NOTHING exception only with a built-in native schema verifier, one sole simple physical PRIMARY or UNIQUE key, a non-NULL exact INT64 key literal, no triggers and `DmlMaxAffectedRows=1`. Conflict UPDATE, general UPSERT/MERGE, batches and other providers remain excluded from this Host feature.
+
+### Native PostgreSQL single-row conflict skip
+
+The typed Hosting/Server DML approval path now also permits a **narrow PostgreSQL** `INSERT ... VALUES (one row) ON CONFLICT (one_column) DO NOTHING` case with a non-NULL exact 64-bit integer literal. The physical column must be a NOT NULL INT2/INT4/INT8 with the table's **sole simple immediately enforced (NOT DEFERRABLE) PRIMARY/UNIQUE index**. The built-in PostgreSQL provider captures a full table/index/constraint digest, rejecting partitioning, rules, user triggers and row-level security. Preview binds the actual key presence; Commit uses a PostgreSQL transaction-held `SHARE ROW EXCLUSIVE NOWAIT` lock to prevent competing writes during revalidation, checks the same digest, then executes the compiled mutation. Unproven keys, index changes, multi-row, UPDATE-on-conflict, RETURNING and batches remain rejected. The stronger table-level lock is intentional and may reduce concurrent write throughput.
+
+### Native PostgreSQL single-row conflict UPDATE Host approval
+
+Host-only, separately from the independent SqlCore NuGet compiler, PostgreSQL now has a bounded `INSERT INTO users (id, name) VALUES (7,'new') ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name` Preview/Approval/Commit path. Its physical target must have exactly two columns (one NOT NULL BIGINT sole immediate PRIMARY/UNIQUE key and one NOT NULL TEXT value), no default, CHECK/FK, additional index/column, trigger, rule, RLS, partition or inheritance. The full native physical metadata digest is bound to one-use approval with the proposed payload and the actual prior row. Preview displays INSERT or UPDATE with before/after values. Commit takes a transaction-held PostgreSQL `SHARE ROW EXCLUSIVE NOWAIT` lock, verifies the same schema and old-row state, and runs the canonical compiled statement atomically. Generic UPSERT, key updates, multi-column/row changes and arbitrary expressions remain fail closed; the table lock knowingly reduces concurrent writer capacity. No new MCP tool or public compiler API.
+
+### PostgreSQL multi-column native conflict UPDATE approval (Host only)
+
+M12 reuses the existing F# compiler and typed Host approval to support a bounded single-row PostgreSQL `INSERT INTO users (id, name, city) VALUES (7, 'new-name', 'new-city') ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, city=EXCLUDED.city`. The actual permanent plain table must contain exactly one NOT NULL BIGINT sole immediate PRIMARY/UNIQUE key and **1–4 TEXT NOT NULL value columns**; every inserted non-key column must receive its own `EXCLUDED.column` assignment. Preview binds INSERT/UPDATE, every old/new value, the canonical payload and full physical catalog SHA. Commit acquires `SHARE ROW EXCLUSIVE NOWAIT` until transaction completion and re-attests all old values before executing the compiled mutation. Missing/duplicate/partial expressions, five or more updated columns, extra physical columns/indexes, defaults, CHECK/FK, triggers, rules, RLS or partitioning fail closed. This lock limits concurrent writes. No new MCP tool or public signature; newly versioned approval bindings require an updated preview after deployment.
+
+### PostgreSQL typed, nullable native conflict UPDATE approval (Host only)
+
+M13 extends M12's same one-row, 1–4-value PostgreSQL `ON CONFLICT DO UPDATE` approval without changing the F# compiler's public contracts. A single permanent plain physical table with a sole immediately enforced NOT NULL BIGINT unique/primary key may now contain value columns of `TEXT`, `SMALLINT`, `INTEGER` or `BIGINT`, each nullable or NOT NULL. The Host matches string literals only to TEXT, signed integral literals to exact INT2/4/8 ranges and SQL NULL only to physically nullable fields. It never infers safety from implicit casts, default values or a virtual schema. The Preview binds every Before/After value (including NULL), the real old-row fingerprint, physical schema SHA and compiled mutation to one-time approval. Commit locks the actual table with `SHARE ROW EXCLUSIVE NOWAIT`, revalidates types, NULL constraints, schema and all old values, then executes exactly once. Date/time, NUMERIC, floating-point, UUID, arbitrary expressions, extra indexes/constraints, triggers and batches remain denied. Internal binding `v3` requires a fresh Preview for unfinished M12 approvals; strong table locking intentionally limits parallel writers.
+
+### PostgreSQL M13 Host integer-source and quoted-column identity fence
+
+For the native typed single-row PostgreSQL `ON CONFLICT DO UPDATE` Host approval only, values intended for SMALLINT/INTEGER/BIGINT columns require an original **plain decimal integer token** (for example `42` or `-12`). The Host checks the verified F# AST's source span and original parsed SQL; normalized scientific or fractional spellings (`1e10`, `42.0`, `4.2e1`) do not qualify as an approved integer literal. PostgreSQL quoted column identities that differ only by case (such as `id` and `"ID"`) or collide with synthetic preview fields after case folding are rejected, so the existing case-insensitive row-fingerprint reader never ambiguously approves another physical column. This does not alter the general SQL grammar or the existing TEXT/SMALLINT/INTEGER/BIGINT/SQL NULL capability, one-use Host challenge and transaction-time physical catalog revalidation. No new public API or MCP tool.
+
+### PostgreSQL native conflict UPDATE direct RETURNING Host approval
+
+The single-row PostgreSQL `INSERT INTO users(id,name,amount) VALUES(7,'new',42) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name, amount=EXCLUDED.amount RETURNING id,name,amount` uses the existing F# closed DML AST/renderer and physically attested typed Host Preview/Approval/Commit. RETURNING is restricted to 1–5 distinct, unqualified direct physical key/value target columns, already covered by the same old-row and proposed-value approval. Expression, wildcard, aliased, qualified, duplicate and system-column RETURNING do not mint approval. PostgreSQL `SHARE ROW EXCLUSIVE NOWAIT` holds the physical catalog and UNIQUE key stable at transaction-time recheck. Actual result rows, including SQL NULL, are emitted through the existing structured DML result only after confirmed commit. No new public API, MCP tool, dependency or extra metadata query; atomic conflict batches remain denied.
+
+### PostgreSQL conflict-skip key-only RETURNING (Host only)
+
+On the existing one-row PostgreSQL `ON CONFLICT (id) DO NOTHING` Preview/Approval/Commit path, `RETURNING id` is admitted only when `id` is the **same single, direct, unqualified physical PRIMARY/UNIQUE key** attested by the live provider. The original NOT NULL INT2/INT4/INT8 key, sole immediate enforced unique index, full physical schema fingerprint, one-time approval, transaction-held `SHARE ROW EXCLUSIVE NOWAIT`, revalidation and one-row cap remain mandatory. Commit returns the **actual inserted key row** only on confirmed insertion; a proven conflict skip returns zero rows. Drift, approval replay or changed conflict state return no rows and do not authorize a write. Other RETURNING columns, wildcards, aliases, expressions, qualifiers and system fields remain denied, as does SQLite conflict-skip RETURNING. No new MCP tool, public SqlCore API, metadata round trip or DML batch capability.
+
+### SQL Server MERGE matched DELETE Host approval (develop only)
+
+For real SQL Server 2022, a one-row `MERGE INTO dbo.inventory AS t USING (VALUES (7)) AS s (id) ON t.id = s.id WHEN MATCHED THEN DELETE;` now uses the existing F# MERGE compiler and typed Host single-statement approval, **only** when `id` is the exact non-null native INT, non-identity, sole physically enforced primary key of a regular permanent dbo table. No extra UNIQUE key, trigger, FK, CHECK, default, security policy or unsupported table definition is permitted. `MERGE WITH (HOLDLOCK)` compiler output alone is never sufficient: Host first attests the live complete schema, unique key and original integer source token; Preview binds the current 0/1 matching key to a one-time authorization, and Commit holds a serializable `TABLOCKX/HOLDLOCK` lock while rechecking schema and row presence before execution. Unexpected row/key/index drift cancels. Existing `execute_dml_sql` handles the result with no extra tool or public API. The exclusive lock reduces concurrent writers. MERGE UPDATE/INSERT/mixed actions, arbitrary predicates, composite/multiple source keys, cross-provider execution and atomic MERGE batches all remain denied.
+
+### SQL Server 2022 MERGE matched UPDATE approval (develop only)
+
+In addition to the narrow matched-DELETE Host capability, `MERGE INTO dbo.inventory AS t USING (VALUES(7,25,4)) AS s(id,quantity,status) ON t.id=s.id WHEN MATCHED THEN UPDATE SET quantity=s.quantity,status=s.status;` is permitted only for one source row with a single exact physically enforced non-identity INT PRIMARY key and 1–3 distinct, direct, non-null native INT payload columns. Preview shows each real physical before-value and the proposed after-value; full old-value fingerprints, policy, actor, target and complete schema digest are sealed to a one-use approval. Commit holds a serializable SQL Server table-wide `TABLOCKX/HOLDLOCK` while reattesting the physical catalog and **all old values**. Any drift cancels rather than overwriting concurrent changes. The exclusive lock intentionally limits concurrent writes. No MERGE INSERT, mixed actions, expressions, casts, NULL, primary-key assignment, composite keys, multiple rows or MERGE batches; no new MCP tool and no changes to default DML-off or four read-only selections.
+
+### SQL Server 2022 MERGE NOT MATCHED INSERT Host approval (develop only)
+
+The existing one-row native SQL Server MERGE pipeline now also admits **`WHEN NOT MATCHED THEN INSERT` only**, such as `MERGE INTO dbo.inventory AS t USING (VALUES(7,25,4)) AS s(id,quantity,status) ON t.id=s.id WHEN NOT MATCHED THEN INSERT(id,quantity,status) VALUES(s.id,s.quantity,s.status);`. The table must be an ordinary permanent `dbo` table with one sole physically enforced non-NULL non-identity INT PRIMARY key and **1–3 direct INT payload fields**. INSERT must enumerate every physical column exactly once and use the identically named source field. Full physical Catalog and source integer token proof forbids omitted columns/default values, other unique keys, triggers, FKs, CHECK and unknown side effects.
+
+Preview binds the actual existing-key absence/presence result to the proposed complete row, exact compiled MERGE, physical schema and one-use actor/policy approval. When missing, it shows the full proposed row and predicts one INSERT; when present, zero affected rows and no proposed insertion. Commit holds SQL Server SERIALIZABLE `TABLOCKX/HOLDLOCK` and verifies the real schema and same key absence/presence again, cancelling if another writer inserted/deleted the key or revoked physical indexes. The exclusive table lock reduces concurrent writes; no Host throughput improvement is implied. No general MERGE or mixed actions, extra predicates, casts, implicit coercions, nullable values, composite keys or atomic MERGE batches. Reuses `execute_dml_sql` without adding a new MCP tool; the four default read-only tools remain selected and DML disabled.
