@@ -30,7 +30,9 @@ done
 sed -E $'s/\033\\[[0-9;]*[[:alpha:]]//g' "$output" > "$clean"
 
 for tfm in "${tfms[@]}"; do
-  mapfile -t results < <(grep -F "($tfm|" "$clean" | grep -F " passed [" || true)
+  # MTP prints an identical assembly result once on completion and once
+  # in the final summary; deduplicate those lines before asserting per-TFM.
+  mapfile -t results < <(grep -F "($tfm|" "$clean" | grep -F " passed [" | sort -u || true)
   if (( ${#results[@]} != 1 )); then
     echo "::error::Expected one physical result for $tfm, got ${#results[@]}: $filter" >&2
     exit 1
