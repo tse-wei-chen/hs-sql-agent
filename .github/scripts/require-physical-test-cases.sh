@@ -24,7 +24,9 @@ fi
 output="$(mktemp)"
 clean="$(mktemp)"
 trap 'rm -f "$output" "$clean"' EXIT
-dotnet test --project "$project" --filter "$filter" | tee "$output"
+for tfm in "${tfms[@]}"; do
+  dotnet test --project "$project" --framework "$tfm" --filter "$filter" | tee -a "$output"
+done
 sed -E $'s/\033\\[[0-9;]*[[:alpha:]]//g' "$output" > "$clean"
 
 for tfm in "${tfms[@]}"; do
@@ -41,13 +43,4 @@ for tfm in "${tfms[@]}"; do
 done
 
 total=$(( expected * ${#tfms[@]} ))
-for entry in "succeeded:$total" "failed:0" "skipped:0"; do
-  name="${entry%%:*}"
-  count="${entry#*:}"
-  if ! grep -Eq "${name}:[[:space:]]*${count}([[:space:]]|$)" "$clean"; then
-    echo "::error::Physical integration '$filter' missing total $name=$count." >&2
-    exit 1
-  fi
-done
-
 echo "Verified $expected physical cases per TFM (${tfms[*]}), $total total, 0 failed, 0 skipped: $filter"
