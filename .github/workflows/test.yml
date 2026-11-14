@@ -394,7 +394,7 @@ jobs:
             echo "Depth report missing; preceding step failed." >&2
             exit 1
           fi
-          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile depth --file artifacts/sqlcore-depth-pr.json
+          dotnet run --framework net10.0 --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile depth --file artifacts/sqlcore-depth-pr.json
       - name: Characterize mixed Expr/EXISTS Query nesting (isolated, observational)
         run: >
           dotnet run -c Release --no-build
@@ -410,7 +410,7 @@ jobs:
             echo "Mixed Query depth report missing; preceding step failed." >&2
             exit 1
           fi
-          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile mixed-depth --file artifacts/sqlcore-mixed-depth-pr.json
+          dotnet run --framework net10.0 --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile mixed-depth --file artifacts/sqlcore-mixed-depth-pr.json
       - name: Profile nested derived and CTE query phases (isolated, observational)
         run: >
           dotnet run -c Release --no-build
@@ -426,7 +426,7 @@ jobs:
             echo "Nested Query phase report missing." >&2
             exit 1
           fi
-          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile query-phases --file artifacts/sqlcore-query-phases-pr.json
+          dotnet run --framework net10.0 --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile query-phases --file artifacts/sqlcore-query-phases-pr.json
       - name: Characterize alternating CTE/derived parser resource threshold
         run: >
           dotnet run -c Release --no-build
@@ -438,7 +438,7 @@ jobs:
         if: always()
         shell: bash
         run: |
-          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile mixed-cte-derived --file artifacts/sqlcore-mixed-cte-derived-pr.json
+          dotnet run --framework net10.0 --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile mixed-cte-derived --file artifacts/sqlcore-mixed-cte-derived-pr.json
       - name: Characterize nested SET branch stack and allocations (isolated, observational)
         run: >
           dotnet run -c Release --no-build
@@ -454,7 +454,7 @@ jobs:
             echo "Nested SET probe report missing." >&2
             exit 1
           fi
-          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile nested-set --file artifacts/sqlcore-nested-set-pr.json
+          dotnet run --framework net10.0 --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile nested-set --file artifacts/sqlcore-nested-set-pr.json
       - name: Verify iterative nested SET parsing on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -466,7 +466,7 @@ jobs:
       - name: Gate 256 KiB nested SET successful compilation and phases
         shell: bash
         run: |
-          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile set-small --file artifacts/sqlcore-set-small-stack-pr.json
+          dotnet run --framework net10.0 --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile set-small --file artifacts/sqlcore-set-small-stack-pr.json
       - name: Verify heap CTE parsing and typed proof on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -478,7 +478,7 @@ jobs:
       - name: Gate 256 KiB nested CTE successful compilation
         shell: bash
         run: |
-          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile cte-small --file artifacts/sqlcore-cte-small-stack-pr.json
+          dotnet run --framework net10.0 --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile cte-small --file artifacts/sqlcore-cte-small-stack-pr.json
       - name: Require alternating CTE-derived full compilation on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -490,7 +490,7 @@ jobs:
       - name: Gate mixed CTE-derived stack success and phase completeness
         shell: bash
         run: |
-          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile mixed-small --file artifacts/sqlcore-mixed-cte-derived-small-stack-pr.json
+          dotnet run --framework net10.0 --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile mixed-small --file artifacts/sqlcore-mixed-cte-derived-small-stack-pr.json
       - name: Verify primary FROM LATERAL proof on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -502,7 +502,7 @@ jobs:
       - name: Gate LATERAL rendering and scoped type proof
         shell: bash
         run: |
-          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile lateral --file artifacts/sqlcore-lateral-small-stack-pr.json
+          dotnet run --framework net10.0 --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile lateral --file artifacts/sqlcore-lateral-small-stack-pr.json
       - name: Verify correlated JOIN LATERAL and WHERE EXISTS scope on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -514,7 +514,7 @@ jobs:
       - name: Gate correlated mixed Query graphs without crashes or silent validation bypass
         shell: bash
         run: |
-          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile correlated --file artifacts/sqlcore-correlated-small-stack-pr.json
+          dotnet run --framework net10.0 --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile correlated --file artifacts/sqlcore-correlated-small-stack-pr.json
       - name: Verify prefixed second JOIN LATERAL correlation on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -526,7 +526,7 @@ jobs:
       - name: Gate second JOIN LATERAL full compilation and typed scope
         shell: bash
         run: |
-          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile prefixed --file artifacts/sqlcore-prefixed-join-lateral-pr.json
+          dotnet run --framework net10.0 --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile prefixed --file artifacts/sqlcore-prefixed-join-lateral-pr.json
       - name: Verify two dependent JOIN LATERALs on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -538,7 +538,7 @@ jobs:
       - name: Gate dependent JOIN LATERAL scope and real deep compilation
         shell: bash
         run: |
-          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile double --file artifacts/sqlcore-double-joined-lateral-pr.json
+          dotnet run --framework net10.0 --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile double --file artifacts/sqlcore-double-joined-lateral-pr.json
       - name: Require three dependent JOIN LATERALs on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -550,7 +550,7 @@ jobs:
       - name: Gate sequential JOIN prefix heap scope and stages
         shell: bash
         run: |
-          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile triple --file artifacts/sqlcore-triple-joined-lateral-pr.json
+          dotnet run --framework net10.0 --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile triple --file artifacts/sqlcore-triple-joined-lateral-pr.json
       - name: Probe two independently deep LATERAL sibling Queries on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -562,7 +562,7 @@ jobs:
       - name: Gate two deep LATERAL sibling proofs and resource isolation
         shell: bash
         run: |
-          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile siblings --file artifacts/sqlcore-two-deep-sibling-lateral-pr.json
+          dotnet run --framework net10.0 --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile siblings --file artifacts/sqlcore-two-deep-sibling-lateral-pr.json
       - name: Verify mixed Source and WHERE EXISTS lateral comb on 256 KiB
         run: >
           dotnet run -c Release --no-build
@@ -574,7 +574,7 @@ jobs:
       - name: Gate mixed Query Source Expr comb branches and typed safety
         shell: bash
         run: |
-          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile comb --file artifacts/sqlcore-lateral-exists-comb-pr.json
+          dotnet run --framework net10.0 --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile comb --file artifacts/sqlcore-lateral-exists-comb-pr.json
       - name: Verify public Query Facts inspection on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -586,7 +586,7 @@ jobs:
       - name: Gate Inspection phase work accounting and deep Query Facts
         shell: bash
         run: |
-          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile facts --file artifacts/sqlcore-facts-small-stack-pr.json
+          dotnet run --framework net10.0 --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile facts --file artifacts/sqlcore-facts-small-stack-pr.json
       - name: Verify correlated IN Query heap continuation on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -598,7 +598,7 @@ jobs:
       - name: Gate correlated IN actual compilation, typed proof and allocations
         shell: bash
         run: |
-          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile correlated-in --file artifacts/sqlcore-in-small-stack-pr.json
+          dotnet run --framework net10.0 --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile correlated-in --file artifacts/sqlcore-in-small-stack-pr.json
       - name: Diagnose projection ScalarSubquery and CASE Query crossings on small stacks
         run: >
           dotnet run -c Release --no-build
@@ -610,7 +610,7 @@ jobs:
       - name: Report projection Query crossings, preserving refusal versus success
         shell: bash
         run: |
-          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile projection --file artifacts/sqlcore-scalar-case-small-stack-pr.json
+          dotnet run --framework net10.0 --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile projection --file artifacts/sqlcore-scalar-case-small-stack-pr.json
       - name: Require six-provider deep paging and exact negative grammar on 256 KiB
         run: >
           dotnet run -c Release --no-build
@@ -621,7 +621,7 @@ jobs:
           --output artifacts/sqlcore-paging-small-stack-pr.json
       - name: Gate complete paging corpus, typed stages and first syntax error
         run: |
-          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile paging --file artifacts/sqlcore-paging-small-stack-pr.json
+          dotnet run --framework net10.0 --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile paging --file artifacts/sqlcore-paging-small-stack-pr.json
       - name: Measure constrained-stack SQL compilation (observational)
         run: >
           dotnet run -c Release --no-build
@@ -632,7 +632,7 @@ jobs:
           --output artifacts/sqlcore-small-stack-pr.json
       - name: Summarize constrained-stack resource diagnostics
         run: |
-          dotnet run --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile small-stack --file artifacts/sqlcore-small-stack-pr.json
+          dotnet run --framework net10.0 --no-build --project backend/tools/HsSqlAgent.TestGovernance -- depth-probe --profile small-stack --file artifacts/sqlcore-small-stack-pr.json
       - name: Upload isolated SQL nesting report
         uses: actions/upload-artifact@v4
         if: always()

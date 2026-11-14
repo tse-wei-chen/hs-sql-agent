@@ -23,6 +23,27 @@ public sealed class CiGovernanceTests
     private static string TestRoot => Path.Combine(Root, "backend", "src", "UnitTest", "HsSqlAgent.Server.Test");
 
     [Fact]
+    public void PackageConsumerSmoke_EmbedsItsSourceInTheMainGovernanceAssembly()
+    {
+        // The .cs part of PackageConsumer.cs.txt is a valid language tag.
+        // Without an explicit neutral resource, the SDK may move it into
+        // a culture satellite and package-smoke cannot find the source.
+        var source = GovernanceResources.Read("PackageConsumer.cs.txt");
+        Assert.Contains("var services = new ServiceCollection();", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SqlCoreSyntaxDepthGates_UseExplicitGovernanceTargetFramework()
+    {
+        var missingFramework = Workflow.Split('\n')
+            .Where(line => line.Contains("dotnet run", StringComparison.Ordinal)
+                && line.Contains("backend/tools/HsSqlAgent.TestGovernance", StringComparison.Ordinal)
+                && !line.Contains("--framework net10.0", StringComparison.Ordinal))
+            .ToArray();
+        Assert.Empty(missingFramework);
+    }
+
+    [Fact]
     public void SharedMetadata_AcceptsCanonicalVersionAndRejectsMissingDuplicateOrMalformedValues()
     {
         using var fixture = new Fixture();
