@@ -1178,6 +1178,13 @@ jobs:
       - name: Smoke test packed Server package
         shell: bash
         run: bash .github/scripts/nuget-consumer-smoke.sh artifacts/packages
+      - name: Build Docker image and verify .NET 10 application payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --file Dockerfile --tag hs-sql-agent:ci .
+          docker run --rm --entrypoint sh hs-sql-agent:ci -c \
+            'test -s /app/ToolBox.dll && test -s /app/HsSqlAgent.Server.dll'
 
 
   admin-api-openapi:

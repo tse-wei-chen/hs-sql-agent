@@ -40,7 +40,7 @@ COPY backend/ ./backend/
 
 COPY --from=frontend-builder /app/frontend/dist/ ./backend/src/Modules/HsSqlAgent.Server/wwwroot/
 
-RUN dotnet publish ./backend/src/ToolBox/ToolBox.csproj -c Release -o /app/publish /p:UseAppHost=false
+RUN dotnet publish ./backend/src/ToolBox/ToolBox.csproj -c Release -f net10.0 -o /app/publish /p:UseAppHost=false
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
