@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
  * that a maintainer might believe was deleted.
  */
 export function classifyReleaseTag(tag) {
-  const match = /^v?(\\d+)\\.(\\d+)\\.(\\d+)(?:[-+][0-9A-Za-z.+-]+)?$/.exec(tag);
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:[-+][0-9A-Za-z.+-]+)?$/.exec(tag);
   if (!match) throw new Error(`Unrecognized release tag "${tag}"; aborting.`);
   return Number(match[1]) < 3 ? "retire" : "retain";
 }
