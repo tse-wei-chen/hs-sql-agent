@@ -1,8 +1,6 @@
 services:
   hs-sql-agent:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/tse-wei-chen/hs-sql-agent:v3.1.0
     container_name: hs-sql-agent
     ports:
       - "8080:8080"
