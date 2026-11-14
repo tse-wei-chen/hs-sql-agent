@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [3.1.0] - Unreleased
 
+### Frontend authentication lifecycle consolidation (#21)
+
+- Centralize login, first-run signup, MFA, OIDC/SSO, logout, token claims, permission grants and user identity in one client-side Pinia auth Store. Nuxt route middleware, permission directives and sidebar now read the same reactive session rather than separately parsing localStorage.
+- Preserve one audited storage bridge for token-refresh HTTP interceptors. Rotated tokens or refreshed grants update the Store immediately, cross-tab sign-out rehydrates on the browser storage event, and a fresh sign-in cannot inherit another account's optional permission claims.
+- Keep malformed local JWT/permissions fail-closed and enforce actual security server-side. Add regression tests covering interactive auth flows, MFA retries, broken tokens, cross-account isolation, session revocation and the existing canonical permission routing contract. No changes to SQL/database runtime guarantees or 3.1.0 publication approval.
+
+
 ### Develop-only release readiness / security gate convergence (#575)
 
 - Introduce a **read-only 3.1.0 develop Release Candidate Gate**. Each `develop` push now runs the existing 18-job Tests workflow and the complete SqlCore baseline on its exact SHA. A separate bounded candidate workflow checks the latest matching results, mandatory job identities, nonempty security dependency/compiler artifacts and 3.1.0 version/evidence contracts; an invalid or missing check fails closed. The candidate proof explicitly sets `publicationAuthorized=false`.

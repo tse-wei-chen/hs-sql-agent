@@ -10,6 +10,18 @@ export interface AuthSessionPayload {
   userName?: string | null
 }
 
+// Single storage adapter for the Pinia projection, HTTP refresh interceptor and
+// account-revocation paths. Never read auth storage directly in UI components.
+export function readAuthSession(storage: Storage = localStorage) {
+  return {
+    accessToken: storage.getItem("accessToken"),
+    refreshToken: storage.getItem("refreshToken"),
+    permissions: storage.getItem("permissions"),
+    email: storage.getItem("userEmail"),
+    userName: storage.getItem("userName"),
+  }
+}
+
 export function persistAuthSession(
   payload: AuthSessionPayload,
   storage: Storage = localStorage,

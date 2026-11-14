@@ -7,8 +7,10 @@ import { Input } from "@/components/ui/input";
 import PasswordInput from "@/components/PasswordInput.vue";
 import FormField from "@/components/FormField.vue";
 import { toast } from "vue-sonner"
-import { checkFirstRun, signUp } from "~/api/auth";
-import { persistAuthSession } from "@/lib/auth-session";
+import { checkFirstRun } from "~/api/auth";
+import { useAuthStore } from "@/stores/auth";
+
+const auth = useAuthStore();
 
 const props = defineProps<{
   class?: HTMLAttributes["class"];
@@ -34,12 +36,7 @@ onMounted(async () => {
 const submit = async (values: any) => {
   submitting.value = true;
   try {
-    const response = await signUp(
-      values.email.trim(),
-      values.password,
-    );
-    if (response?.accessToken && response?.refreshToken) {
-      persistAuthSession(response);
+    if (await auth.register(values.email, values.password)) {
       return await navigateTo("/home");
     }
     toast.error("Sign up failed. Please try again.");

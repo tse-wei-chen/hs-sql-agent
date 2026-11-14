@@ -21,8 +21,9 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { signOut } from "~/api/auth";
-import { clearAuthSession } from "@/lib/auth-session";
+import { useAuthStore } from "@/stores/auth";
+
+const auth = useAuthStore();
 
 const props = defineProps<{
   user: {
@@ -35,8 +36,7 @@ const props = defineProps<{
 const { isMobile } = useSidebar();
 
 const logOut = async () => {
-  await signOut();
-  clearAuthSession();
+  await auth.logout();
   navigateTo("/login");
 };
 </script>
