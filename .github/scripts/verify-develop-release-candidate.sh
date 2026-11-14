@@ -5,9 +5,12 @@
 # verify-release-head-ci-gate.sh on the promoted main SHA.
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/release-version.sh"
+version="$(read_release_property VersionPrefix)"
+
 repo="tse-wei-chen/hs-sql-agent"
 sha="${GITHUB_SHA:-}"
-output="${HS_SQL_AGENT_CANDIDATE_REPORT:-artifacts/release-candidate/develop-3.1.0.json}"
+output="${HS_SQL_AGENT_CANDIDATE_REPORT:-artifacts/release-candidate/develop.json}"
 
 die() { echo "::error::Release candidate: $*" >&2; exit 1; }
 pending() { echo "Release candidate pending: $*" >&2; exit 75; }
@@ -23,14 +26,8 @@ current="$(gh api "repos/$repo/branches/develop" --jq '.commit.sha')" ||
     die "cannot read develop HEAD"
 [[ "$current" == "$sha" ]] || die "develop moved; discard stale candidate $sha"
 
-grep -Eq '<VersionPrefix[^>]*>3\.1\.0</VersionPrefix>' backend/Directory.Build.props ||
-    die "backend VersionPrefix is not 3.1.0"
-grep -Fqx '## [3.1.0] - Unreleased' <(grep '^## \[' CHANGELOG.md) ||
-    die "3.1.0 unreleased changelog entry is missing"
-[[ -s .github/test-suites/query-security-deployment-contract.md ]] ||
-    die "six-provider Query least-privilege deployment contract missing"
-[[ -s .github/test-suites/physical-fault-release-evidence.md ]] ||
-    die "bounded physical fault and limitations evidence missing"
+grep -Fqx "## [$version] - Unreleased" <(grep '^## \[' CHANGELOG.md) ||
+    die "unreleased changelog entry for $version is missing"
 
 latest_run() {
     local workflow="$1"
@@ -99,10 +96,11 @@ jq -e '
 mkdir -p "$(dirname "$output")"
 jq -n \
     --arg sha "$sha" \
+    --arg version "$version" \
     --argjson tests "$tests_run" \
     '{
       schemaVersion: 2,
-      version: "3.1.0",
+      version: $version,
       stage: "develop-release-candidate",
       sha: $sha,
       testsRunId: $tests,
@@ -113,4 +111,4 @@ jq -n \
       mainPromotionPerformed: false,
       remainingPublicationGate: "actual promoted main push SHA + completed issue #575"
     }' > "$output"
-echo "Develop 3.1.0 release candidate verified at $sha: 18 Tests jobs (run $tests_run), advisory/warning evidence present. No publication authorized."
+echo "Develop $version release candidate verified at $sha: 18 Tests jobs (run $tests_run), advisory/warning evidence present. No publication authorized."

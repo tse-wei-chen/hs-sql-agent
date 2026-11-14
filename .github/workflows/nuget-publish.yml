@@ -51,7 +51,7 @@ jobs:
           if [ -n "$RELEASE_TAG" ]; then
             package_version="$RELEASE_TAG"
           else
-            # Manual prereleases still use VersionPrefix=3.1.0; a suffix is no bypass.
+            # Manual prereleases still use the shared VersionPrefix; a suffix is no bypass.
             package_version="$(dotnet msbuild backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.fsproj -getProperty:VersionPrefix -nologo)"
           fi
           bash .github/scripts/verify-release-security-gate.sh "$package_version"

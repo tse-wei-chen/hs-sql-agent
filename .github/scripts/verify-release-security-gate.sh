@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# Refuse 3.1.0 publication until the tracked security release gate is closed.
+# Refuse protected-release publication until the tracked security release gate is closed.
 # Every publisher invokes this BEFORE obtaining registry credentials or pushing.
 set -euo pipefail
 
 version="${1:?Pass the release tag or evaluated VersionPrefix}"
-# Include 3.1.0 pre-releases from manual NuGet dispatch: a suffix must not
-# bypass the blocker when the underlying package version is still 3.1.0.
-if [[ ! "$version" =~ ^v?3\.1\.0($|[-+].*) ]]; then
-    echo "Security issue #575 is specific to v3.1.0; version ${version} is outside its scope."
+source "$(dirname "${BASH_SOURCE[0]}")/release-version.sh"
+protected_version="$(read_release_property SecurityGateVersion)"
+release_base="${version#v}"
+release_base="${release_base%%[-+]*}"
+if [[ "$release_base" != "$protected_version" ]]; then
+    echo "Security issue #575 applies to $protected_version; version $version is outside its scope."
     exit 0
 fi
 
@@ -27,7 +29,7 @@ fi
 # verify-release-head-ci-gate.sh additionally checks that main push.
 for issue_number in 575 634; do
     if ! issue="$(gh api "repos/${GITHUB_REPOSITORY}/issues/$issue_number")"; then
-        echo "::error::Cannot inspect security/publication gate #$issue_number; refusing v3.1.0 publication." >&2
+        echo "::error::Cannot inspect security/publication gate #$issue_number; refusing publication of $protected_version." >&2
         exit 1
     fi
     if ! jq -e '
@@ -37,7 +39,7 @@ for issue_number in 575 634; do
     and (.body | split("\n") | any(.[]; test("^[ \\t]*[-*][ \\t]+\\[[xX]\\]")))
     and (.body | split("\n") | all(.[]; test("^[ \\t]*[-*][ \\t]+\\[[ \\t]+\\]") | not))
 ' <<< "$issue" >/dev/null; then
-        echo "::error::Security/publication gate #$issue_number must be completed with a nonempty, fully checked checklist; refusing v3.1.0 publication." >&2
+        echo "::error::Security/publication gate #$issue_number must be completed with a nonempty, fully checked checklist; refusing publication of $protected_version." >&2
         exit 1
     fi
 done

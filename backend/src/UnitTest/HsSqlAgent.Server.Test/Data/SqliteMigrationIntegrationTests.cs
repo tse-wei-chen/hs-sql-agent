@@ -128,11 +128,11 @@ public sealed class SqliteMigrationIntegrationTests
                 // applying the newer v3-compatible migration set.
                 await adminContext.GetService<IMigrator>().MigrateAsync(
                     "20261018150000_AddManagementApiKeys", cancellationToken);
-                // Upgrade from the actual last v2.0.6 Admin Store migration,
+                // Upgrade from the actual last published-baseline Admin Store migration,
                 // not only the earlier September durable-approval schema.
                 var managementKey = new ManagementApiKey
                 {
-                    Name = "v2.0.6 preserved operator key",
+                    Name = "published-baseline preserved operator key",
                     KeyPrefix = "v2_legacy",
                     KeyHash = new string('A', 64),
                     PermissionsJson = "[\"runtime.read\"]",

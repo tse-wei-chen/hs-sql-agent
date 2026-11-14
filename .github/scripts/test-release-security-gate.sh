@@ -3,6 +3,11 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
+source "$(dirname "${BASH_SOURCE[0]}")/release-version.sh"
+protected_version="$(read_release_property SecurityGateVersion)"
+IFS=. read -r major minor patch <<< "$protected_version"
+unrelated_version="$(read_release_property PackageApiBaselineVersion)"
+next_version="$major.$minor.$((patch + 2))"
 gate="${root}/.github/scripts/verify-release-security-gate.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -49,70 +54,70 @@ expect_allow() {
 
 # RED until publication guard exists: open issue blocks stable and prerelease.
 export MOCK_ISSUE_STATE=open
-expect_deny v3.1.0
-expect_deny 3.1.0
-expect_deny 3.1.0-rc.1
-expect_deny v3.1.0+build.1
+expect_deny "v${protected_version}"
+expect_deny "$protected_version"
+expect_deny "${protected_version}-rc.1"
+expect_deny "v${protected_version}+build.1"
 
 # Release must fail closed even when GitHub cannot be consulted.
 export MOCK_ISSUE_STATE=unexpected
-expect_deny v3.1.0
+expect_deny "v${protected_version}"
 export MOCK_ISSUE_STATE=closed
 export MOCK_ISSUE_API_FAIL=1
-expect_deny v3.1.0
+expect_deny "v${protected_version}"
 unset MOCK_ISSUE_API_FAIL
 export GH_TOKEN=
-expect_deny v3.1.0
+expect_deny "v${protected_version}"
 export GH_TOKEN=offline-test-token
 export GITHUB_REPOSITORY=someone/else
-expect_deny v3.1.0
+expect_deny "v${protected_version}"
 export GITHUB_REPOSITORY=tse-wei-chen/hs-sql-agent
 
 # Test-first RED: mere closure is not equivalent to all release gates passing.
 export MOCK_ISSUE_REASON=not_planned
-expect_deny v3.1.0
+expect_deny "v${protected_version}"
 unset MOCK_ISSUE_REASON
 export MOCK_ISSUE_BODY='- [x] reviewed\n- [ ] live validation remains'
-expect_deny v3.1.0
+expect_deny "v${protected_version}"
 unset MOCK_ISSUE_BODY
 export MOCK_ISSUE_BODY='- [ ] outstanding live-provider proof'
-expect_deny v3.1.0
+expect_deny "v${protected_version}"
 unset MOCK_ISSUE_BODY
 export MOCK_ISSUE_BODY=''
-expect_deny v3.1.0
+expect_deny "v${protected_version}"
 unset MOCK_ISSUE_BODY
 
 # Completed closure with verified, nonempty checklist is necessary, but not
 # sufficient to publish without the separate exact-head Tests/baseline gate.
-expect_allow v3.1.0
-expect_allow 3.1.0-beta
+expect_allow "v${protected_version}"
+expect_allow "${protected_version}-beta"
 
 # Owner-gated publication issue #634 is a distinct, required security
-# preflight. A completed develop gate #575 alone MUST NOT authorize 3.1.0.
+# preflight. A completed develop gate #575 alone MUST NOT authorize the protected release.
 export MOCK_ISSUE_STATE=closed
 export MOCK_PUB_STATE=open
-expect_deny v3.1.0
-expect_deny 3.1.0-rc.1
+expect_deny "v${protected_version}"
+expect_deny "${protected_version}-rc.1"
 export MOCK_PUB_STATE=closed
 export MOCK_PUB_REASON=not_planned
-expect_deny v3.1.0
+expect_deny "v${protected_version}"
 unset MOCK_PUB_REASON
 export MOCK_PUB_BODY='- [x] main passed\n- [ ] owner did not approve release'
-expect_deny v3.1.0
+expect_deny "v${protected_version}"
 unset MOCK_PUB_BODY
 export MOCK_PUB_BODY=''
-expect_deny v3.1.0
+expect_deny "v${protected_version}"
 unset MOCK_PUB_BODY
 export MOCK_PUB_API_FAIL=1
-expect_deny v3.1.0
+expect_deny "v${protected_version}"
 unset MOCK_PUB_API_FAIL
 
 # Both security/develop completion and owner/publication sign-off needed.
-expect_allow v3.1.0
+expect_allow "v${protected_version}"
 
-# Never change the release policy of earlier, unrelated versions.
+# Never change the release policy of unrelated versions.
 export MOCK_ISSUE_STATE=open
-expect_allow v3.0.0
-expect_allow 3.1.1
+expect_allow "v$unrelated_version"
+expect_allow "$next_version"
 
-echo "3.1.0 two-issue publication blocker regression: 23 scenarios passed."
+echo "Protected-release two-issue publication blocker regression: 23 scenarios passed."

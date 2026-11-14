@@ -36,8 +36,8 @@ Query only, the same `READ ONLY` transaction now also uses transaction-local
 retaining the caller's remaining schema order for ordinary relation lookup.
 Rollback restores the prior session setting, including pooled connections;
 both query entrypoints share the single Host gate. The PostgreSQL 16 physical
-attack/regression and no-pool-reset rollback control are in
-`Services/Query/PHYSICAL-INJECTION.md` under the Host tests. This is not
+attack/regression and no-pool-reset rollback controls are covered by the Host
+tests under `Services/Query/`. This is not
 a complete sandbox for arbitrary user-defined operators or types; database
 roles must still have least-privilege relation and CREATE permissions.
 
@@ -46,8 +46,6 @@ and single-statement gates. DML/DDL and other five providers are unaffected by
 this provider-specific Host enforcement. Read-only transactions are not an all-purpose
 sandbox for locks, resource exhaustion, or arbitrary external function effects;
 limit database privileges and retain timeout/concurrency/audit controls.
-The real PostgreSQL 16 Host/UDF/sequence/no-side-effect tests are documented in
-`backend/src/UnitTest/HsSqlAgent.Server.Test/Services/Query/PHYSICAL-INJECTION.md`.
 
 
 ## Install

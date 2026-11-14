@@ -1,4 +1,4 @@
-name: Develop 3.1.0 release candidate (read-only)
+name: Develop release candidate (read-only)
 
 # This is a pre-publication candidate signal. It NEVER promotes to main,
 # creates tags, closes issues, publishes NuGet or uploads Docker images.
@@ -60,6 +60,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: develop-3.1.0-release-candidate-proof
-          path: artifacts/release-candidate/develop-3.1.0.json
+          name: develop-release-candidate-proof
+          path: artifacts/release-candidate/develop.json
           if-no-files-found: warn

@@ -435,6 +435,5 @@ dotnet restore "$consumer_dir" --configfile "$consumer_dir/NuGet.Config" --no-ca
 dotnet build "$consumer_dir" --configuration Release --no-restore
 dotnet run --project "$consumer_dir" --configuration Release --no-build
 
-# From 3.0.1 onward (including prereleases), the already-published 3.0.0
-# NuGet packages are the non-breaking baseline for every packed public API.
+# Published baseline packages from shared release metadata define the compatibility contract.
 bash .github/scripts/verify-v3-package-abi.sh "$package_source" "$version"

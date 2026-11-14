@@ -88,11 +88,11 @@ public sealed class PostgresMigrationIntegrationTests(PostgresMigrationFixture f
         // or turn an OutcomeUnknown state back into executable Pending.
         await adminContext.GetService<IMigrator>().MigrateAsync(
             "20261018150000_AddManagementApiKeysPostgres", cancellationToken);
-        // The published v2.0.6 schema already includes ManagementApiKeys.
+        // The published published-baseline schema already includes ManagementApiKeys.
         // Its credentials and permission scope must survive the v3 DML drain.
         var managementKey = new ManagementApiKey
         {
-            Name = "v2.0.6 preserved operator key",
+            Name = "published-baseline preserved operator key",
             KeyPrefix = "v2_legacy",
             KeyHash = new string('A', 64),
             PermissionsJson = "[\"runtime.read\"]",

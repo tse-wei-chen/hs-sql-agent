@@ -75,8 +75,10 @@ jobs:
       - name: Audit test project ownership and evidence contracts
         run: |
           dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- audit --root .
-      - name: Verify 3.1.0 publication blocker while issue 575 is open
-        run: bash .github/scripts/test-release-security-gate.sh
+      - name: Verify protected-release publication blocker while issue 575 is open
+        run: |
+          bash .github/scripts/test-release-version.sh
+          bash .github/scripts/test-release-security-gate.sh
       - name: Verify exact release-head Tests gate rejects missing or failed CI
         run: bash .github/scripts/test-release-head-ci-gate.sh
       - name: Verify develop-only candidate gate rejects stale or incomplete evidence
@@ -234,7 +236,7 @@ jobs:
       - name: Audit mandatory Server integration suite ownership and exclusions
         shell: bash
         run: bash .github/scripts/audit-server-integration-ownership.sh
-      - name: Verify released v2.0.6 Admin Store migration baseline is immutable
+      - name: Verify published Admin Store migration baseline is immutable
         shell: bash
         run: bash .github/scripts/verify-v2-admin-migration-baseline.sh
       - name: Run Server unit shard from audited integration ownership manifest

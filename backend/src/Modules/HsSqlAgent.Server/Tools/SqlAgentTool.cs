@@ -25,7 +25,7 @@ public partial class SqlAgentTool(
     MySqlDdlRuntime? mySqlDdlRuntime = null,
     OracleDdlRuntime? oracleDdlRuntime = null)
 {
-    // Preserve the public v3.0.0 CLR constructor for already-compiled .NET consumers.
+    // Preserve the original public CLR constructor for already-compiled .NET consumers.
     // The new DDL runtimes remain opt-in: this legacy entry point never injects
     // or authorizes them and delegates to the same current implementation.
     public SqlAgentTool(

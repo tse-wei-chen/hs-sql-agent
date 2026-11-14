@@ -1,20 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Compare *published binaries*, not source projects: downstream consumers load
-# the public signatures and assets from .nupkg. This gate becomes mandatory
-# once v3.0.0 has been published. The initial 3.0.0 PR cannot compare against
-# a release that does not exist, but all later v3.x PRs must.
+# Compare published packages against the immutable baseline in shared MSBuild metadata.
+source "$(dirname "${BASH_SOURCE[0]}")/release-version.sh"
+baseline_version="$(read_release_property PackageApiBaselineVersion)"
 package_dir="$(cd "${1:?Packed NuGet directory is required}" && pwd)"
 version="${2:?Packed NuGet version is required}"
 
-if [[ "$version" == "3.0.0" || "$version" == 3.0.0-* ]]; then
-  echo "[v3 API baseline] Initial 3.0.0 candidate: no published 3.0.0 package yet."
-  echo "[v3 API baseline] v3.0.1+ builds will be checked against NuGet 3.0.0."
+if [[ "$version" == "$baseline_version" || "$version" == "$baseline_version"-* ]]; then
+  echo "[Package API baseline] Initial $baseline_version candidate: no published baseline package yet."
+  echo "[Package API baseline] Subsequent builds will be checked against NuGet $baseline_version."
   exit 0
 fi
-if [[ "${version%%.*}" != "3" ]]; then
-  echo "[v3 API baseline] Version $version is outside the v3 compatibility track."
+if [[ "${version%%.*}" != "${baseline_version%%.*}" ]]; then
+  echo "[Package API baseline] Version $version is outside the baseline compatibility track."
   exit 0
 fi
 
@@ -44,9 +43,9 @@ for package in "${current_packages[@]}"; do
     exit 1
   fi
   id_lower="$(printf '%s' "$package_id" | tr '[:upper:]' '[:lower:]')"
-  baseline="$baseline_dir/$package_id.3.0.0.nupkg"
-  url="https://api.nuget.org/v3-flatcontainer/$id_lower/3.0.0/$id_lower.3.0.0.nupkg"
-  echo "[v3 API baseline] $package_id: $version against published 3.0.0"
+  baseline="$baseline_dir/$package_id.$baseline_version.nupkg"
+  url="https://api.nuget.org/v3-flatcontainer/$id_lower/$baseline_version/$id_lower.$baseline_version.nupkg"
+  echo "[Package API baseline] $package_id: $version against published $baseline_version"
   # A missing baseline is not a green skip. Introducing a new package needs
   # an explicit release-contract decision, never an implicit compatibility pass.
   curl --fail --show-error --silent --location --retry 3 \
@@ -55,4 +54,4 @@ for package in "${current_packages[@]}"; do
     --enable-rule-cannot-change-parameter-name
 done
 
-echo "[v3 API baseline] All published HsSqlAgent package APIs are compatible."
+echo "[Package API baseline] All published HsSqlAgent package APIs are compatible."
