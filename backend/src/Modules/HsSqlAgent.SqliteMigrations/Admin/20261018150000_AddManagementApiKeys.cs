@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Admin.Service.Data;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
