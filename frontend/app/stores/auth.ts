@@ -111,8 +111,10 @@ export const useAuthStore = defineStore("auth", () => {
   }
 
   function beginMfa(token: string) {
-    if (typeof sessionStorage === "undefined") return
-    sessionStorage.setItem("mfaToken", token)
+    // An account switch entering MFA must not continue to expose the previous
+    // identity or its UI permissions while the new identity is unverified.
+    clearAuthSession()
+    if (typeof sessionStorage !== "undefined") sessionStorage.setItem("mfaToken", token)
   }
 
   async function login(email: string, password: string): Promise<SignInOutcome> {
