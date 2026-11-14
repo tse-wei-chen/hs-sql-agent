@@ -188,6 +188,26 @@ const lifecycleDmlToolNames = computed(
       .map((tool) => tool.name),
   ),
 );
+const ddlToolNames = computed(
+  () => new Set(
+    availableTools.value
+      .filter((tool) => tool.type === "DDL")
+      .map((tool) => tool.name.toLocaleLowerCase()),
+  ),
+);
+const lifecycleDdlToolNames = computed(
+  () => new Set(
+    lifecycleTools.value
+      .filter((tool) => tool.type === "DDL")
+      .map((tool) => tool.name.toLocaleLowerCase()),
+  ),
+);
+const issueHasDdl = computed(() =>
+  detail.value.allowedTools.some((name) => ddlToolNames.value.has(name.toLocaleLowerCase())),
+);
+const lifecycleHasDdl = computed(() =>
+  lifecycleAllowedTools.value.some((name) => lifecycleDdlToolNames.value.has(name.toLocaleLowerCase())),
+);
 
 const issueRequiresElicitation = computed(() =>
   allowedToolsRequireElicitation(detail.value.allowedTools, dmlToolNames.value),
@@ -206,6 +226,9 @@ const issueAccessPosture = computed(() =>
     dmlToolNames.value,
     isWhitelistEnabled.value,
     detail.value.tableWhitelist.length,
+    0,
+    false,
+    ddlToolNames.value,
   ),
 );
 
@@ -224,11 +247,15 @@ const lifecycleAccessPosture = computed(() =>
     lifecycleTableCount.value,
     0,
     lifecycleLegacyUnrestricted.value,
+    lifecycleDdlToolNames.value,
   ),
 );
 
 const accessPostureClass = (level: McpAccessPostureLevel) => {
   if (level === "unrestricted") {
+    return "border-red-300 bg-red-50 text-red-900 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200";
+  }
+  if (level === "ddl-enabled" || level === "dml-ddl-enabled") {
     return "border-red-300 bg-red-50 text-red-900 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200";
   }
   if (level === "dml-enabled") {
@@ -547,6 +574,9 @@ const resolveStoredKeyAccessPosture = (key: McpKeyItem) => {
   const catalogDmlTools = catalog
     .filter((tool) => tool.type === "DML")
     .map((tool) => tool.name);
+  const catalogDdlTools = catalog
+    .filter((tool) => tool.type === "DDL")
+    .map((tool) => tool.name);
 
   return resolveMcpAccessPosture(
     allowedTools,
@@ -555,6 +585,7 @@ const resolveStoredKeyAccessPosture = (key: McpKeyItem) => {
     tableWhitelist.length,
     unclassifiedToolCount,
     !key.allowedTools?.trim(),
+    catalogDdlTools,
   );
 };
 
@@ -742,7 +773,7 @@ onMounted(load);
               class="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
             >
               Disables only this key's request quota. IP throttling, SQL concurrency,
-              row limits, timeouts, and DML safeguards still apply.
+              row limits, timeouts, and DML/DDL safeguards still apply.
             </div>
             <VeeField name="dbManagementId" rules="required" v-slot="{ errorMessage, meta: fieldMeta }">
               <Field>
@@ -856,7 +887,7 @@ onMounted(load);
                     <span
                       class="text-xs font-mono shrink-0"
                       :class="{
-                        'text-red-500': option.risk === 'high',
+                        'text-red-500': option.risk === 'high' || option.risk === 'critical',
                         'text-yellow-500': option.risk === 'medium',
                         'text-emerald-500': option.risk === 'low',
                       }"
@@ -885,7 +916,13 @@ onMounted(load);
                 v-if="toolCatalogReady && issueRequiresElicitation"
                 class="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
               >
-                This key can invoke DML. Its MCP client must support form Elicitation so a human can approve each commit; unsupported clients will be refused.
+                DML commits require configured approval. If MCP form Elicitation is selected, the client must support it; other approval providers use their own flow.
+              </div>
+              <div
+                v-if="toolCatalogReady && issueHasDdl"
+                class="mt-2 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200"
+              >
+                DDL access is high risk. A selected tool does not enable schema changes: the Host must explicitly enable DDL and require separate DDL approval plus live schema checks. Table whitelists are not DDL schema restrictions.
               </div>
             </Field>
             <Field class="md:col-span-2">
@@ -1113,7 +1150,7 @@ onMounted(load);
                     <span
                       class="text-xs font-mono shrink-0"
                       :class="{
-                        'text-red-500': option.risk === 'high',
+                        'text-red-500': option.risk === 'high' || option.risk === 'critical',
                         'text-yellow-500': option.risk === 'medium',
                         'text-emerald-500': option.risk === 'low',
                       }"
@@ -1138,7 +1175,13 @@ onMounted(load);
                 v-if="lifecycleRequiresElicitation"
                 class="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900"
               >
-                DML is enabled on this selection or historical unrestricted key. The client must support MCP form Elicitation. To edit a legacy key, select explicit tools first.
+                DML commits require configured approval. MCP form Elicitation needs client support only when that provider is selected. To edit a legacy unrestricted key, select explicit tools first.
+              </div>
+              <div
+                v-if="lifecycleHasDdl"
+                class="mt-2 rounded-md border border-red-300 bg-red-50 p-3 text-xs text-red-900 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200"
+              >
+                DDL requires an explicit execute_ddl_sql grant, separate DDL approval, an enabled Host, and live schema checks. Table whitelists do not scope DDL changes.
               </div>
             </Field>
             <Field>
