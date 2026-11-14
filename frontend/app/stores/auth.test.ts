@@ -100,6 +100,35 @@ describe("Pinia auth session", () => {
     expect(localStorage.getItem("accessToken")).toBeNull()
   })
 
+  it("never carries previous-account grants into a different successful sign-in", async () => {
+    persistAuthSession({
+      accessToken: tokenFor(), refreshToken: "old-refresh",
+      userName: "Old user", email: "old@example.com", permissions: grants,
+    })
+    vi.mocked(signIn).mockResolvedValue({
+      accessToken: tokenFor(), refreshToken: "new-refresh",
+    })
+    expect(await auth.login("new@example.com", "secret")).toBe("authenticated")
+    expect(auth.permissions).toEqual([])
+    expect(auth.userName).toBe("")
+    expect(auth.userEmail).toBe("")
+    expect(localStorage.getItem("permissions")).toBeNull()
+  })
+
+  it("re-hydrates from another tab's storage change and cleans up event listeners", () => {
+    persistAuthSession({
+      accessToken: tokenFor(), refreshToken: "refresh", permissions: grants,
+    })
+    localStorage.removeItem("accessToken")
+    localStorage.removeItem("permissions")
+    window.dispatchEvent(new StorageEvent("storage", {
+      key: "accessToken",
+      storageArea: localStorage,
+    }))
+    expect(auth.isAuthenticated).toBe(false)
+    expect(auth.permissions).toEqual([])
+  })
+
   it("keeps the MFA challenge separate from login credentials until verified", async () => {
     vi.mocked(signIn).mockResolvedValue({ requiresMfa: true, mfaToken: "challenge" })
     expect(await auth.login("person@example.com", "secret")).toBe("mfa")
