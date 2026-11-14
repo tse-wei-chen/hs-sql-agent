@@ -12,11 +12,24 @@ static string Option(string[] args, string key, string? fallback = null)
 try
 {
     if (args.Length == 0)
-        throw new GovernanceException("Usage: audit|layout|verify|sql-corpus|stage-profile|admin-openapi|perf-compare|code-delta|release-version|depth-probe|paired-report (see workflow for options)");
+        throw new GovernanceException("Usage: audit|layout|verify|sql-corpus|stage-profile|admin-openapi|perf-compare|code-delta|release-version|depth-probe|paired-report|syntax-parity|release-property|release-security|release-head|develop-candidate|dependency-audit|server-integration|physical-tests|migration-baseline|package-api|package-smoke (see workflow for options)");
 
     var options = new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true };
     switch (args[0])
     {
+        case "syntax-parity":
+        case "release-property":
+        case "release-security":
+        case "release-head":
+        case "develop-candidate":
+        case "dependency-audit":
+        case "server-integration":
+        case "physical-tests":
+        case "migration-baseline":
+        case "package-api":
+        case "package-smoke":
+            Environment.ExitCode = CiCommands.Execute(args);
+            break;
         case "release-version":
             Console.WriteLine($"Verified release v{ReleaseVersionGate.Verify(Option(args, "--root", "."), Option(args, "--tag"))}");
             break;
@@ -115,8 +128,14 @@ try
             throw new GovernanceException($"Unknown test governance command: {args[0]}");
     }
 }
+catch (CandidatePendingException error)
+{
+    Console.Error.WriteLine($"Release candidate pending: {error.Message}");
+    Environment.ExitCode = 75;
+}
 catch (Exception error) when (error is GovernanceException or IOException or UnauthorizedAccessException
-                              or System.Xml.XmlException or ArgumentException or JsonException)
+                              or System.Xml.XmlException or ArgumentException or JsonException
+                              or InvalidOperationException or FormatException or HttpRequestException or System.ComponentModel.Win32Exception)
 {
     Console.Error.WriteLine($"test governance gate failed: {error.Message}");
     Environment.ExitCode = 1;

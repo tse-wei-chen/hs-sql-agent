@@ -1,13 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-        <!-- Executable test governance runs on a single framework compatible with
-         both net8 and net10 test-project references. -->
-    <TargetFramework Condition="'$(LibraryFrameworks)'==''">net8.0</TargetFramework>
-    <RollForward>Major</RollForward>
+    <!-- CI runs the CLI on the newer runtime so reflection can load either target.
+         Tests reference the matching target when validating framework compatibility. -->
+    <TargetFrameworks Condition="'$(LibraryFrameworks)'==''">net10.0;net8.0</TargetFrameworks>
     <TargetFrameworks Condition="'$(LibraryFrameworks)'!=''">$(LibraryFrameworks)</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" />
+    <EmbeddedResource Include="Resources/*" />
+  </ItemGroup>
 </Project>

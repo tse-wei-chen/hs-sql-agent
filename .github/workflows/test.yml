@@ -22,7 +22,9 @@ jobs:
           submodules: recursive
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - name: Run Common.Test with real test and coverage evidence
         shell: bash
         run: |
@@ -38,7 +40,7 @@ jobs:
         run: |
           set -euo pipefail
           for framework in net10.0 net8.0; do
-            dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/common-test/"$framework" --suite Common.Test --require-complete
+            dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/common-test/"$framework" --suite Common.Test --require-complete
           done
       - name: Upload Common.Test TRX and instrumented source coverage
         if: always()
@@ -58,7 +60,9 @@ jobs:
           submodules: recursive
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - name: Enforce Python-free tracked files and GitHub Actions
         shell: bash
         run: |
@@ -74,19 +78,9 @@ jobs:
           fi
       - name: Audit test project ownership and evidence contracts
         run: |
-          dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- audit --root .
-      - name: Verify protected-release publication blocker while issue 575 is open
-        run: |
-          bash .github/scripts/test-release-version.sh
-          bash .github/scripts/test-release-security-gate.sh
-      - name: Verify exact release-head Tests gate rejects missing or failed CI
-        run: bash .github/scripts/test-release-head-ci-gate.sh
-      - name: Verify develop-only candidate gate rejects stale or incomplete evidence
-        shell: bash
-        run: bash .github/scripts/test-develop-release-candidate.sh
-      - name: Require executable SQL syntax-parity on develop and main push
-        shell: bash
-        run: bash .github/scripts/test-release-push-parity.sh
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- audit --root .
+      - name: Verify governance command contracts
+        run: dotnet test --project backend/src/UnitTest/Infrastructure.Test/Infrastructure.Test.csproj --framework net10.0 --filter "FullyQualifiedName~CiGovernanceTests"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -106,12 +100,9 @@ jobs:
           printf '{"warnings":%s,"scope":"ToolBox Release plus referenced CSharp and FSharp modules","source":"exact CI HEAD"}\n' "$count" \
             > artifacts/security/compiler-warning-summary.json
           echo "Compiler warnings for this release evidence run: $count"
-      - name: Prove dependency advisory parser fails closed against missing and high-risk results
-        shell: bash
-        run: bash .github/scripts/test-dependency-security-audit.sh
       - name: Verify current NuGet and production pnpm dependency advisories
         shell: bash
-        run: bash .github/scripts/audit-dependency-security.sh
+        run: dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- dependency-audit
       - name: Upload exact-head NuGet and pnpm advisory evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -134,7 +125,7 @@ jobs:
         run: |
           set -euo pipefail
           for framework in net10.0 net8.0; do
-            dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/infrastructure-test/"$framework" --suite Infrastructure.Test --require-complete
+            dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/infrastructure-test/"$framework" --suite Infrastructure.Test --require-complete
           done
       - name: Upload Infrastructure.Test TRX and instrumented source coverage
         if: always()
@@ -154,7 +145,9 @@ jobs:
           submodules: recursive
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - name: Run Auth.Test with real test and coverage evidence
         shell: bash
         run: |
@@ -170,7 +163,7 @@ jobs:
         run: |
           set -euo pipefail
           for framework in net10.0 net8.0; do
-            dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/auth-test/"$framework" --suite Auth.Test --require-complete
+            dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/auth-test/"$framework" --suite Auth.Test --require-complete
           done
       - name: Upload Auth.Test TRX and instrumented source coverage
         if: always()
@@ -190,7 +183,9 @@ jobs:
           submodules: recursive
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - name: Run Admin.Test with real test and coverage evidence
         shell: bash
         run: |
@@ -206,7 +201,7 @@ jobs:
         run: |
           set -euo pipefail
           for framework in net10.0 net8.0; do
-            dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/admin-test/"$framework" --suite Admin.Test --require-complete
+            dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/admin-test/"$framework" --suite Admin.Test --require-complete
           done
       - name: Upload Admin.Test TRX and instrumented source coverage
         if: always()
@@ -226,47 +221,46 @@ jobs:
           submodules: recursive
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - name: Guard domain-organized test layout
         run: |
-          dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- layout --root .
-      - name: Verify Server integration ownership audit rejects seven silent-test-loss regressions
-        shell: bash
-        run: bash .github/scripts/test-server-integration-ownership-audit.sh
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- layout --root .
       - name: Audit mandatory Server integration suite ownership and exclusions
         shell: bash
-        run: bash .github/scripts/audit-server-integration-ownership.sh
+        run: dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- server-integration
       - name: Verify published Admin Store migration baseline is immutable
         shell: bash
-        run: bash .github/scripts/verify-v2-admin-migration-baseline.sh
+        run: dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- migration-baseline
       - name: Run Server unit shard from audited integration ownership manifest
         shell: bash
         run: |
           set -euo pipefail
-          filter="$(bash .github/scripts/audit-server-integration-ownership.sh --default-filter)"
+          filter="$(dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance --no-build -- server-integration --default-filter)"
           dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter "$filter"
 
       - name: Require PostgreSQL 16 physical Query least-privilege and native UDF guard (11 cases, no skips)
         run: |
-          timeout --signal=INT --kill-after=10s 180s bash .github/scripts/require-physical-test-cases.sh 11 \
+          timeout --signal=INT --kill-after=10s 180s dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- physical-tests 11 \
             backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
             'FullyQualifiedName~PostgresPhysicalHostInjectionTests'
 
       - name: Require file-backed SQLite physical Query and callback guard (11 cases, no skips)
         run: |
-          timeout --signal=INT --kill-after=10s 180s bash .github/scripts/require-physical-test-cases.sh 11 \
+          timeout --signal=INT --kill-after=10s 180s dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- physical-tests 11 \
             backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
             'FullyQualifiedName~SqlitePhysicalHostInjectionTests'
 
       - name: Verify real PostgreSQL native faults and Redis process outage including legacy FailOpen hardening
         run: |
-          timeout --signal=INT --kill-after=10s 180s bash .github/scripts/require-physical-test-cases.sh 5 \
+          timeout --signal=INT --kill-after=10s 180s dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- physical-tests 5 \
             backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
             'FullyQualifiedName~PostgresNativeFaultTestcontainersTests|FullyQualifiedName~RedisProcessOutageTestcontainersTests'
 
       - name: Require physical Redis split-brain counterexample (unsupported quorum guarantee)
         run: |
-          timeout --signal=INT --kill-after=10s 150s bash .github/scripts/require-physical-test-cases.sh 1 \
+          timeout --signal=INT --kill-after=10s 150s dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- physical-tests 1 \
             backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
             'FullyQualifiedName~RedisIndependentPrimariesTestcontainersTests'
 
@@ -275,13 +269,13 @@ jobs:
 
       - name: Verify actual PostgreSQL Query TCP cut through a proxy
         run: |
-          timeout --signal=INT --kill-after=10s 90s bash .github/scripts/require-physical-test-cases.sh 1 \
+          timeout --signal=INT --kill-after=10s 90s dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- physical-tests 1 \
             backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
             'FullyQualifiedName~NetworkFaultTestcontainersTests.Postgres_QueryNativeSocketCut'
 
       - name: Verify Redis lease revocation under real TCP partition
         run: |
-          timeout --signal=INT --kill-after=10s 90s bash .github/scripts/require-physical-test-cases.sh 1 \
+          timeout --signal=INT --kill-after=10s 90s dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- physical-tests 1 \
             backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
             'FullyQualifiedName~NetworkFaultTestcontainersTests.Redis_TcpPartition'
 
@@ -312,7 +306,9 @@ jobs:
           submodules: recursive
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - name: Verify Redis 7 approval and cross-instance SQL concurrency races
         run: |
           test -n "${HS_SQL_AGENT_REDIS_INTEGRATION_CONNECTION:?Redis service is required}"
@@ -330,16 +326,18 @@ jobs:
           submodules: recursive
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - name: Gate six-provider 256 KiB capability and DML stacks (Debug)
         run: >
           dotnet run -c Debug
-          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --project backend/tools/HsSqlAgent.SqlCore.Benchmarks --
           --capability-stack-probe --output artifacts/sqlcore-capability-stack-debug.json
       - name: Gate six-provider 256 KiB capability and DML stacks (Release)
         run: >
           dotnet run -c Release
-          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --project backend/tools/HsSqlAgent.SqlCore.Benchmarks --
           --capability-stack-probe --output artifacts/sqlcore-capability-stack-release.json
       - name: Upload isolated stack evidence
         if: always()
@@ -359,11 +357,13 @@ jobs:
           submodules: recursive
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - name: Gate observed six-provider SQL coverage ledger (3.1)
         shell: bash
         run: |
-          dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- sql-corpus \
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- sql-corpus \
             --manifest backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sqlcore-coverage-manifest.json \
             --output artifacts/sqlcore-coverage-ledger.json
       - name: Upload observed SQL coverage evidence
@@ -376,13 +376,13 @@ jobs:
       - name: Run generated SQL grammar matrices
         run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter '(FullyQualifiedName~GrammarMatrixTests|FullyQualifiedName~MutationMatrixTests|FullyQualifiedName~NegativeBindingPolicyMatrixTests|FullyQualifiedName~NegativeTargetCapabilityMatrixTests|FullyQualifiedName~NegativeTablePolicyMatrixTests|FullyQualifiedName~SqlGrammarBombardmentCoverageTests)'
       - name: Validate SQL compiler benchmark harness (smoke only)
-        run: dotnet run -c Release --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- --smoke
+        run: dotnet run -c Release --project backend/tools/HsSqlAgent.SqlCore.Benchmarks -- --smoke
       - name: Probe SQL expression nesting in isolated subprocesses (smoke only)
-        run: dotnet run -c Release --no-build --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- --depth-probe --smoke
+        run: dotnet run -c Release --no-build --project backend/tools/HsSqlAgent.SqlCore.Benchmarks -- --depth-probe --smoke
       - name: Record all-dialect deep SQL behavior (isolated, observational)
         run: >
           dotnet run -c Release --no-build
-          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --project backend/tools/HsSqlAgent.SqlCore.Benchmarks --
           --depth-probe --dialects Postgres,MySQL,Sqlite,MsSqlServer,Oracle,Firebird
           --depths 128,512,2048
           --output artifacts/sqlcore-depth-pr.json
@@ -398,7 +398,7 @@ jobs:
       - name: Characterize mixed Expr/EXISTS Query nesting (isolated, observational)
         run: >
           dotnet run -c Release --no-build
-          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --project backend/tools/HsSqlAgent.SqlCore.Benchmarks --
           --depth-probe --dialects Postgres,Oracle
           --shapes mixed-query-graph --depths 128,512,2048
           --output artifacts/sqlcore-mixed-depth-pr.json
@@ -414,7 +414,7 @@ jobs:
       - name: Profile nested derived and CTE query phases (isolated, observational)
         run: >
           dotnet run -c Release --no-build
-          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --project backend/tools/HsSqlAgent.SqlCore.Benchmarks --
           --depth-probe --dialects Postgres
           --shapes nested-derived-source,nested-cte,nested-cte-typed-schema --depths 128,512,2048
           --output artifacts/sqlcore-query-phases-pr.json
@@ -430,7 +430,7 @@ jobs:
       - name: Characterize alternating CTE/derived parser resource threshold
         run: >
           dotnet run -c Release --no-build
-          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --project backend/tools/HsSqlAgent.SqlCore.Benchmarks --
           --depth-probe --dialects Postgres
           --shapes mixed-cte-derived,mixed-cte-derived-typed-schema --depths 128,512,2048
           --output artifacts/sqlcore-mixed-cte-derived-pr.json
@@ -442,7 +442,7 @@ jobs:
       - name: Characterize nested SET branch stack and allocations (isolated, observational)
         run: >
           dotnet run -c Release --no-build
-          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --project backend/tools/HsSqlAgent.SqlCore.Benchmarks --
           --depth-probe --dialects Postgres
           --shapes nested-set,nested-set-typed-schema --depths 128,512,2048
           --output artifacts/sqlcore-nested-set-pr.json
@@ -458,7 +458,7 @@ jobs:
       - name: Verify iterative nested SET parsing on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
-          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --project backend/tools/HsSqlAgent.SqlCore.Benchmarks --
           --depth-probe --dialects Postgres
           --shapes nested-set,nested-set-typed-schema
           --depths 512,2048 --stack-bytes 262144
@@ -470,7 +470,7 @@ jobs:
       - name: Verify heap CTE parsing and typed proof on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
-          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --project backend/tools/HsSqlAgent.SqlCore.Benchmarks --
           --depth-probe --dialects Postgres
           --shapes nested-cte,nested-cte-typed-schema
           --depths 512,2048 --stack-bytes 262144
@@ -482,7 +482,7 @@ jobs:
       - name: Require alternating CTE-derived full compilation on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
-          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --project backend/tools/HsSqlAgent.SqlCore.Benchmarks --
           --depth-probe --dialects Postgres
           --shapes mixed-cte-derived,mixed-cte-derived-typed-schema --depths 512,2048
           --stack-bytes 262144
@@ -494,7 +494,7 @@ jobs:
       - name: Verify primary FROM LATERAL proof on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
-          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --project backend/tools/HsSqlAgent.SqlCore.Benchmarks --
           --depth-probe --dialects Postgres
           --shapes nested-lateral-derived,nested-lateral-derived-typed-schema
           --depths 512,2048 --stack-bytes 262144
@@ -506,7 +506,7 @@ jobs:
       - name: Verify correlated JOIN LATERAL and WHERE EXISTS scope on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
-          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --project backend/tools/HsSqlAgent.SqlCore.Benchmarks --
           --depth-probe --dialects Postgres
           --shapes nested-joined-lateral,nested-joined-lateral-typed-schema,nested-correlated-exists,nested-correlated-exists-typed-schema
           --depths 128,512,2048 --stack-bytes 262144
@@ -518,7 +518,7 @@ jobs:
       - name: Verify prefixed second JOIN LATERAL correlation on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
-          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --project backend/tools/HsSqlAgent.SqlCore.Benchmarks --
           --depth-probe --dialects Postgres
           --shapes nested-prefixed-joined-lateral,nested-prefixed-joined-lateral-typed-schema
           --depths 128,512,2048 --stack-bytes 262144
@@ -530,7 +530,7 @@ jobs:
       - name: Verify two dependent JOIN LATERALs on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
-          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --project backend/tools/HsSqlAgent.SqlCore.Benchmarks --
           --depth-probe --dialects Postgres
           --shapes nested-double-joined-lateral,nested-double-joined-lateral-typed-schema
           --depths 128,512,2048 --stack-bytes 262144
@@ -542,7 +542,7 @@ jobs:
       - name: Require three dependent JOIN LATERALs on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
-          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --project backend/tools/HsSqlAgent.SqlCore.Benchmarks --
           --depth-probe --dialects Postgres
           --shapes nested-triple-joined-lateral,nested-triple-joined-lateral-typed-schema
           --depths 128,512,2048 --stack-bytes 262144
@@ -554,7 +554,7 @@ jobs:
       - name: Probe two independently deep LATERAL sibling Queries on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
-          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --project backend/tools/HsSqlAgent.SqlCore.Benchmarks --
           --depth-probe --dialects Postgres
           --shapes two-deep-sibling-lateral,two-deep-sibling-lateral-typed-schema
           --depths 128,512,2048 --stack-bytes 262144
@@ -566,7 +566,7 @@ jobs:
       - name: Verify mixed Source and WHERE EXISTS lateral comb on 256 KiB
         run: >
           dotnet run -c Release --no-build
-          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --project backend/tools/HsSqlAgent.SqlCore.Benchmarks --
           --depth-probe --dialects Postgres
           --shapes lateral-exists-comb-siblings,lateral-exists-comb-siblings-typed-schema
           --depths 128,512,2048 --stack-bytes 262144
@@ -578,7 +578,7 @@ jobs:
       - name: Verify public Query Facts inspection on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
-          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --project backend/tools/HsSqlAgent.SqlCore.Benchmarks --
           --depth-probe --dialects Postgres
           --shapes facts-joined-lateral,facts-joined-lateral-typed-schema
           --depths 128,512,2048 --stack-bytes 262144
@@ -590,7 +590,7 @@ jobs:
       - name: Verify correlated IN Query heap continuation on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
-          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --project backend/tools/HsSqlAgent.SqlCore.Benchmarks --
           --depth-probe --dialects Postgres
           --shapes nested-correlated-in,nested-correlated-in-typed-schema
           --depths 128,512,2048 --stack-bytes 262144
@@ -602,7 +602,7 @@ jobs:
       - name: Diagnose projection ScalarSubquery and CASE Query crossings on small stacks
         run: >
           dotnet run -c Release --no-build
-          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --project backend/tools/HsSqlAgent.SqlCore.Benchmarks --
           --depth-probe --dialects Postgres
           --shapes nested-scalar-subquery,nested-scalar-subquery-typed-schema,nested-case-scalar,nested-case-scalar-typed-schema
           --depths 128,512,2048 --stack-bytes 262144
@@ -614,7 +614,7 @@ jobs:
       - name: Require six-provider deep paging and exact negative grammar on 256 KiB
         run: >
           dotnet run -c Release --no-build
-          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --project backend/tools/HsSqlAgent.SqlCore.Benchmarks --
           --depth-probe --dialects Postgres,MySQL,Sqlite,MsSqlServer,Oracle,Firebird
           --shapes nested-paging-typed-schema,invalid-nested-paging
           --depths 128,512,2048 --stack-bytes 262144
@@ -625,7 +625,7 @@ jobs:
       - name: Measure constrained-stack SQL compilation (observational)
         run: >
           dotnet run -c Release --no-build
-          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --project backend/tools/HsSqlAgent.SqlCore.Benchmarks --
           --depth-probe --dialects Postgres,MsSqlServer,Oracle,Firebird
           --shapes nested-scalar-subquery,left-deep-and
           --depths 512,2048 --stack-bytes 262144
@@ -687,7 +687,9 @@ jobs:
           submodules: recursive
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - name: Verify PostgreSQL 16 physical DML lost COMMIT ROLLBACK acknowledgements and no replay
         run: >
           dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
@@ -698,7 +700,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bash .github/scripts/require-physical-test-cases.sh 1 \
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- physical-tests 1 \
             backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj \
             'FullyQualifiedName~DmlNativePostgresCommitDisconnectTests'
         env:
@@ -707,21 +709,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bash .github/scripts/require-physical-test-cases.sh 1 \
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- physical-tests 1 \
             backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj \
             'FullyQualifiedName~DmlNativePostgresPostCommitAckLossTests'
         env:
           TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test;Pooling=false"
       - name: Verify PostgreSQL 16 physical Custom DML 24-way load and cancellation
         run: >
-          bash .github/scripts/require-physical-test-cases.sh 6
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- physical-tests 6
           backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
           'FullyQualifiedName~PostgresPhysicalLoadIntegrationTests'
         env:
           TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test;Pooling=false"
       - name: Verify MySQL 8.4 physical Custom DML 24-way load and cancellation
         run: >
-          bash .github/scripts/require-physical-test-cases.sh 6
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- physical-tests 6
           backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
           'FullyQualifiedName~MySqlPhysicalLoadIntegrationTests'
         env:
@@ -740,14 +742,14 @@ jobs:
           TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test;Pooling=false"
       - name: Verify MySQL 8.4 physical native builtin-versus-UDF function resolution (exact 3, no skips)
         run: >
-          bash .github/scripts/require-physical-test-cases.sh 3
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- physical-tests 3
           backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
           'FullyQualifiedName~QueryNativeFunctionLiveTests.MySql_'
         env:
           TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test;Pooling=false"
       - name: Require MySQL real TCP-partition production Query failure and recovery
         run: |
-          timeout --signal=INT --kill-after=10s 180s bash .github/scripts/require-physical-test-cases.sh 1 \
+          timeout --signal=INT --kill-after=10s 180s dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- physical-tests 1 \
             backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
             'FullyQualifiedName~ProviderTcpPartitionTestcontainersTests.MySql_'
         env:
@@ -786,7 +788,9 @@ jobs:
           submodules: recursive
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - name: Run remaining SqlAgent tests per TFM without concurrent Oracle containers
         shell: bash
         run: |
@@ -818,7 +822,9 @@ jobs:
           submodules: recursive
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - name: Verify SQL Server Host DDL real transactional CREATE TABLE proof
         shell: bash
         run: |
@@ -843,21 +849,21 @@ jobs:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
       - name: Verify SQL Server 2022 physical Custom DML 24-way load and cancellation
         run: >
-          bash .github/scripts/require-physical-test-cases.sh 6
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- physical-tests 6
           backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
           'FullyQualifiedName~SqlServerPhysicalLoadIntegrationTests'
         env:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
       - name: Verify SQL Server physical native-function Query whitelist fence (exact 2, no skips)
         run: >
-          bash .github/scripts/require-physical-test-cases.sh 2
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- physical-tests 2
           backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
           'FullyQualifiedName~QueryNativeFunctionLiveTests.SqlServer_'
         env:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
       - name: Require SQL Server real TCP-partition production Query failure and recovery
         run: |
-          timeout --signal=INT --kill-after=10s 180s bash .github/scripts/require-physical-test-cases.sh 1 \
+          timeout --signal=INT --kill-after=10s 180s dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- physical-tests 1 \
             backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
             'FullyQualifiedName~ProviderTcpPartitionTestcontainersTests.SqlServer_'
         env:
@@ -996,7 +1002,9 @@ jobs:
           submodules: recursive
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - name: Verify Firebird 5 Host DDL preview, approval and commit against live metadata
         shell: bash
         run: |
@@ -1019,21 +1027,21 @@ jobs:
           TEST_FIREBIRD_CONNECTION: "DataSource=localhost;Port=3050;Database=/var/lib/firebird/data/sqlcore_p6.fdb;User=SYSDBA;Password=Strong_Password_123!;Charset=UTF8;Dialect=3;Pooling=false"
       - name: Verify Firebird 5 physical Custom DML 24-way load and cancellation
         run: >
-          bash .github/scripts/require-physical-test-cases.sh 6
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- physical-tests 6
           backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
           'FullyQualifiedName~FirebirdPhysicalLoadIntegrationTests'
         env:
           TEST_FIREBIRD_CONNECTION: "DataSource=localhost;Port=3050;Database=/var/lib/firebird/data/sqlcore_p6.fdb;User=SYSDBA;Password=Strong_Password_123!;Charset=UTF8;Dialect=3;Pooling=false"
       - name: Verify Firebird 5 physical native-function Query whitelist fence (exact 1, no skips)
         run: >
-          bash .github/scripts/require-physical-test-cases.sh 1
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- physical-tests 1
           backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
           'FullyQualifiedName~QueryNativeFunctionLiveTests.Firebird_'
         env:
           TEST_FIREBIRD_CONNECTION: "DataSource=localhost;Port=3050;Database=/var/lib/firebird/data/sqlcore_p6.fdb;User=SYSDBA;Password=Strong_Password_123!;Charset=UTF8;Dialect=3;Pooling=false"
       - name: Require Firebird real TCP-partition production Query failure and recovery
         run: |
-          timeout --signal=INT --kill-after=10s 180s bash .github/scripts/require-physical-test-cases.sh 1 \
+          timeout --signal=INT --kill-after=10s 180s dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- physical-tests 1 \
             backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
             'FullyQualifiedName~ProviderTcpPartitionTestcontainersTests.Firebird_'
         env:
@@ -1071,7 +1079,9 @@ jobs:
           submodules: recursive
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - name: Verify Oracle 26ai Host implicit-commit DDL, independent approval and live PDB metadata
         run: >
           dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
@@ -1087,21 +1097,21 @@ jobs:
           TEST_ORACLE_CONNECTION: "User Id=sqlcore;Password=Strong_Password_123!;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
       - name: Verify Oracle 26ai physical Custom DML 24-way load and cancellation
         run: >
-          bash .github/scripts/require-physical-test-cases.sh 6
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- physical-tests 6
           backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
           'FullyQualifiedName~OraclePhysicalLoadIntegrationTests'
         env:
           TEST_ORACLE_CONNECTION: "User Id=sqlcore;Password=Strong_Password_123!;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
       - name: Verify Oracle 26ai physical native-function Query whitelist fence (exact 4, no skips)
         run: >
-          bash .github/scripts/require-physical-test-cases.sh 4
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- physical-tests 4
           backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
           'FullyQualifiedName~QueryNativeFunctionLiveTests.Oracle_'
         env:
           TEST_ORACLE_CONNECTION: "User Id=sqlcore;Password=Strong_Password_123!;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
       - name: Require Oracle real TCP-partition production Query failure and recovery
         run: |
-          timeout --signal=INT --kill-after=10s 180s bash .github/scripts/require-physical-test-cases.sh 1 \
+          timeout --signal=INT --kill-after=10s 180s dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- physical-tests 1 \
             backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
             'FullyQualifiedName~ProviderTcpPartitionTestcontainersTests.Oracle_'
         env:
@@ -1131,7 +1141,9 @@ jobs:
           submodules: recursive
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -1179,7 +1191,7 @@ jobs:
           done
       - name: Smoke test packed Server package
         shell: bash
-        run: bash .github/scripts/nuget-consumer-smoke.sh artifacts/packages
+        run: dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- package-smoke artifacts/packages
       - name: Build Docker image and verify .NET 10 application payload
         shell: bash
         run: |
@@ -1197,14 +1209,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - name: Generate OpenAPI from all first-party Admin MVC controllers
         run: dotnet build backend/src/Tools/HsSqlAgent.ApiSpec/HsSqlAgent.ApiSpec.csproj --configuration Debug
       - name: Verify generated contract
         shell: bash
         run: |
           set -euo pipefail
-          dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- admin-openapi --file artifacts/openapi/HsSqlAgent.ApiSpec_admin.json
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- admin-openapi --file artifacts/openapi/HsSqlAgent.ApiSpec_admin.json
       - uses: actions/upload-artifact@v4
         with:
           name: hs-sql-agent-admin-openapi
@@ -1262,93 +1276,95 @@ jobs:
           fetch-depth: 1
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - name: Build differential parity runner
-        run: dotnet build .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj --configuration Release
+        run: dotnet build backend/tools/HsSqlAgent.TestGovernance --configuration Release
       - name: Build PR SqlCore
-        run: dotnet build backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.fsproj --configuration Release --output artifacts/parity/head
+        run: dotnet build backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.fsproj --framework net10.0 --configuration Release --output artifacts/parity/head
       - name: Capture PR syntax behavior
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          syntax-parity run artifacts/parity/head/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-main-compatibility-floor.json
           artifacts/parity/head.json
       - name: Capture PR generated syntax behavior
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          syntax-parity run artifacts/parity/head/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-compatibility-floor.json
           artifacts/parity/head-generated.json
       - name: Capture PR generated recursive syntax behavior
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          syntax-parity run artifacts/parity/head/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-recursive-compatibility-floor.json
           artifacts/parity/head-generated-recursive.json
       - name: Capture PR generated PostgreSQL native syntax behavior
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          syntax-parity run artifacts/parity/head/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-postgres-native-compatibility-floor.json
           artifacts/parity/head-generated-postgres-native.json
       - name: Capture PR generated PostgreSQL quoted-function syntax behavior
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          syntax-parity run artifacts/parity/head/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-postgres-quoted-function-compatibility-floor.json
           artifacts/parity/head-generated-postgres-quoted-function.json
       - name: Capture PR generated PostgreSQL distinct-from syntax behavior
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          syntax-parity run artifacts/parity/head/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-postgres-distinct-from-compatibility-floor.json
           artifacts/parity/head-generated-postgres-distinct-from.json
       - name: Capture PR generated CAST type syntax behavior
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          syntax-parity run artifacts/parity/head/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-cast-type-compatibility-floor.json
           artifacts/parity/head-generated-cast-type.json
       - name: Capture PR generated Oracle native syntax behavior
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          syntax-parity run artifacts/parity/head/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-oracle-native-compatibility-floor.json
           artifacts/parity/head-generated-oracle-native.json
       - name: Capture PR generated profile-sensitive syntax behavior
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          syntax-parity run artifacts/parity/head/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-profile-sensitive-compatibility-floor.json
           artifacts/parity/head-generated-profile-sensitive.json
       - name: Capture PR generated DML behavior
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          syntax-parity run artifacts/parity/head/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-dml-compatibility-floor.json
           artifacts/parity/head-generated-dml.json
       - name: Capture PR generated DML predicate behavior
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          syntax-parity run artifacts/parity/head/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-dml-predicate-compatibility-floor.json
           artifacts/parity/head-generated-dml-predicate.json
       - name: Enforce negative syntax failure stages
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          verify-negative artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          syntax-parity verify-negative artifacts/parity/head/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-negative-syntax-contract.json
       - name: Build comparable base SqlCore
         env:
@@ -1368,150 +1384,151 @@ jobs:
           git fetch origin "$BASE_SHA" --depth=1
           git worktree add --detach /tmp/hs-sql-agent-main "$BASE_SHA"
           dotnet build /tmp/hs-sql-agent-main/backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.fsproj \
+            --framework net10.0 \
             --configuration Release \
             -p:TreatWarningsAsErrors=false \
             --output artifacts/parity/main
       - name: Capture base main syntax behavior
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          syntax-parity run artifacts/parity/main/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-main-compatibility-floor.json
           artifacts/parity/main.json
       - name: Capture base main generated syntax behavior
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          syntax-parity run artifacts/parity/main/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-compatibility-floor.json
           artifacts/parity/main-generated.json
       - name: Capture base main generated recursive syntax behavior
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          syntax-parity run artifacts/parity/main/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-recursive-compatibility-floor.json
           artifacts/parity/main-generated-recursive.json
       - name: Capture base main generated PostgreSQL native syntax behavior
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          syntax-parity run artifacts/parity/main/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-postgres-native-compatibility-floor.json
           artifacts/parity/main-generated-postgres-native.json
       - name: Capture base main generated PostgreSQL quoted-function syntax behavior
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          syntax-parity run artifacts/parity/main/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-postgres-quoted-function-compatibility-floor.json
           artifacts/parity/main-generated-postgres-quoted-function.json
       - name: Capture base main generated PostgreSQL distinct-from syntax behavior
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          syntax-parity run artifacts/parity/main/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-postgres-distinct-from-compatibility-floor.json
           artifacts/parity/main-generated-postgres-distinct-from.json
       - name: Capture base main generated CAST type syntax behavior
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          syntax-parity run artifacts/parity/main/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-cast-type-compatibility-floor.json
           artifacts/parity/main-generated-cast-type.json
       - name: Capture base main generated Oracle native syntax behavior
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          syntax-parity run artifacts/parity/main/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-oracle-native-compatibility-floor.json
           artifacts/parity/main-generated-oracle-native.json
       - name: Capture base main generated profile-sensitive syntax behavior
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          syntax-parity run artifacts/parity/main/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-profile-sensitive-compatibility-floor.json
           artifacts/parity/main-generated-profile-sensitive.json
       - name: Capture base main generated DML behavior
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          syntax-parity run artifacts/parity/main/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-dml-compatibility-floor.json
           artifacts/parity/main-generated-dml.json
       - name: Capture base main generated DML predicate behavior
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          syntax-parity run artifacts/parity/main/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-dml-predicate-compatibility-floor.json
           artifacts/parity/main-generated-dml-predicate.json
       - name: Enforce main compatibility floor
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          compare artifacts/parity/main.json artifacts/parity/head.json
+          syntax-parity compare artifacts/parity/main.json artifacts/parity/head.json
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-intentional-breaking-allowlist.json
       - name: Enforce generated main compatibility floor
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          compare artifacts/parity/main-generated.json artifacts/parity/head-generated.json
+          syntax-parity compare artifacts/parity/main-generated.json artifacts/parity/head-generated.json
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-intentional-breaking-allowlist.json
       - name: Enforce generated recursive main compatibility floor
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          compare artifacts/parity/main-generated-recursive.json artifacts/parity/head-generated-recursive.json
+          syntax-parity compare artifacts/parity/main-generated-recursive.json artifacts/parity/head-generated-recursive.json
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-recursive-intentional-breaking-allowlist.json
       - name: Enforce generated PostgreSQL native main compatibility floor
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          compare artifacts/parity/main-generated-postgres-native.json artifacts/parity/head-generated-postgres-native.json
+          syntax-parity compare artifacts/parity/main-generated-postgres-native.json artifacts/parity/head-generated-postgres-native.json
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-postgres-native-intentional-breaking-allowlist.json
       - name: Enforce generated PostgreSQL quoted-function compatibility floor
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          compare artifacts/parity/main-generated-postgres-quoted-function.json artifacts/parity/head-generated-postgres-quoted-function.json
+          syntax-parity compare artifacts/parity/main-generated-postgres-quoted-function.json artifacts/parity/head-generated-postgres-quoted-function.json
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-intentional-breaking-allowlist.json
       - name: Enforce generated PostgreSQL distinct-from compatibility floor
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          compare artifacts/parity/main-generated-postgres-distinct-from.json artifacts/parity/head-generated-postgres-distinct-from.json
+          syntax-parity compare artifacts/parity/main-generated-postgres-distinct-from.json artifacts/parity/head-generated-postgres-distinct-from.json
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-intentional-breaking-allowlist.json
       - name: Enforce generated CAST type compatibility floor
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          compare artifacts/parity/main-generated-cast-type.json artifacts/parity/head-generated-cast-type.json
+          syntax-parity compare artifacts/parity/main-generated-cast-type.json artifacts/parity/head-generated-cast-type.json
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-intentional-breaking-allowlist.json
       - name: Enforce generated Oracle native main compatibility floor
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          compare artifacts/parity/main-generated-oracle-native.json artifacts/parity/head-generated-oracle-native.json
+          syntax-parity compare artifacts/parity/main-generated-oracle-native.json artifacts/parity/head-generated-oracle-native.json
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-oracle-native-intentional-breaking-allowlist.json
       - name: Enforce generated profile-sensitive main compatibility floor
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          compare artifacts/parity/main-generated-profile-sensitive.json artifacts/parity/head-generated-profile-sensitive.json
+          syntax-parity compare artifacts/parity/main-generated-profile-sensitive.json artifacts/parity/head-generated-profile-sensitive.json
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-profile-sensitive-intentional-breaking-allowlist.json
       - name: Enforce generated DML main compatibility floor
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          compare artifacts/parity/main-generated-dml.json artifacts/parity/head-generated-dml.json
+          syntax-parity compare artifacts/parity/main-generated-dml.json artifacts/parity/head-generated-dml.json
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-dml-intentional-breaking-allowlist.json
       - name: Enforce generated DML predicate main compatibility floor
         run: >
-          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance
           --configuration Release --no-build --
-          compare artifacts/parity/main-generated-dml-predicate.json artifacts/parity/head-generated-dml-predicate.json
+          syntax-parity compare artifacts/parity/main-generated-dml-predicate.json artifacts/parity/head-generated-dml-predicate.json
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-dml-predicate-intentional-breaking-allowlist.json
 

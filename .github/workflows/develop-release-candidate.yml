@@ -23,9 +23,14 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - name: Prove negative candidate-gate cases cannot be accepted
         shell: bash
-        run: bash .github/scripts/test-develop-release-candidate.sh
+        run: dotnet test --project backend/src/UnitTest/Infrastructure.Test/Infrastructure.Test.csproj --framework net10.0 --filter "FullyQualifiedName~CiGovernanceTests"
       - name: Verify exact current develop push and all required security evidence
         shell: bash
         env:
@@ -34,7 +39,7 @@ jobs:
           set -euo pipefail
           for attempt in $(seq 1 60); do
             status=0
-            bash .github/scripts/verify-develop-release-candidate.sh \
+            dotnet run --framework net10.0 --project backend/tools/HsSqlAgent.TestGovernance -- develop-candidate \
               > /tmp/release-candidate-verification.log 2>&1 || status=$?
             case "$status" in
               0)

@@ -17,9 +17,6 @@ public static class SqlCoreCodeDelta
         var normalized = path.Replace('\\', '/');
         var parts = normalized.ToLowerInvariant().Split('/');
         var name = parts[^1];
-        if (normalized.StartsWith(".github/scripts/", StringComparison.Ordinal)
-            && name.StartsWith("test_", StringComparison.Ordinal) && name.EndsWith(".py", StringComparison.Ordinal))
-            return "tests";
         if (new[] { ".test.cs", ".spec.cs", ".test.ts", ".spec.ts", ".test.tsx", ".spec.tsx" }
             .Any(name.EndsWith))
             return "tests";
