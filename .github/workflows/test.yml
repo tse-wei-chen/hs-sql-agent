@@ -818,15 +818,25 @@ jobs:
         with:
           dotnet-version: "10.0.x"
       - name: Verify SQL Server Host DDL real transactional CREATE TABLE proof
-        run: >
-          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
-          --filter 'FullyQualifiedName~SqlCoreSqlServerDdlHostLiveTests'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Isolate both TFMs against this job's single SQL Server physical database.
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --framework "$framework" \
+              --filter 'FullyQualifiedName~SqlCoreSqlServerDdlHostLiveTests'
+          done
         env:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
       - name: Verify SQL Server 2022 physical Custom DML lost COMMIT ROLLBACK ACK and persisted Audit
-        run: >
-          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
-          --filter 'FullyQualifiedName~SqlServerPhysicalUnknownOutcomeIntegrationTests'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Isolate both TFMs against this job's single SQL Server physical database.
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --framework "$framework" \
+              --filter 'FullyQualifiedName~SqlServerPhysicalUnknownOutcomeIntegrationTests'
+          done
         env:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
       - name: Verify SQL Server 2022 physical Custom DML 24-way load and cancellation
@@ -854,9 +864,14 @@ jobs:
         # Dedicated service job to keep the regular SQL test shards lightweight.
         # Missing/unready SQL Server is a hard failure in CI, never a skip.
         # The same live SQL Server 2022 instance is reused by ordered steps.
-        run: >
-          dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
-          --filter 'FullyQualifiedName~DmlTargetFenceSqlServerIntegrationTests|FullyQualifiedName~SqlCoreSqlServerLiveDdlParityTests|FullyQualifiedName~SqlCoreSqlServerApplyLiveParityTests|FullyQualifiedName~SqlCoreSqlServerWithMutationCteLiveParityTests|FullyQualifiedName~SqlCoreSqlServerWithInsertSelectLiveParityTests|FullyQualifiedName~SqlCoreSqlServerWithJoinedMutationSingletonLiveParityTests|FullyQualifiedName~SqlCoreSqlServerLiveUniqueKeyAttestationTests|FullyQualifiedName~SqlCoreSqlServerCompositeCteLiveProofTests|FullyQualifiedName~SqlCoreBoundedExactNumericLiveParityTests'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Isolate both TFMs against this job's single SQL Server physical database.
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --framework "$framework" \
+              --filter 'FullyQualifiedName~DmlTargetFenceSqlServerIntegrationTests|FullyQualifiedName~SqlCoreSqlServerLiveDdlParityTests|FullyQualifiedName~SqlCoreSqlServerApplyLiveParityTests|FullyQualifiedName~SqlCoreSqlServerWithMutationCteLiveParityTests|FullyQualifiedName~SqlCoreSqlServerWithInsertSelectLiveParityTests|FullyQualifiedName~SqlCoreSqlServerWithJoinedMutationSingletonLiveParityTests|FullyQualifiedName~SqlCoreSqlServerLiveUniqueKeyAttestationTests|FullyQualifiedName~SqlCoreSqlServerCompositeCteLiveProofTests|FullyQualifiedName~SqlCoreBoundedExactNumericLiveParityTests'
+          done
         env:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
           SQLCORE_EXACT_NUMERIC_LIVE_PROVIDER: MsSqlServer
@@ -875,51 +890,86 @@ jobs:
       - name: Verify SQL Server M10 MERGE HOLDLOCK, live unique-key and key-range serialization
         # Real SQL Server only, isolated from parallel master sys-catalog DDL tests.
         # A missing SQL Server connection fails CI; never run these on general shards.
-        run: >
-          dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
-          --filter 'FullyQualifiedName~SqlCoreSqlServerMergeHoldLockLiveTests'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Isolate both TFMs against this job's single SQL Server physical database.
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --framework "$framework" \
+              --filter 'FullyQualifiedName~SqlCoreSqlServerMergeHoldLockLiveTests'
+          done
         env:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
 
       - name: Verify G10 LAG LEAD IGNORE NULLS on real SQL Server 2022
-        run: >
-          dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
-          --filter 'FullyQualifiedName~SqlCoreSqlServerWindowNullTreatmentLiveTests'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Isolate both TFMs against this job's single SQL Server physical database.
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --framework "$framework" \
+              --filter 'FullyQualifiedName~SqlCoreSqlServerWindowNullTreatmentLiveTests'
+          done
         env:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
 
       - name: Verify G10 filtered DISTINCT COUNT on real SQL Server 2022
-        run: >
-          dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
-          --filter 'FullyQualifiedName~SqlCoreFilteredDistinctCountSqlServerLiveTests'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Isolate both TFMs against this job's single SQL Server physical database.
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --framework "$framework" \
+              --filter 'FullyQualifiedName~SqlCoreFilteredDistinctCountSqlServerLiveTests'
+          done
         env:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
 
       - name: Verify G10 bounded COUNT FILTER lowering on real SQL Server 2022
-        run: >
-          dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
-          --filter 'FullyQualifiedName~SqlCoreFilteredCountSqlServerLiveTests'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Isolate both TFMs against this job's single SQL Server physical database.
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --framework "$framework" \
+              --filter 'FullyQualifiedName~SqlCoreFilteredCountSqlServerLiveTests'
+          done
         env:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
 
       - name: Verify SQL Server MERGE MATCHED DELETE Host Preview, Approval and Commit on live key
-        run: >
-          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
-          --filter 'FullyQualifiedName~SqlServerMergeMatchedDeleteApprovalLiveTests'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Isolate both TFMs against this job's single SQL Server physical database.
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --framework "$framework" \
+              --filter 'FullyQualifiedName~SqlServerMergeMatchedDeleteApprovalLiveTests'
+          done
         env:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
 
       - name: Verify SQL Server MERGE MATCHED UPDATE physical row-value approval in real SQL Server 2022
-        run: >
-          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
-          --filter 'FullyQualifiedName~SqlServerMergeMatchedUpdateApprovalLiveTests'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Isolate both TFMs against this job's single SQL Server physical database.
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --framework "$framework" \
+              --filter 'FullyQualifiedName~SqlServerMergeMatchedUpdateApprovalLiveTests'
+          done
         env:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
 
       - name: Verify SQL Server MERGE NOT MATCHED INSERT real key absence and payload approval
-        run: >
-          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
-          --filter 'FullyQualifiedName~SqlServerMergeNotMatchedInsertApprovalLiveTests'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Isolate both TFMs against this job's single SQL Server physical database.
+          for framework in net10.0 net8.0; do
+            dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --framework "$framework" \
+              --filter 'FullyQualifiedName~SqlServerMergeNotMatchedInsertApprovalLiveTests'
+          done
         env:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
 
