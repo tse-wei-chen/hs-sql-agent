@@ -696,27 +696,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj \
-            --filter 'FullyQualifiedName~DmlNativePostgresCommitDisconnectTests' \
-            | tee /tmp/hsa-native-postgres-commit-disconnect.log
-          # An unmatched filter can exit successfully; explicitly require the
-          # real provider case to run, pass and not be skipped.
-          grep -Eq 'succeeded:[[:space:]]*1([[:space:]]|$)' /tmp/hsa-native-postgres-commit-disconnect.log
-          grep -Eq 'skipped:[[:space:]]*0([[:space:]]|$)' /tmp/hsa-native-postgres-commit-disconnect.log
+          bash .github/scripts/require-physical-test-cases.sh 1 \
+            backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj \
+            'FullyQualifiedName~DmlNativePostgresCommitDisconnectTests'
         env:
           TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test;Pooling=false"
       - name: Require real PostgreSQL 16 post-COMMIT wire EOF and durable Fence Witness
         shell: bash
         run: |
           set -euo pipefail
-          dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj \
-            --filter 'FullyQualifiedName~DmlNativePostgresPostCommitAckLossTests' \
-            | tee /tmp/hsa-postgres-postcommit-wire-eof.log
-          # An unmatched test filter can exit zero. The physical target
-          # transaction and proxy must run: exactly 1 pass, 0 skip/fail.
-          grep -Eq 'succeeded:[[:space:]]*1([[:space:]]|$)' /tmp/hsa-postgres-postcommit-wire-eof.log
-          grep -Eq 'failed:[[:space:]]*0([[:space:]]|$)' /tmp/hsa-postgres-postcommit-wire-eof.log
-          grep -Eq 'skipped:[[:space:]]*0([[:space:]]|$)' /tmp/hsa-postgres-postcommit-wire-eof.log
+          bash .github/scripts/require-physical-test-cases.sh 1 \
+            backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj \
+            'FullyQualifiedName~DmlNativePostgresPostCommitAckLossTests'
         env:
           TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test;Pooling=false"
       - name: Verify PostgreSQL 16 physical Custom DML 24-way load and cancellation
