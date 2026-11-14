@@ -43,11 +43,11 @@ public sealed class SqlCoreStructuredStatementEffectsTests
             "CREATE TABLE source (id INTEGER); CREATE TABLE destination (id INTEGER);" +
             " INSERT INTO destination(id) SELECT id FROM source;");
         var statement = result.Statements[2];
-        var write = Assert.Single(statement.DetailedEffects.Where(e => e.Kind == SqlEffectKind.WriteData));
+        var write = Assert.Single(statement.DetailedEffects, e => e.Kind == SqlEffectKind.WriteData);
         Assert.Equal(SqlStatementEffectOperation.Insert, write.Operation);
         Assert.Equal("destination", write.ObjectName);
         Assert.Contains("source", write.Dependencies);
-        var read = Assert.Single(statement.DetailedEffects.Where(e => e.Kind == SqlEffectKind.ReadData));
+        var read = Assert.Single(statement.DetailedEffects, e => e.Kind == SqlEffectKind.ReadData);
         Assert.Equal(SqlStatementEffectOperation.ReadTable, read.Operation);
         Assert.Equal("source", read.ObjectName);
         Assert.Equal(SqlEffectCoverage.Partial, statement.EffectCoverage);
@@ -147,9 +147,7 @@ public sealed class SqlCoreStructuredStatementEffectsTests
         {
             try
             {
-                var result = SqlCoreFacade.AnalyzeScript(
-                    "SELECT 1 AS first_value; SELECT 2 AS second_value;",
-                    dialect, SqlCatalogState.KnownEmpty());
+                var result = SqlCoreFacade.AnalyzeScript("SELECT 1 AS first_value; SELECT 2 AS second_value;", dialect, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
                 Assert.Equal(2, result.Statements.Count);
                 Assert.All(result.Statements, statement =>
                 {

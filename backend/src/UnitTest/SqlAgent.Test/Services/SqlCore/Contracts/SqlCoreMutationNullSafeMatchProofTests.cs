@@ -122,8 +122,7 @@ public sealed class SqlCoreMutationNullSafeMatchProofTests
     public void NullablePhysicalKeyNeverFlowsThroughAnUnprovenView()
     {
         const string view = "CREATE VIEW app.v AS SELECT code, note FROM app.required;";
-        var ddl = SqlCoreFacade.AnalyzeScript(Ddl + view,
-            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var ddl = SqlCoreFacade.AnalyzeScript(Ddl + view, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Empty(ddl.Diagnostics);
         var stmt = One("UPDATE app.dest d SET label = 'x' FROM app.v v WHERE d.id IS NOT DISTINCT FROM v.code",
             ddl.FinalCatalog);
@@ -140,8 +139,7 @@ public sealed class SqlCoreMutationNullSafeMatchProofTests
     [InlineData(SqlAgentToolType.Firebird)]
     public void TablelessQueriesKeepNotApplicableMatchProofAcrossSixProviders(SqlAgentToolType dialect)
     {
-        var stmt = Assert.Single(SqlCoreFacade.AnalyzeScript("SELECT 1;",
-            dialect, SqlCatalogState.KnownEmpty()).Statements);
+        var stmt = Assert.Single(SqlCoreFacade.AnalyzeScript("SELECT 1;", dialect, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken).Statements);
         Assert.Equal(SqlMutationSourceMatchCardinality.NotApplicable, stmt.SourceMatchCardinality);
     }
 }

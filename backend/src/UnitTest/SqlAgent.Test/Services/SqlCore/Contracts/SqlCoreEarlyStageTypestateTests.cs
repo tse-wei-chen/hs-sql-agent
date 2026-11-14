@@ -20,8 +20,8 @@ public sealed class SqlCoreEarlyStageTypestateTests
         var types = assembly.GetTypes();
         foreach (var stage in new[] { "Parsed", "Bound", "Canonical", "Validated", "Authorized" })
         {
-            var query = Assert.Single(types.Where(t => t.Name == stage + "Query"));
-            var mutation = Assert.Single(types.Where(t => t.Name == stage + "Mutation"));
+            var query = Assert.Single(types, t => t.Name == stage + "Query");
+            var mutation = Assert.Single(types, t => t.Name == stage + "Mutation");
             Assert.NotEqual(query, mutation);
             Assert.False(query.IsVisible);
             Assert.False(mutation.IsVisible);
@@ -46,7 +46,7 @@ public sealed class SqlCoreEarlyStageTypestateTests
         const string sql = "SELECT id FROM users WHERE id = 7";
         var validation = new SqlPlanValidationContext("early-typestate-facts-v1");
         var rowCap = new SqlExecutionPlanPolicy(10);
-        var direct = SqlCoreFacade.CompileQuery(sql, dialect, dialect, validation, rowCap);
+        var direct = SqlCoreFacade.CompileQuery(sql, dialect, dialect, validation, rowCap, TestContext.Current.CancellationToken);
         var inspected = SqlCoreFacade.CompileQueryWithFacts(sql, dialect, dialect, validation, rowCap);
 
         Assert.Equal(direct.Kind, inspected.Command.Kind);
@@ -66,17 +66,9 @@ public sealed class SqlCoreEarlyStageTypestateTests
     public void MutationStages_KeepDefaultDeleteSafetyAcrossEveryDialect(SqlAgentToolType dialect)
     {
         Assert.Throws<UnauthorizedAccessException>(() =>
-            SqlCoreFacade.CompileDml(
-                "DELETE FROM users",
-                dialect,
-                dialect,
-                new SqlPlanValidationContext("early-typestate-delete-v1")));
+            SqlCoreFacade.CompileDml("DELETE FROM users", dialect, dialect, new SqlPlanValidationContext("early-typestate-delete-v1"), TestContext.Current.CancellationToken));
 
-        var safe = SqlCoreFacade.CompileDml(
-            "DELETE FROM users WHERE id = 7",
-            dialect,
-            dialect,
-            new SqlPlanValidationContext("early-typestate-delete-v1"));
+        var safe = SqlCoreFacade.CompileDml("DELETE FROM users WHERE id = 7", dialect, dialect, new SqlPlanValidationContext("early-typestate-delete-v1"), TestContext.Current.CancellationToken);
 
         Assert.Equal(SqlStatementKind.Delete, safe.Kind);
         Assert.Contains(safe.Parameters, parameter => Equals(parameter.Value, 7));
@@ -88,8 +80,7 @@ public sealed class SqlCoreEarlyStageTypestateTests
         var validation = new SqlPlanValidationContext("early-typestate-cap-v1");
         var policy = new SqlExecutionPlanPolicy(3);
         const string sql = "SELECT id FROM users ORDER BY id";
-        var direct = SqlCoreFacade.CompileQuery(
-            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, validation, policy);
+        var direct = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, validation, policy, TestContext.Current.CancellationToken);
         var inspected = SqlCoreFacade.CompileQueryWithFacts(
             sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, validation, policy);
 

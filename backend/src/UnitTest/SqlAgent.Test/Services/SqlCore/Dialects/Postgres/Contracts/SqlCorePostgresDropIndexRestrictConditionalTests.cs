@@ -210,8 +210,7 @@ public sealed class SqlCorePostgresDropIndexRestrictConditionalTests
             SqlAgentToolType.Sqlite, SqlAgentToolType.Oracle, SqlAgentToolType.Firebird
         })
         {
-            var result = SqlCoreFacade.AnalyzeScript(
-                sql, provider, SqlCatalogState.KnownEmpty());
+            var result = SqlCoreFacade.AnalyzeScript(sql, provider, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
             var statement = Assert.Single(result.Statements);
             Assert.Equal(SqlStatementAnalysisStatus.Unsupported, statement.Status);
             Assert.Equal(SqlCatalogKnowledge.Unknown, statement.Certainty);
@@ -232,7 +231,7 @@ public sealed class SqlCorePostgresDropIndexRestrictConditionalTests
         var drop = Assert.Single(r.Statements);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, drop.Status);
         Assert.Equal(SqlCatalogKnowledge.Unknown, drop.Certainty);
-        Assert.Empty(drop.Changes.Where(c => c.Certainty == SqlCatalogKnowledge.Known));
+        Assert.DoesNotContain(drop.Changes, c => c.Certainty == SqlCatalogKnowledge.Known);
         Assert.False(r.FinalCatalog.IsClosedWorld);
     }
 }

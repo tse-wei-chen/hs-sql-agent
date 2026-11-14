@@ -36,12 +36,7 @@ public sealed class SqlCoreWindowRangeOffsetSourceProofTests
     public void SqlServerSource_CannotAcquirePostgresExecutionByCrossProviderTranslation()
     {
         var error = Assert.Throws<SqlParseException>(() =>
-            SqlCoreFacade.CompileQuery(
-                Query("RANGE BETWEEN 1 PRECEDING AND CURRENT ROW"),
-                SqlAgentToolType.MsSqlServer,
-                SqlAgentToolType.Postgres,
-                new SqlPlanValidationContext("g10-range-source-proof"),
-                new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(Query("RANGE BETWEEN 1 PRECEDING AND CURRENT ROW"), SqlAgentToolType.MsSqlServer, SqlAgentToolType.Postgres, new SqlPlanValidationContext("g10-range-source-proof"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Contains("window.range_offset", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 

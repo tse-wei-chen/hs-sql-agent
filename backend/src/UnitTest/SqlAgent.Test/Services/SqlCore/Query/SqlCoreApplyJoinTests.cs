@@ -40,8 +40,7 @@ public sealed class SqlCoreApplyJoinTests
     {
         const string sql = "SELECT u.ID, q.ID FROM USERS u OUTER APPLY (SELECT u.ID AS ID) q";
         var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.MsSqlServer);
-        var command = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
-            new SqlPlanValidationContext("apply-correlation"), new SqlExecutionPlanPolicy(0));
+        var command = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer, new SqlPlanValidationContext("apply-correlation"), new SqlExecutionPlanPolicy(0), TestContext.Current.CancellationToken);
         Assert.Equal("OUTER APPLY", Assert.Single(Assert.IsType<SelectStatement>(parsed.Statement).Joins).Kind);
         Assert.Contains("OUTER APPLY", command.Sql, StringComparison.OrdinalIgnoreCase);
     }

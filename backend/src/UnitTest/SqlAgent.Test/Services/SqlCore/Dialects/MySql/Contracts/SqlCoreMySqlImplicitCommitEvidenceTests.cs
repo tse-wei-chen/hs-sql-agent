@@ -76,16 +76,12 @@ public sealed class SqlCoreMySqlImplicitCommitEvidenceTests
             SqlAgentToolType.MsSqlServer, SqlAgentToolType.Firebird
         })
         {
-            var report = SqlCoreFacade.AnalyzeScript(
-                "CREATE TABLE sample(id INTEGER);",
-                provider, SqlCatalogState.KnownEmpty());
+            var report = SqlCoreFacade.AnalyzeScript("CREATE TABLE sample(id INTEGER);", provider, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
             Assert.NotEqual(SqlTransactionEffectOrigin.PossibleImplicitCommit,
                 report.Statements[0].TransactionProvenance.Origin);
             Assert.False(report.Statements[0].Effects.HasFlag(SqlEffectKind.ChangeTransaction));
         }
-        var oracle = SqlCoreFacade.AnalyzeScript(
-            "CREATE TABLE sample(id NUMBER);",
-            SqlAgentToolType.Oracle, SqlCatalogState.KnownEmpty());
+        var oracle = SqlCoreFacade.AnalyzeScript("CREATE TABLE sample(id NUMBER);", SqlAgentToolType.Oracle, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlTransactionEffectOrigin.PossibleImplicitCommit,
             oracle.Statements[0].TransactionProvenance.Origin);
     }

@@ -17,12 +17,7 @@ public sealed class SqlCompileEvidenceObserverTests
     public void Observe_EmitsStructuredLogTraceAndLowCardinalityMetricWithoutSqlText()
     {
         const string sql = "SELECT id FROM users WHERE id = 42";
-        var command = SqlCoreFacade.CompileQuery(
-            sql,
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("observer-test"),
-            new SqlExecutionPlanPolicy(25));
+        var command = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("observer-test"), new SqlExecutionPlanPolicy(25), TestContext.Current.CancellationToken);
         var evidence = Assert.IsType<SqlCompileEvidence>(command.CompileEvidence);
 
         var measurements = new ConcurrentBag<CapturedMeasurement>();
@@ -75,12 +70,7 @@ public sealed class SqlCompileEvidenceObserverTests
     [Fact]
     public void Observe_ExceptionUsesRejectedCompileEvidence()
     {
-        var error = Assert.ThrowsAny<Exception>(() => SqlCoreFacade.CompileQuery(
-            "SELECT FROM",
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("observer-rejection-test"),
-            new SqlExecutionPlanPolicy(25)));
+        var error = Assert.ThrowsAny<Exception>(() => SqlCoreFacade.CompileQuery("SELECT FROM", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("observer-rejection-test"), new SqlExecutionPlanPolicy(25), TestContext.Current.CancellationToken));
         var evidence = Assert.IsType<SqlCompileEvidence>(SqlCompileEvidence.TryGetFromException(error));
 
         using var metrics = new HsSqlAgentMetrics();

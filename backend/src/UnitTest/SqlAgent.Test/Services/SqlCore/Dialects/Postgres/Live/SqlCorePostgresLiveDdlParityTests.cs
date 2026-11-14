@@ -68,8 +68,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
     {
         var connectionString = GetConnectionString();
         var script = Scenarios.Single(s => s.Name == id).Script;
-        var analysis = SqlCoreFacade.AnalyzeScript(
-            script, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var analysis = SqlCoreFacade.AnalyzeScript(script, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.True(analysis.Statements.Count >= 2, id);
         Assert.All(analysis.Statements, s =>
             Assert.Equal(SqlStatementAnalysisStatus.Analyzed, s.Status));
@@ -104,8 +103,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
         string script, bool tableRemains)
     {
         var connectionString = GetConnectionString();
-        var analysis = SqlCoreFacade.AnalyzeScript(
-            script, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var analysis = SqlCoreFacade.AnalyzeScript(script, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.All(analysis.Statements, statement =>
             Assert.Equal(SqlStatementAnalysisStatus.Analyzed, statement.Status));
 
@@ -140,8 +138,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
     public void PostgresSupportsCheckConstraintsButAnalyzerDoesNotClaimTheirProof()
     {
         const string sql = "CREATE TABLE checked (id INTEGER, CHECK(id > 0));";
-        var result = SqlCoreFacade.AnalyzeScript(
-            sql, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported,
             Assert.Single(result.Statements).Status);
         Assert.False(result.FinalCatalog.IsClosedWorld);
@@ -160,8 +157,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
             $"CREATE VIEW {schema}.v AS SELECT id AS exposed FROM {schema}.original;" +
             $"CREATE VIEW {schema}.child AS SELECT exposed AS child_id FROM {schema}.v;" +
             $"CREATE OR REPLACE VIEW {schema}.v AS SELECT id AS exposed FROM {schema}.replacement;";
-        var analysis = SqlCoreFacade.AnalyzeScript(
-            setup, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var analysis = SqlCoreFacade.AnalyzeScript(setup, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Empty(analysis.Diagnostics);
         Assert.All(analysis.Statements, statement =>
             Assert.Equal(SqlStatementAnalysisStatus.Analyzed, statement.Status));
@@ -173,11 +169,9 @@ public sealed class SqlCorePostgresLiveDdlParityTests
 
         var oldColumnDrop = $"ALTER TABLE {schema}.original DROP COLUMN id;";
         var newColumnDrop = $"ALTER TABLE {schema}.replacement DROP COLUMN id;";
-        var staleDependencyCheck = SqlCoreFacade.AnalyzeScript(
-            setup + oldColumnDrop, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var staleDependencyCheck = SqlCoreFacade.AnalyzeScript(setup + oldColumnDrop, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, staleDependencyCheck.Statements[5].Status);
-        var activeDependencyCheck = SqlCoreFacade.AnalyzeScript(
-            setup + newColumnDrop, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var activeDependencyCheck = SqlCoreFacade.AnalyzeScript(setup + newColumnDrop, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Invalid, activeDependencyCheck.Statements[5].Status);
         Assert.Empty(activeDependencyCheck.Statements[5].Changes);
 
@@ -204,8 +198,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
             $"CREATE VIEW {schema}.v AS SELECT id AS exposed FROM {schema}.src;";
         var incompatible =
             $"CREATE OR REPLACE VIEW {schema}.v AS SELECT note AS exposed FROM {schema}.src;";
-        var staticResult = SqlCoreFacade.AnalyzeScript(
-            create + incompatible, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var staticResult = SqlCoreFacade.AnalyzeScript(create + incompatible, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Invalid, staticResult.Statements[2].Status);
         Assert.Empty(staticResult.Statements[2].Changes);
         Assert.True(staticResult.FinalCatalog.IsClosedWorld);
@@ -233,8 +226,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
             $"CREATE OR REPLACE VIEW {schema}.v (public_id, public_label, added_value) " +
             $"AS SELECT id, label, extra FROM {schema}.alt;" +
             $"CREATE VIEW {schema}.prefix (public_id) AS SELECT id, label FROM {schema}.alt;";
-        var staticResult = SqlCoreFacade.AnalyzeScript(
-            script, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var staticResult = SqlCoreFacade.AnalyzeScript(script, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Empty(staticResult.Diagnostics);
         Assert.All(staticResult.Statements, statement =>
             Assert.Equal(SqlStatementAnalysisStatus.Analyzed, statement.Status));
@@ -306,8 +298,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
         var schema = "sqlcore_vh_" + Guid.NewGuid().ToString("N");
         var table = $"CREATE TABLE {schema}.src(id INTEGER NOT NULL, label TEXT);";
         var invalid = $"CREATE VIEW {schema}.bad {header} AS {select} FROM {schema}.src;";
-        var staticResult = SqlCoreFacade.AnalyzeScript(
-            table + invalid, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var staticResult = SqlCoreFacade.AnalyzeScript(table + invalid, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, staticResult.Statements[0].Status);
         Assert.Equal(SqlStatementAnalysisStatus.Invalid, staticResult.Statements[1].Status);
         Assert.Empty(staticResult.Statements[1].Changes);
@@ -338,8 +329,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
             $"CREATE VIEW {schema}.wild (public_id) AS " +
             $"SELECT a.* FROM {schema}.alternate AS a;";
 
-        var result = SqlCoreFacade.AnalyzeScript(
-            script, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript(script, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Empty(result.Diagnostics);
         Assert.All(result.Statements, s =>
             Assert.Equal(SqlStatementAnalysisStatus.Analyzed, s.Status));
@@ -352,13 +342,9 @@ public sealed class SqlCorePostgresLiveDdlParityTests
             Assert.Single(view.Dependencies)!.Parts[1]);
         Assert.Equal(new[] { "id", "label", "extra" }, view.SourceColumns);
 
-        var oldDrop = SqlCoreFacade.AnalyzeScript(
-            script + $"ALTER TABLE {schema}.src DROP COLUMN id;",
-            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var oldDrop = SqlCoreFacade.AnalyzeScript(script + $"ALTER TABLE {schema}.src DROP COLUMN id;", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, oldDrop.Statements[6].Status);
-        var newDrop = SqlCoreFacade.AnalyzeScript(
-            script + $"ALTER TABLE {schema}.alternate DROP COLUMN id;",
-            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var newDrop = SqlCoreFacade.AnalyzeScript(script + $"ALTER TABLE {schema}.alternate DROP COLUMN id;", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Invalid, newDrop.Statements[6].Status);
 
         await using var db = new NpgsqlConnection(GetConnectionString());
@@ -402,8 +388,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
         var create = $"CREATE TABLE {schema}.src(id INTEGER);";
         var invalid =
             $"CREATE VIEW {schema}.wrong AS SELECT src.id FROM {schema}.src AS s;";
-        var result = SqlCoreFacade.AnalyzeScript(
-            create + invalid, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript(create + invalid, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Invalid, result.Statements[1].Status);
         Assert.Empty(result.Statements[1].Changes);
         Assert.True(result.FinalCatalog.IsClosedWorld);
@@ -427,8 +412,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
             $"CREATE VIEW {schema}.v (external_id) AS SELECT s.id FROM {schema}.source AS s " +
             $"WHERE (s.qty >= 10 AND s.status = 'ready') OR s.deleted IS NULL;" +
             $"CREATE VIEW {schema}.child AS SELECT external_id FROM {schema}.v;";
-        var analysis = SqlCoreFacade.AnalyzeScript(
-            statement, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var analysis = SqlCoreFacade.AnalyzeScript(statement, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Empty(analysis.Diagnostics);
         Assert.All(analysis.Statements, s =>
             Assert.Equal(SqlStatementAnalysisStatus.Analyzed, s.Status));
@@ -437,9 +421,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
         Assert.Equal(new[] { "id", "qty", "status", "deleted" },
             view.SourceColumns);
 
-        var block = SqlCoreFacade.AnalyzeScript(
-            statement + $"ALTER TABLE {schema}.source DROP COLUMN status;",
-            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var block = SqlCoreFacade.AnalyzeScript(statement + $"ALTER TABLE {schema}.source DROP COLUMN status;", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Invalid, block.Statements[4].Status);
         Assert.Empty(block.Statements[4].Changes);
 
@@ -459,8 +441,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
         var replace =
             $"CREATE OR REPLACE VIEW {schema}.v (external_id) AS " +
             $"SELECT a.id FROM {schema}.alternate AS a WHERE a.status IS NOT NULL;";
-        var replacementProof = SqlCoreFacade.AnalyzeScript(
-            statement + replace, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var replacementProof = SqlCoreFacade.AnalyzeScript(statement + replace, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Empty(replacementProof.Diagnostics);
         Assert.Equal(SqlCatalogOperation.ReplaceView,
             Assert.Single(replacementProof.Statements[4].Changes).Operation);
@@ -483,8 +464,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
         var create = $"CREATE TABLE {schema}.source(id INTEGER NOT NULL);";
         var invalid =
             $"CREATE VIEW {schema}.bad AS SELECT id FROM {schema}.source WHERE unknown > 0;";
-        var analysis = SqlCoreFacade.AnalyzeScript(
-            create + invalid, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var analysis = SqlCoreFacade.AnalyzeScript(create + invalid, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Invalid, analysis.Statements[1].Status);
         Assert.Empty(analysis.Statements[1].Changes);
         Assert.True(analysis.FinalCatalog.IsClosedWorld);
@@ -510,8 +490,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
             $"FROM {schema}.orders o INNER JOIN {schema}.lines l ON o.id = l.order_id " +
             $"WHERE o.status = 'ready' AND l.amount > 0;" +
             $"CREATE VIEW {schema}.child AS SELECT title FROM {schema}.v;";
-        var analysis = SqlCoreFacade.AnalyzeScript(
-            setup, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var analysis = SqlCoreFacade.AnalyzeScript(setup, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Empty(analysis.Diagnostics);
         Assert.All(analysis.Statements,
             stmt => Assert.Equal(SqlStatementAnalysisStatus.Analyzed, stmt.Status));
@@ -520,17 +499,11 @@ public sealed class SqlCorePostgresLiveDdlParityTests
         Assert.Equal(new[] { "title", "id", "status" }, view.SourceBindings[0].Columns);
         Assert.Equal(new[] { "amount", "order_id" }, view.SourceBindings[1].Columns);
 
-        var filtered = SqlCoreFacade.AnalyzeScript(
-            setup + $"ALTER TABLE {schema}.orders DROP COLUMN status;",
-            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var filtered = SqlCoreFacade.AnalyzeScript(setup + $"ALTER TABLE {schema}.orders DROP COLUMN status;", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Invalid, filtered.Statements[5].Status);
-        var joinKey = SqlCoreFacade.AnalyzeScript(
-            setup + $"ALTER TABLE {schema}.lines DROP COLUMN order_id;",
-            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var joinKey = SqlCoreFacade.AnalyzeScript(setup + $"ALTER TABLE {schema}.lines DROP COLUMN order_id;", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Invalid, joinKey.Statements[5].Status);
-        var unrelated = SqlCoreFacade.AnalyzeScript(
-            setup + $"ALTER TABLE {schema}.lines DROP COLUMN id;",
-            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var unrelated = SqlCoreFacade.AnalyzeScript(setup + $"ALTER TABLE {schema}.lines DROP COLUMN id;", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, unrelated.Statements[5].Status);
 
         await using var db = new NpgsqlConnection(GetConnectionString());
@@ -569,8 +542,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
             $"CREATE OR REPLACE VIEW {schema}.v AS SELECT b.title, l.amount " +
             $"FROM {schema}.backup b JOIN {schema}.lines l ON b.id = l.order_id " +
             $"WHERE b.status = 'ready';";
-        var staticReplace = SqlCoreFacade.AnalyzeScript(
-            setup + replace, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var staticReplace = SqlCoreFacade.AnalyzeScript(setup + replace, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Empty(staticReplace.Diagnostics);
         Assert.Equal(SqlCatalogOperation.ReplaceView,
             Assert.Single(staticReplace.Statements[5].Changes).Operation);
@@ -596,8 +568,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
         var invalid =
             $"CREATE VIEW {schema}.v AS SELECT id FROM {schema}.orders o " +
             $"JOIN {schema}.lines l ON o.id = l.order_id;";
-        var staticResult = SqlCoreFacade.AnalyzeScript(
-            setup + invalid, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var staticResult = SqlCoreFacade.AnalyzeScript(setup + invalid, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Invalid, staticResult.Statements[2].Status);
         Assert.Empty(staticResult.Statements[2].Changes);
         Assert.True(staticResult.FinalCatalog.IsClosedWorld);
@@ -623,8 +594,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
             $"SELECT o.id, d.id, d.amount FROM {schema}.orders o " +
             $"LEFT OUTER JOIN {schema}.details AS d ON o.id = d.order_id;" +
             $"CREATE VIEW {schema}.child AS SELECT total FROM {schema}.v;";
-        var staticResult = SqlCoreFacade.AnalyzeScript(
-            setup, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var staticResult = SqlCoreFacade.AnalyzeScript(setup, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Empty(staticResult.Diagnostics);
         Assert.All(staticResult.Statements, s =>
             Assert.Equal(SqlStatementAnalysisStatus.Analyzed, s.Status));
@@ -698,8 +668,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
             $"CREATE OR REPLACE VIEW {schema}.v (public_id, detail_id) AS " +
             $"SELECT o.id, d.id FROM {schema}.orders o " +
             $"LEFT JOIN {schema}.details d ON o.id = d.order_id;";
-        var staticResult = SqlCoreFacade.AnalyzeScript(
-            script, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var staticResult = SqlCoreFacade.AnalyzeScript(script, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Empty(staticResult.Diagnostics);
         Assert.Equal(SqlCatalogOperation.ReplaceView,
             Assert.Single(staticResult.Statements[3].Changes).Operation);
@@ -738,8 +707,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
             $"CREATE VIEW {schema}.v (public_id, detail_id, total) AS " +
             $"SELECT o.id, d.id, d.amount FROM {schema}.orders o " +
             join + $" {schema}.details d ON o.id = d.order_id;";
-        var analyzed = SqlCoreFacade.AnalyzeScript(
-            script, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var analyzed = SqlCoreFacade.AnalyzeScript(script, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Empty(analyzed.Diagnostics);
         Assert.All(analyzed.Statements, item =>
             Assert.Equal(SqlStatementAnalysisStatus.Analyzed, item.Status));
@@ -816,8 +784,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
             $"CREATE OR REPLACE VIEW {schema}.v (public_id, detail_id) AS " +
             $"SELECT o.id, d.id FROM {schema}.orders o " +
             $"FULL OUTER JOIN {schema}.details d ON o.id = d.order_id;";
-        var analysis = SqlCoreFacade.AnalyzeScript(
-            script, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var analysis = SqlCoreFacade.AnalyzeScript(script, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Empty(analysis.Diagnostics);
         Assert.Equal(SqlCatalogOperation.ReplaceView,
             Assert.Single(analysis.Statements[3].Changes).Operation);
@@ -860,8 +827,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
             $"LEFT JOIN {schema}.lines l ON o.id = l.order_id AND o.tenant = l.tenant " +
             $"RIGHT JOIN {schema}.shipments s ON l.line_id = s.line_id AND l.tenant = s.tenant;";
 
-        var model = SqlCoreFacade.AnalyzeScript(
-            setup, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var model = SqlCoreFacade.AnalyzeScript(setup, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Empty(model.Diagnostics);
         Assert.All(model.Statements, stmt =>
             Assert.Equal(SqlStatementAnalysisStatus.Analyzed, stmt.Status));
@@ -909,9 +875,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
             ("lines", "tenant"), ("shipments", "tenant")
         })
         {
-            var proposed = SqlCoreFacade.AnalyzeScript(
-                setup + $"ALTER TABLE {schema}.{table} DROP COLUMN {column};",
-                SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+            var proposed = SqlCoreFacade.AnalyzeScript(setup + $"ALTER TABLE {schema}.{table} DROP COLUMN {column};", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
             Assert.Equal(SqlStatementAnalysisStatus.Invalid, proposed.Statements[4].Status);
             var savepoint = "SAVEPOINT graph_drop";
             await Execute(db, tx, savepoint);
@@ -937,8 +901,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
             $"JOIN {schema}.b b ON a.id = b.a_id AND a.tenant = b.tenant " +
             $"LEFT JOIN {schema}.c c ON b.id = c.b_id AND b.tenant = c.tenant " +
             $"FULL OUTER JOIN {schema}.d d ON c.id = d.c_id AND c.tenant = d.tenant;";
-        var result = SqlCoreFacade.AnalyzeScript(
-            setup, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript(setup, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Empty(result.Diagnostics);
         Assert.All(result.Statements, s =>
             Assert.Equal(SqlStatementAnalysisStatus.Analyzed, s.Status));
@@ -1050,8 +1013,7 @@ public sealed class SqlCorePostgresLiveDdlParityTests
         foreach (var table in model.Tables)
         {
             Assert.Equal(SqlCatalogKnowledge.Known, table.Knowledge);
-            var physical = Assert.Single(live.Where(
-                x => string.Equals(x.Name, table.Name, StringComparison.Ordinal)));
+            var physical = Assert.Single(live, x => string.Equals(x.Name, table.Name, StringComparison.Ordinal));
             Assert.Equal(table.Columns.Count, physical.Columns.Length);
             for (var i = 0; i < table.Columns.Count; i++)
             {

@@ -74,8 +74,7 @@ public sealed class SqlCoreFirebirdLiveDdlParityTests
             .Replace("{I2}", prefix + "_I2", StringComparison.Ordinal);
 
         // IMPORTANT: no server access occurs while analyzing source.
-        var analysis = SqlCoreFacade.AnalyzeScript(
-            sql, SqlAgentToolType.Firebird, SqlCatalogState.KnownEmpty());
+        var analysis = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Firebird, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.True(analysis.Statements.Count >= 2, name);
         Assert.All(analysis.Statements, x => Assert.Equal(SqlStatementAnalysisStatus.Analyzed, x.Status));
         Assert.Empty(analysis.Diagnostics);
@@ -108,9 +107,7 @@ public sealed class SqlCoreFirebirdLiveDdlParityTests
     [Fact]
     public void UnmodeledCheckConstraintDoesNotGainFalseFirebirdCatalogProof()
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "CREATE TABLE checked_table(ID INTEGER, CHECK(ID > 0));",
-            SqlAgentToolType.Firebird, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript("CREATE TABLE checked_table(ID INTEGER, CHECK(ID > 0));", SqlAgentToolType.Firebird, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported,
             Assert.Single(result.Statements).Status);
         Assert.False(result.FinalCatalog.IsClosedWorld);

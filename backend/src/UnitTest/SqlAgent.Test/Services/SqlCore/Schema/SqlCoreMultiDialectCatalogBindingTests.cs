@@ -15,16 +15,14 @@ public sealed class SqlCoreMultiDialectCatalogBindingTests
     public void ModelledDialectTypes_AreValidatedAgainstPriorDdl(
         SqlAgentToolType dialect, string numberType, string textType)
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            $"CREATE TABLE users (id {numberType}, name {textType});" +
+        var result = SqlCoreFacade.AnalyzeScript($"CREATE TABLE users (id {numberType}, name {textType});" +
             "SELECT name FROM users;" +
             "UPDATE users SET name = 'Ada' WHERE id = 1;" +
             "UPDATE users SET id = 'not-an-integer' WHERE id = 1;" +
             (dialect == SqlAgentToolType.Firebird
                 ? "ALTER TABLE users DROP name;"
                 : "ALTER TABLE users DROP COLUMN name;") +
-            "SELECT name FROM users;",
-            dialect, SqlCatalogState.KnownEmpty());
+            "SELECT name FROM users;", dialect, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
 
         Assert.Equal(6, result.Statements.Count);
         Assert.Empty(result.Statements[0].Diagnostics);
@@ -45,13 +43,11 @@ public sealed class SqlCoreMultiDialectCatalogBindingTests
     [Fact]
     public void SqliteKnowsNamesButNeverClaimsRigidColumnTypeProof()
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "CREATE TABLE users (id INTEGER, name TEXT);" +
+        var result = SqlCoreFacade.AnalyzeScript("CREATE TABLE users (id INTEGER, name TEXT);" +
             "SELECT id FROM users;" +
             "INSERT INTO users(id, name) VALUES ('text-is-legal', 'Ada');" +
             "ALTER TABLE users ADD COLUMN active INTEGER;" +
-            "SELECT missing FROM users;",
-            SqlAgentToolType.Sqlite, SqlCatalogState.KnownEmpty());
+            "SELECT missing FROM users;", SqlAgentToolType.Sqlite, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
 
         Assert.Equal(SqlCatalogBindingStatus.Verified, result.Statements[1].NameBinding);
         Assert.Equal(SqlCatalogBindingStatus.Unverified, result.Statements[1].TypeBinding);
@@ -72,11 +68,9 @@ public sealed class SqlCoreMultiDialectCatalogBindingTests
     public void ProviderCollationUnproven_CannotCertifyPhysicalTableBinding(
         SqlAgentToolType dialect, string numberType, string expectedTable)
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            $"CREATE TABLE users (id {numberType});" +
+        var result = SqlCoreFacade.AnalyzeScript($"CREATE TABLE users (id {numberType});" +
             "SELECT id FROM users;" +
-            "SELECT 1;",
-            dialect, SqlCatalogState.KnownEmpty());
+            "SELECT 1;", dialect, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
 
         Assert.Equal(expectedTable, Assert.Single(result.Statements[0].CatalogAfter.Tables).Name);
         Assert.Equal(SqlCatalogBindingStatus.Unverified, result.Statements[1].NameBinding);
@@ -94,12 +88,10 @@ public sealed class SqlCoreMultiDialectCatalogBindingTests
     public void QuotedIdentifiersStayCaseSensitiveAcrossDdlAndDql(
         SqlAgentToolType dialect, string typeName)
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            $"CREATE TABLE \"Mixed\" (\"Id\" {typeName});" +
+        var result = SqlCoreFacade.AnalyzeScript($"CREATE TABLE \"Mixed\" (\"Id\" {typeName});" +
             "SELECT \"Id\" FROM \"Mixed\";" +
             "SELECT ID FROM \"Mixed\";" +
-            "SELECT \"Id\" FROM MIXED;",
-            dialect, SqlCatalogState.KnownEmpty());
+            "SELECT \"Id\" FROM MIXED;", dialect, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
 
         Assert.Equal(SqlCatalogBindingStatus.Verified, result.Statements[1].CatalogBinding);
         Assert.Equal(SqlCatalogBindingStatus.Rejected, result.Statements[2].NameBinding);
@@ -115,8 +107,7 @@ public sealed class SqlCoreMultiDialectCatalogBindingTests
     [InlineData(SqlAgentToolType.Firebird)]
     public void UnknownWorldNeverGetsAccidentalCatalogProof(SqlAgentToolType dialect)
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "SELECT id FROM users", dialect);
+        var result = SqlCoreFacade.AnalyzeScript("SELECT id FROM users", dialect, TestContext.Current.CancellationToken);
         var statement = Assert.Single(result.Statements);
         Assert.Equal(SqlCatalogBindingStatus.Unverified, statement.NameBinding);
         Assert.Equal(SqlCatalogBindingStatus.Unverified, statement.TypeBinding);
@@ -133,8 +124,7 @@ public sealed class SqlCoreMultiDialectCatalogBindingTests
     [InlineData(SqlAgentToolType.Firebird)]
     public void StaticProofDoesNotGrantExecutionAcrossAllSources(SqlAgentToolType dialect)
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "SELECT 1", dialect, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript("SELECT 1", dialect, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
 
         var item = Assert.Single(result.Statements);
         Assert.Equal(SqlStatementAnalysisStatus.PartiallyAnalyzed, item.Status);
@@ -166,8 +156,7 @@ public sealed class SqlCoreMultiDialectCatalogBindingTests
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 { ["CATALOG_COLLATION"] = "Latin1_General_100_CI_AS" })
             : null;
-        var result = SqlCoreFacade.AnalyzeScript(
-            ddl + " SELECT 1; SELECT 2;", dialect, SqlCatalogState.KnownEmpty(), profile);
+        var result = SqlCoreFacade.AnalyzeScript(ddl + " SELECT 1; SELECT 2;", dialect, SqlCatalogState.KnownEmpty(), profile, TestContext.Current.CancellationToken);
 
         Assert.Empty(result.Diagnostics);
         Assert.Equal(26, result.Statements.Count);
@@ -191,13 +180,11 @@ public sealed class SqlCoreMultiDialectCatalogBindingTests
         SqlAgentToolType dialect, string numberType)
     {
         var textType = dialect == SqlAgentToolType.Oracle ? "VARCHAR2(24)" : "VARCHAR(24)";
-        var result = SqlCoreFacade.AnalyzeScript(
-            $"CREATE TABLE users(id {numberType}, name {textType});" +
+        var result = SqlCoreFacade.AnalyzeScript($"CREATE TABLE users(id {numberType}, name {textType});" +
             " SELECT id FROM users;" +
             " UPDATE users SET id = 'not-an-integer' WHERE id = 1;" +
             " SELECT missing FROM users;" +
-            " SELECT name FROM users;",
-            dialect, SqlCatalogState.KnownEmpty());
+            " SELECT name FROM users;", dialect, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
 
         Assert.Equal(SqlCatalogBindingStatus.Verified, result.Statements[1].CatalogBinding);
         Assert.Equal(SqlCatalogBindingStatus.Verified, result.Statements[2].NameBinding);

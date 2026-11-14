@@ -218,13 +218,8 @@ public sealed class PostgresGrammarMatrixTests
                     StringComparison.OrdinalIgnoreCase));
         }
 
-        var command = SqlCoreFacade.CompileQuery(
-            sql,
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext(
-                "postgres-combinatorial-grammar-matrix-v1"),
-            new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext(
+                "postgres-combinatorial-grammar-matrix-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.False(string.IsNullOrWhiteSpace(command.Sql));
         Assert.Contains("WITH", command.Sql, StringComparison.OrdinalIgnoreCase);

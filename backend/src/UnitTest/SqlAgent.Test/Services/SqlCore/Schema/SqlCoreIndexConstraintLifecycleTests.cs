@@ -56,11 +56,9 @@ public sealed class SqlCoreIndexConstraintLifecycleTests
         var profile = provider == SqlAgentToolType.Sqlite
             ? new HsSqlAgent.SqlCore.Models.SqlProviderCapabilityProfile(provider, new Version(3, 35))
             : null;
-        var analysis = SqlCoreFacade.AnalyzeScript(
-            $"CREATE TABLE users(id {typeName}, extra {typeName});" +
+        var analysis = SqlCoreFacade.AnalyzeScript($"CREATE TABLE users(id {typeName}, extra {typeName});" +
             "CREATE INDEX idx_users_id ON users(id);" +
-            dropColumn + dropIndex + dropColumn,
-            provider, SqlCatalogState.KnownEmpty(), profile);
+            dropColumn + dropIndex + dropColumn, provider, SqlCatalogState.KnownEmpty(), profile, TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Invalid, analysis.Statements[2].Status);
         Assert.Empty(analysis.Statements[2].Changes);
         Assert.Single(Assert.Single(analysis.Statements[2].CatalogAfter.Tables).Indexes);
@@ -149,8 +147,8 @@ public sealed class SqlCoreIndexConstraintLifecycleTests
         Assert.Equal(SqlCatalogOperation.DropConstraint,
             Assert.Single(result.Statements[3].Changes).Operation);
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[4].Status);
-        Assert.Empty(result.FinalCatalog.Tables.Where(t => t.Name.Equals("parent",
-            StringComparison.OrdinalIgnoreCase)));
+        Assert.DoesNotContain(result.FinalCatalog.Tables, t => t.Name.Equals("parent",
+            StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -166,7 +164,7 @@ public sealed class SqlCoreIndexConstraintLifecycleTests
         Assert.Empty(result.Statements[2].Changes);
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[4].Status);
-        Assert.Empty(Assert.Single(result.FinalCatalog.Tables.Where(t => t.Name == "parent")).Constraints);
+        Assert.Empty(Assert.Single(result.FinalCatalog.Tables, t => t.Name == "parent").Constraints);
     }
 
     [Theory]

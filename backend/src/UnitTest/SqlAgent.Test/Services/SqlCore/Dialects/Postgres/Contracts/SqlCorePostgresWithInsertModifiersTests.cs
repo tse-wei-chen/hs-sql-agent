@@ -21,7 +21,7 @@ public sealed class SqlCorePostgresWithInsertModifiersTests
     [InlineData("WITH source_rows AS (SELECT 17 AS id) INSERT INTO users(id) SELECT id FROM source_rows ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id RETURNING id")]
     public void AdmittedPostgresInsertModifiersRemainTypedMutations(string sql)
     {
-        var syntax = SqlCoreFacade.ParseScript(sql + "; SELECT 2;", SqlAgentToolType.Postgres);
+        var syntax = SqlCoreFacade.ParseScript(sql + "; SELECT 2;", SqlAgentToolType.Postgres, TestContext.Current.CancellationToken);
         Assert.Empty(syntax.Diagnostics);
         Assert.Equal(2, syntax.Statements.Count);
         Assert.Equal(SqlScriptStatementKind.Mutation, syntax.Statements[0].Kind);
@@ -39,10 +39,8 @@ public sealed class SqlCorePostgresWithInsertModifiersTests
     {
         var sql = "WITH source_rows AS (SELECT 17 AS id) " +
                   "INSERT INTO users(id) SELECT id FROM source_rows" + suffix;
-        var command = SqlCoreFacade.CompileDml(sql,
-            SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("with-insert-modifiers",
-                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" }));
+        var command = SqlCoreFacade.CompileDml(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("with-insert-modifiers",
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" }), TestContext.Current.CancellationToken);
 
         Assert.StartsWith("WITH ", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("INSERT INTO", command.Sql, StringComparison.OrdinalIgnoreCase);
@@ -60,10 +58,8 @@ public sealed class SqlCorePostgresWithInsertModifiersTests
         var sql = "WITH source_rows AS (SELECT 17 AS id) " +
                   "INSERT INTO secrets(id) SELECT id FROM source_rows " +
                   "ON CONFLICT (id) DO NOTHING RETURNING id";
-        var result = SqlCoreFacade.TryCompileDml(sql,
-            SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("with-insert-deny",
-                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" }));
+        var result = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("with-insert-deny",
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" }), TestContext.Current.CancellationToken);
         Assert.False(result.Success);
         Assert.Null(result.Value);
         Assert.NotEmpty(result.TypedDiagnostics);
@@ -76,10 +72,8 @@ public sealed class SqlCorePostgresWithInsertModifiersTests
                   "INSERT INTO users(id) SELECT id FROM source_rows " +
                   "ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id RETURNING id";
         var error = Assert.ThrowsAny<Exception>(() =>
-            SqlCoreFacade.CompileDml(sql,
-                SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                new SqlPlanValidationContext("with-insert-no-source-uniqueness",
-                    new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" })));
+            SqlCoreFacade.CompileDml(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("with-insert-no-source-uniqueness",
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" }), TestContext.Current.CancellationToken));
         Assert.Contains("assurance", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -91,12 +85,11 @@ public sealed class SqlCorePostgresWithInsertModifiersTests
     {
         var sql = "WITH source_rows AS (SELECT 17 AS id) " +
                   "INSERT INTO users(id) SELECT id FROM source_rows " + clause;
-        var script = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres);
+        var script = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres, TestContext.Current.CancellationToken);
         Assert.NotEqual(SqlScriptParseStatus.Parsed, Assert.Single(script.Statements).Status);
         Assert.NotEmpty(script.Diagnostics);
         Assert.Throws<SqlParseException>(() =>
-            SqlCoreFacade.CompileDml(sql, SqlAgentToolType.Postgres,
-                SqlAgentToolType.Postgres, new SqlPlanValidationContext("with-insert-unsupported")));
+            SqlCoreFacade.CompileDml(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("with-insert-unsupported"), TestContext.Current.CancellationToken));
     }
 
     [Theory]
@@ -108,7 +101,7 @@ public sealed class SqlCorePostgresWithInsertModifiersTests
     {
         const string sql = "WITH source_rows AS (SELECT 17 AS id) " +
                            "INSERT INTO users(id) SELECT id FROM source_rows RETURNING id";
-        var script = SqlCoreFacade.ParseScript(sql, source);
+        var script = SqlCoreFacade.ParseScript(sql, source, TestContext.Current.CancellationToken);
         Assert.NotEqual(SqlScriptParseStatus.Parsed, Assert.Single(script.Statements).Status);
     }
 }

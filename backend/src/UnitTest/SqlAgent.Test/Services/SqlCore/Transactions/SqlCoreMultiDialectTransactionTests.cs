@@ -51,7 +51,7 @@ public sealed class SqlCoreMultiDialectTransactionTests
             "ROLLBACK TO mark; SELECT id FROM orders; COMMIT;", dialect);
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[2].Status);
         Assert.Equal(SqlTransactionState.Active, result.Statements[4].TransactionAfter);
-        Assert.Equal(1, Assert.Single(result.Statements[4].CatalogAfter.Tables).Columns.Count);
+        Assert.Single(Assert.Single(result.Statements[4].CatalogAfter.Tables).Columns);
         if (dialect == SqlAgentToolType.Sqlite)
         {
             // SQLite names may be proven while dynamic type affinity is not.
@@ -62,7 +62,7 @@ public sealed class SqlCoreMultiDialectTransactionTests
             Assert.Equal(SqlCatalogBindingStatus.Verified, result.Statements[5].CatalogBinding);
         Assert.Equal(SqlTransactionState.Outside, result.FinalTransaction);
         Assert.True(result.FinalCatalog.IsClosedWorld);
-        Assert.Equal(1, Assert.Single(result.FinalCatalog.Tables).Columns.Count);
+        Assert.Single(Assert.Single(result.FinalCatalog.Tables).Columns);
         Assert.Single(result.Statements[4].Changes);
         Assert.Equal(SqlCatalogKnowledge.Known, result.Statements[4].Changes[0].Certainty);
     }

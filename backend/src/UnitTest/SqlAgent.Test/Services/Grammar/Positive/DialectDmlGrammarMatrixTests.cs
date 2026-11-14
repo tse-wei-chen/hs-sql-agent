@@ -102,11 +102,7 @@ public sealed class DialectDmlGrammarMatrixTests
             "six-dialect-dml-grammar-matrix-v1",
             allowedTables);
 
-        var command = SqlCoreFacade.CompileDml(
-            sql,
-            dialect,
-            dialect,
-            validationContext);
+        var command = SqlCoreFacade.CompileDml(sql, dialect, dialect, validationContext, TestContext.Current.CancellationToken);
 
         Assert.Equal(expectedKind, command.Kind);
         Assert.False(string.IsNullOrWhiteSpace(command.Sql));

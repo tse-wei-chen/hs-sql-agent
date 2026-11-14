@@ -54,9 +54,7 @@ public sealed class SqlCoreVirtualCatalogTests
     [Fact]
     public void DefaultAnalysis_DoesNotAssumeAnEmptyDatabase()
     {
-        var analysis = SqlCoreFacade.AnalyzeScript(
-            "CREATE TABLE users(id INTEGER); ALTER TABLE users ADD COLUMN name TEXT;",
-            SqlAgentToolType.Postgres);
+        var analysis = SqlCoreFacade.AnalyzeScript("CREATE TABLE users(id INTEGER); ALTER TABLE users ADD COLUMN name TEXT;", SqlAgentToolType.Postgres, TestContext.Current.CancellationToken);
 
         Assert.Equal(SqlStatementAnalysisStatus.PartiallyAnalyzed, analysis.Statements[0].Status);
         Assert.Equal(SqlStatementAnalysisStatus.PartiallyAnalyzed, analysis.Statements[1].Status);
@@ -151,8 +149,7 @@ public sealed class SqlCoreVirtualCatalogTests
     [Fact]
     public void UnsupportedConstraintInOtherDialect_FailsClosed()
     {
-        var analysis = SqlCoreFacade.AnalyzeScript(
-            "CREATE TABLE users(id INT, CHECK(id > 0))", SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty());
+        var analysis = SqlCoreFacade.AnalyzeScript("CREATE TABLE users(id INT, CHECK(id > 0))", SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
 
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, analysis.Statements[0].Status);
         Assert.Equal("SQL_SCHEMA_UNSUPPORTED_STATEMENT", Assert.Single(analysis.Diagnostics).Code);
@@ -203,8 +200,7 @@ public sealed class SqlCoreVirtualCatalogTests
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 { ["CATALOG_COLLATION"] = "Latin1_General_100_CI_AS" })
             : null;
-        var result = SqlCoreFacade.AnalyzeScript(
-            string.Join(" ", statements), provider, SqlCatalogState.KnownEmpty(), profile);
+        var result = SqlCoreFacade.AnalyzeScript(string.Join(" ", statements), provider, SqlCatalogState.KnownEmpty(), profile, TestContext.Current.CancellationToken);
 
         Assert.Equal(32, result.Statements.Count);
         Assert.All(result.Statements, statement =>
@@ -213,7 +209,7 @@ public sealed class SqlCoreVirtualCatalogTests
         Assert.Equal(SqlCatalogKnowledge.Known, result.FinalCatalog.Knowledge);
         Assert.Equal(32, result.FinalCatalog.Tables.Count);
 
-        var keys = result.FinalCatalog.Tables.Select(table => table.QualifiedName.Key).ToArray();
+        var keys = result.FinalCatalog.Tables.Select(table => table.QualifiedName?.Key).ToArray();
         Assert.Equal(keys.OrderBy(key => key, StringComparer.Ordinal), keys);
 
         // Each statement must expose its own persistent pre/post Catalog.
@@ -227,7 +223,7 @@ public sealed class SqlCoreVirtualCatalogTests
 
         // A structured key is immutable and allocated only once per identity.
         var identity = result.FinalCatalog.Tables[0].QualifiedName;
-        Assert.Same(identity.Key, identity.Key);
+        Assert.Same(identity?.Key, identity?.Key);
     }
 
     [Fact]
@@ -278,8 +274,7 @@ public sealed class SqlCoreVirtualCatalogTests
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 { ["CATALOG_COLLATION"] = "Latin1_General_100_CI_AS" })
             : null;
-        var result = SqlCoreFacade.AnalyzeScript(
-            string.Join(" ", statements), provider, SqlCatalogState.KnownEmpty(), profile);
+        var result = SqlCoreFacade.AnalyzeScript(string.Join(" ", statements), provider, SqlCatalogState.KnownEmpty(), profile, TestContext.Current.CancellationToken);
 
         Assert.Equal(36, result.Statements.Count);
         Assert.All(result.Statements, statement =>
@@ -290,7 +285,7 @@ public sealed class SqlCoreVirtualCatalogTests
         Assert.Equal(29, result.Statements[34].CatalogAfter.Tables.Count);
         Assert.Equal(30, result.FinalCatalog.Tables.Count);
         Assert.True(result.FinalCatalog.IsClosedWorld);
-        var names = result.FinalCatalog.Tables.Select(t => t.QualifiedName.Key).ToArray();
+        var names = result.FinalCatalog.Tables.Select(t => t.QualifiedName?.Key).ToArray();
         Assert.Equal(names.OrderBy(x => x, StringComparer.Ordinal), names);
         Assert.DoesNotContain(result.FinalCatalog.Tables, t => t.Name.EndsWith("t_000", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(result.FinalCatalog.Tables, t => t.Name.EndsWith("t_031", StringComparison.OrdinalIgnoreCase));

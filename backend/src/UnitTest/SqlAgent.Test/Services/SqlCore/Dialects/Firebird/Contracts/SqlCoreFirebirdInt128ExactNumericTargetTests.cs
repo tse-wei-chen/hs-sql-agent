@@ -130,14 +130,10 @@ public sealed class SqlCoreFirebirdInt128ExactNumericTargetTests
     public void PostgreSqlUnboundedAndSQLiteUnprovenContractsAreUnchanged()
     {
         var sql = "SELECT 1e-1000";
-        var command = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres, new SqlPlanValidationContext("pg-numeric-backward-v1"),
-            new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("pg-numeric-backward-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.Contains("AS NUMERIC)", command.Sql, StringComparison.OrdinalIgnoreCase);
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres,
-                SqlAgentToolType.Sqlite, new SqlPlanValidationContext("sqlite-unproven-v1"),
-                new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Sqlite, new SqlPlanValidationContext("sqlite-unproven-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Contains("numeric.exact_literal", error.Message,
             StringComparison.OrdinalIgnoreCase);
     }

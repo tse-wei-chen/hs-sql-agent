@@ -303,7 +303,7 @@ public sealed class PostgresDdlBatchLiveTests(PostgresDdlLiveFixture fixture)
             Assert.Equal(HsSqlAgent.SqlCore.Ddl.DdlBatchTopology.DependentCreateChain,
                 preview.BatchPreview.Plan.Topology);
             Assert.Equal(3, preview.BatchPreview.Steps.Count);
-            Assert.Equal(1, preview.BatchPreview.ExpectedColumns[0].Count);
+            Assert.Single(preview.BatchPreview.ExpectedColumns[0]);
             Assert.Equal(2, preview.BatchPreview.ExpectedColumns[1].Count);
             Assert.Equal(2, preview.BatchPreview.ExpectedColumns[2].Count);
             Assert.Contains("hypothetical", preview.BatchPreview.HumanReadableDiff,

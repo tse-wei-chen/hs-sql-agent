@@ -132,9 +132,7 @@ public sealed class CoreRegexCapabilityContractTests
         var sql = $"SELECT id FROM users WHERE {predicate}";
         for (var i = 0; i < 16; i++)
             sql = $"SELECT r{i}.id FROM ({sql}) r{i}";
-        var command = SqlCoreFacade.CompileQuery(
-            sql, provider, provider, new SqlPlanValidationContext("regex-proof-fastpath-v1"),
-            new SqlExecutionPlanPolicy(100));
+        var command = SqlCoreFacade.CompileQuery(sql, provider, provider, new SqlPlanValidationContext("regex-proof-fastpath-v1"), new SqlExecutionPlanPolicy(100), TestContext.Current.CancellationToken);
         Assert.Contains(nativeMarker, command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -147,11 +145,7 @@ public sealed class CoreRegexCapabilityContractTests
     {
         // Source admission is NOT target authorization. SQLite regex is
         // rejected even when the source dialect can prove the expression.
-        var result = SqlCoreFacade.TryCompileQuery(
-            $"SELECT id FROM users WHERE {predicate}",
-            provider, SqlAgentToolType.Sqlite,
-            new SqlPlanValidationContext("regex-proof-target-reject-v1"),
-            new SqlExecutionPlanPolicy(100));
+        var result = SqlCoreFacade.TryCompileQuery($"SELECT id FROM users WHERE {predicate}", provider, SqlAgentToolType.Sqlite, new SqlPlanValidationContext("regex-proof-target-reject-v1"), new SqlExecutionPlanPolicy(100), TestContext.Current.CancellationToken);
         Assert.False(result.Success);
         Assert.Contains("function.regex_match", result.ErrorMessage,
             StringComparison.OrdinalIgnoreCase);

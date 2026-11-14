@@ -48,8 +48,7 @@ public sealed class CoreSchemaScanWorkBudgetTests
         try
         {
             var sql = "SELECT " + string.Join(",", Enumerable.Repeat("c511", projections)) + " FROM users";
-            Assert.NotEmpty(SqlCoreFacade.CompileQuery(sql, provider, provider,
-                Context(provider, width), new SqlExecutionPlanPolicy()).Sql);
+            Assert.NotEmpty(SqlCoreFacade.CompileQuery(sql, provider, provider, Context(provider, width), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
             Assert.True(work["SchemaBinding"] >= width * projections);
             Assert.True(work["SchemaType"] >= width * projections);
         }
@@ -73,13 +72,12 @@ public sealed class CoreSchemaScanWorkBudgetTests
             if (parsed is not null)
                 CoreSqlCompiler.CreateDefault().Compile(parsed, provider, context, new SqlExecutionPlanPolicy());
             else
-                SqlCoreFacade.CompileQuery(sql, provider, provider, context, new SqlExecutionPlanPolicy());
+                SqlCoreFacade.CompileQuery(sql, provider, provider, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         });
         Assert.Equal("SQL_COMPILER_STAGE_WORK_LIMIT", error.Diagnostic?.Code);
         Assert.Equal(SqlDiagnosticStage.Binding, error.Diagnostic?.Stage);
         Assert.Equal(SqlDiagnosticCategory.Resource, error.Diagnostic?.Category);
-        Assert.NotEmpty(SqlCoreFacade.CompileQuery("SELECT c1023 FROM users", provider, provider,
-            context, new SqlExecutionPlanPolicy()).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery("SELECT c1023 FROM users", provider, provider, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
     }
 
     private sealed class Observer<T>(Action<T> next) : IObserver<T>

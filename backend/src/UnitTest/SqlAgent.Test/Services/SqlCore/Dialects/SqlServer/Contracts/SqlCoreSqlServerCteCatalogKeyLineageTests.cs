@@ -136,10 +136,8 @@ public sealed class SqlCoreSqlServerCteCatalogKeyLineageTests
         var stmt = One(sql);
         Assert.Equal(SqlMutationSourceMatchCardinality.ProvenAtMostOne, stmt.SourceMatchCardinality);
 
-        var compile = SqlCoreFacade.TryCompileDml(sql,
-            SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
-            new SqlPlanValidationContext("cte-catalog-analysis-is-not-runtime-proof",
-                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "dbo.lookup", "dbo.dest" }));
+        var compile = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer, new SqlPlanValidationContext("cte-catalog-analysis-is-not-runtime-proof",
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "dbo.lookup", "dbo.dest" }), TestContext.Current.CancellationToken);
         Assert.False(compile.Success);
         Assert.NotEmpty(compile.TypedDiagnostics);
     }

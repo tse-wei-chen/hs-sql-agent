@@ -123,9 +123,7 @@ public sealed class SqlCoreTransactionSessionSnapshotTests
     [Fact]
     public void MySqlUseCannotBeMistakenForTransactionalSearchPathRestoration()
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "START TRANSACTION; USE sales; ROLLBACK;",
-            SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript("START TRANSACTION; USE sales; ROLLBACK;", SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlTransactionState.Unknown, result.FinalTransaction);
         Assert.False(result.FinalCatalog.IsClosedWorld);
         Assert.Null(result.FinalSession.CurrentDatabase);
@@ -135,9 +133,7 @@ public sealed class SqlCoreTransactionSessionSnapshotTests
     [Fact]
     public void SQLServerNoCountRemainsConservativeAcrossSavepointRollback()
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "BEGIN TRAN; SAVE TRAN mark; SET NOCOUNT ON; ROLLBACK TRAN mark;",
-            SqlAgentToolType.MsSqlServer, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript("BEGIN TRAN; SAVE TRAN mark; SET NOCOUNT ON; ROLLBACK TRAN mark;", SqlAgentToolType.MsSqlServer, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlTransactionState.Unknown, result.FinalTransaction);
         Assert.Null(result.FinalSession.NoCount);
         Assert.False(result.FinalCatalog.IsClosedWorld);
@@ -146,10 +142,8 @@ public sealed class SqlCoreTransactionSessionSnapshotTests
     [Fact]
     public void SavepointsWithoutSessionChangesRetainExistingProviderCatalogSemantics()
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "BEGIN; CREATE TABLE users(id INTEGER); SAVEPOINT mark;" +
-            "ALTER TABLE users ADD COLUMN note TEXT; ROLLBACK TO mark; COMMIT;",
-            SqlAgentToolType.Sqlite, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript("BEGIN; CREATE TABLE users(id INTEGER); SAVEPOINT mark;" +
+            "ALTER TABLE users ADD COLUMN note TEXT; ROLLBACK TO mark; COMMIT;", SqlAgentToolType.Sqlite, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlTransactionState.Outside, result.FinalTransaction);
         Assert.True(result.FinalCatalog.IsClosedWorld);
         Assert.Single(Assert.Single(result.FinalCatalog.Tables).Columns);

@@ -137,7 +137,7 @@ public sealed class SqliteDdlLiveTests : IAsyncLifetime
         Assert.NotNull(preview.Preview);
         Assert.Equal("main", preview.Preview!.Before.SchemaName);
         Assert.Null(preview.Preview.Before.TableDefinition);
-        Assert.Equal(1, preview.Preview.ExpectedColumns.Count);
+        Assert.Single(preview.Preview.ExpectedColumns);
         Assert.False(preview.CommitConfirmed);
         Assert.False(await HasTableAsync("widgets"));
 

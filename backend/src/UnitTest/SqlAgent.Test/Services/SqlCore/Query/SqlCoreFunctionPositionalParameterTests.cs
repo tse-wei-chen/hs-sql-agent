@@ -108,9 +108,7 @@ public sealed class SqlCoreFunctionPositionalParameterTests
     [Fact]
     public void ProcedureCannotInheritFunctionOnlyPositionalGrammar()
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "CREATE PROCEDURE app.p() LANGUAGE SQL AS $body$ SELECT $1; $body$;",
-            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript("CREATE PROCEDURE app.p() LANGUAGE SQL AS $body$ SELECT $1; $body$;", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Empty(result.ProceduralDefinitions);
         Assert.Contains(result.Diagnostics, d => d.Code == "SQL_PROCEDURAL_BODY_UNSUPPORTED");
     }
@@ -119,9 +117,7 @@ public sealed class SqlCoreFunctionPositionalParameterTests
     public void OtherProvidersNeverAcquireFunctionPositionalGrammar()
     {
         Assert.Throws<SqlParseException>(() =>
-            SqlCoreFacade.AnalyzeScript(
-                "CREATE FUNCTION app.positional(n integer) RETURNS integer LANGUAGE SQL AS $b$ SELECT $1; $b$;",
-                SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty()));
+            SqlCoreFacade.AnalyzeScript("CREATE FUNCTION app.positional(n integer) RETURNS integer LANGUAGE SQL AS $b$ SELECT $1; $b$;", SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -130,11 +126,11 @@ public sealed class SqlCoreFunctionPositionalParameterTests
         var sql =
             "CREATE FUNCTION app.a(a integer) RETURNS integer LANGUAGE SQL AS $b$ SELECT $1; $b$;" +
             "CREATE FUNCTION app.b(a boolean, b boolean) RETURNS boolean LANGUAGE SQL AS $b$ SELECT $2; $b$;";
-        var result = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(2, result.ProceduralDefinitions.Count);
         Assert.All(result.ProceduralDefinitions, definition =>
             Assert.Equal(SqlFunctionReturnEvidence.PositionalParameterMatch, definition.FunctionReturn!.Evidence));
-        Assert.Equal(1, result.ProceduralDefinitions[0].Parameters.Count);
+        Assert.Single(result.ProceduralDefinitions[0].Parameters);
         Assert.Equal(2, result.ProceduralDefinitions[1].Parameters.Count);
         Assert.False(result.FinalCatalog.IsClosedWorld);
     }

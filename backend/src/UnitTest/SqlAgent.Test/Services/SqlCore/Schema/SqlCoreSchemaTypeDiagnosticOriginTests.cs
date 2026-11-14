@@ -118,9 +118,7 @@ public sealed class SqlCoreSchemaTypeDiagnosticOriginTests
                         Name("id"), Name("description")
                     })
                 }));
-        var result = SqlCoreFacade.CompileQuery(
-            "SELECT id FROM items WHERE description + 3 > 1",
-            provider, provider, untyped, new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.CompileQuery("SELECT id FROM items WHERE description + 3 > 1", provider, provider, untyped, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.NotEmpty(result.Sql);
     }
 
@@ -129,10 +127,7 @@ public sealed class SqlCoreSchemaTypeDiagnosticOriginTests
     {
         var ctx = Typed(SqlAgentToolType.Postgres);
         var ex = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                "SELECT id FROM items a JOIN items b ON TRUE WHERE id = 'bad'",
-                SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                ctx, new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery("SELECT id FROM items a JOIN items b ON TRUE WHERE id = 'bad'", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, ctx, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_COLUMN_AMBIGUOUS", ex.Diagnostic?.Code);
     }
 }

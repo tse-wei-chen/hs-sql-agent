@@ -48,12 +48,9 @@ public sealed class SqlCorePostgresWithUpdateLiveParityTests
         var native = await ReadIdsAsync(connection,
             Sql("sqlcore_with_update_native"), Array.Empty<SqlParameterValue>(), token);
 
-        var compiled = SqlCoreFacade.CompileDml(
-            Sql("sqlcore_with_update_compiled"),
-            SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("postgres-cte-update-live-v1",
+        var compiled = SqlCoreFacade.CompileDml(Sql("sqlcore_with_update_compiled"), SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("postgres-cte-update-live-v1",
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                { "sqlcore_with_update_source", "sqlcore_with_update_compiled" }));
+                { "sqlcore_with_update_source", "sqlcore_with_update_compiled" }), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementKind.Update, compiled.Kind);
         Assert.StartsWith("WITH ", compiled.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(compiled.Parameters, p => Equals(p.Value, "changed"));

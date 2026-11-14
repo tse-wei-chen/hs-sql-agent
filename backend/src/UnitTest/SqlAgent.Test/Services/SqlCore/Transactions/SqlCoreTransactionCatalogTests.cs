@@ -125,9 +125,7 @@ public sealed class SqlCoreTransactionCatalogTests
     [InlineData(SqlAgentToolType.Firebird)]
     public void UnmodeledProviderTransactionsNeverInferPostgresqlRollbackSemantics(SqlAgentToolType dialect)
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "BEGIN TRANSACTION; SELECT 1; ROLLBACK;",
-            dialect, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript("BEGIN TRANSACTION; SELECT 1; ROLLBACK;", dialect, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.NotEqual(SqlTransactionState.Active, result.FinalTransaction);
         Assert.False(result.FinalCatalog.IsClosedWorld);
     }

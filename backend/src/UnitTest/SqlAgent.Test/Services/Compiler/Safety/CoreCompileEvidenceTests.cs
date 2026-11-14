@@ -80,12 +80,7 @@ public sealed class CoreCompileEvidenceTests
     [Fact]
     public void EvidenceFingerprint_PreservesLegacyUtf8Serialization()
     {
-        var command = SqlCoreFacade.CompileQuery(
-            "SELECT 1",
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("compile-evidence-策略-v1"),
-            new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery("SELECT 1", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("compile-evidence-策略-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         var evidence = Assert.IsType<SqlCompileEvidence>(command.CompileEvidence);
 
@@ -200,11 +195,7 @@ public sealed class CoreCompileEvidenceTests
     [Fact]
     public void TryCompile_PolicyFailure_RecordsPolicyBoundary()
     {
-        var result = SqlCoreFacade.TryCompileDml(
-            "UPDATE users SET name = 'Ada'",
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("compile-evidence-policy-v1"));
+        var result = SqlCoreFacade.TryCompileDml("UPDATE users SET name = 'Ada'", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("compile-evidence-policy-v1"), TestContext.Current.CancellationToken);
 
         Assert.False(result.Success);
         var evidence = Assert.IsType<SqlCompileEvidence>(result.CompileEvidence);
@@ -216,12 +207,7 @@ public sealed class CoreCompileEvidenceTests
     public void DirectCompileFailure_AttachesEvidenceToException()
     {
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                "SELECT name FROM users WHERE name ILIKE 'a%'",
-                SqlAgentToolType.Postgres,
-                SqlAgentToolType.MySQL,
-                new SqlPlanValidationContext("compile-evidence-direct-failure-v1"),
-                new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery("SELECT name FROM users WHERE name ILIKE 'a%'", SqlAgentToolType.Postgres, SqlAgentToolType.MySQL, new SqlPlanValidationContext("compile-evidence-direct-failure-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
 
         var evidence = Assert.IsType<SqlCompileEvidence>(error.CompileEvidence);
         Assert.Same(evidence, SqlCompileEvidence.TryGetFromException(error));
@@ -232,12 +218,7 @@ public sealed class CoreCompileEvidenceTests
     [Fact]
     public void TryCompileQuery_WithDmlStatement_ReclassifiesTranslatedInnerCommandAsRejectedApiBoundary()
     {
-        var result = SqlCoreFacade.TryCompileQuery(
-            "UPDATE users SET name = 'Ada' WHERE id = 1",
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("compile-evidence-query-kind-v1"),
-            new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.TryCompileQuery("UPDATE users SET name = 'Ada' WHERE id = 1", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("compile-evidence-query-kind-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.False(result.Success);
         var evidence = Assert.IsType<SqlCompileEvidence>(result.CompileEvidence);
@@ -250,11 +231,7 @@ public sealed class CoreCompileEvidenceTests
     [Fact]
     public void TryCompileDml_WithQueryStatement_ReclassifiesTranslatedInnerCommandAsRejectedApiBoundary()
     {
-        var result = SqlCoreFacade.TryCompileDml(
-            "SELECT 1",
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("compile-evidence-dml-kind-v1"));
+        var result = SqlCoreFacade.TryCompileDml("SELECT 1", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("compile-evidence-dml-kind-v1"), TestContext.Current.CancellationToken);
 
         Assert.False(result.Success);
         var evidence = Assert.IsType<SqlCompileEvidence>(result.CompileEvidence);
@@ -267,12 +244,7 @@ public sealed class CoreCompileEvidenceTests
     [Fact]
     public void ParseFailure_AttachesRejectedParseEvidence()
     {
-        var result = SqlCoreFacade.TryCompileQuery(
-            "SELECT FROM",
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("compile-evidence-parse-v1"),
-            new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.TryCompileQuery("SELECT FROM", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("compile-evidence-parse-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.False(result.Success);
         var evidence = Assert.IsType<SqlCompileEvidence>(result.CompileEvidence);
@@ -290,12 +262,7 @@ public sealed class CoreCompileEvidenceTests
     public void SameProviderCompile_RecordsCapabilitySnapshotsForAllProviders(
         SqlAgentToolType provider)
     {
-        var command = SqlCoreFacade.CompileQuery(
-            "SELECT 1",
-            provider,
-            provider,
-            new SqlPlanValidationContext("compile-evidence-six-provider-v1"),
-            new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery("SELECT 1", provider, provider, new SqlPlanValidationContext("compile-evidence-six-provider-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         var evidence = Assert.IsType<SqlCompileEvidence>(command.CompileEvidence);
         Assert.Equal(provider, evidence.SourceProfile.Provider);

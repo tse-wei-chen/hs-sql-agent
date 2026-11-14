@@ -11,7 +11,7 @@ public sealed class SqlCoreScriptFrontendTests
     public void Script_ParsesQueryAndMutationWithoutCompilingOrExecuting()
     {
         const string sql = "SELECT 1; INSERT INTO users(id) VALUES (1);";
-        var script = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres);
+        var script = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres, TestContext.Current.CancellationToken);
 
         Assert.Equal(1, script.BatchCount);
         Assert.Equal(2, script.Statements.Count);
@@ -27,7 +27,7 @@ public sealed class SqlCoreScriptFrontendTests
     public void Script_RetainsUnimplementedDdlAndDclInsteadOfTreatingThemAsValidated()
     {
         const string sql = "CREATE TABLE demo (id INTEGER); GRANT SELECT ON demo TO reader; SELECT 1";
-        var script = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres);
+        var script = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres, TestContext.Current.CancellationToken);
 
         Assert.Equal(3, script.Statements.Count);
         Assert.Equal(SqlScriptStatementKind.Schema, script.Statements[0].Kind);
@@ -43,7 +43,7 @@ public sealed class SqlCoreScriptFrontendTests
     public void Script_SemicolonsInStringsAndCommentsDoNotSplitStatements()
     {
         const string sql = "/* ; */ SELECT 'left;right' AS value; -- ;\nSELECT 2";
-        var script = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres);
+        var script = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres, TestContext.Current.CancellationToken);
 
         Assert.Equal(2, script.Statements.Count);
         Assert.All(script.Statements, statement => Assert.Equal(SqlScriptParseStatus.Parsed, statement.Status));
@@ -55,7 +55,7 @@ public sealed class SqlCoreScriptFrontendTests
     public void Script_DollarQuotedPostgresTextDoesNotSplitStatements()
     {
         const string sql = "SELECT $$left;right$$ AS value; SELECT 2";
-        var script = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres);
+        var script = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres, TestContext.Current.CancellationToken);
 
         Assert.Equal(2, script.Statements.Count);
         Assert.All(script.Statements, statement => Assert.Equal(SqlScriptParseStatus.Parsed, statement.Status));
@@ -65,7 +65,7 @@ public sealed class SqlCoreScriptFrontendTests
     public void Script_SqlServerGoOnItsOwnLineSeparatesBatches()
     {
         const string sql = "SELECT 1\nGO\nSELECT 2;\nGO\nSELECT 3";
-        var script = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer);
+        var script = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer, TestContext.Current.CancellationToken);
 
         Assert.Equal(3, script.BatchCount);
         Assert.Equal(new[] { 0, 1, 2 }, script.Statements.Select(x => x.BatchIndex).ToArray());
@@ -82,7 +82,7 @@ public sealed class SqlCoreScriptFrontendTests
     public void Script_PreservesAbsoluteSourceSpansAcrossDialects(SqlAgentToolType dialect)
     {
         const string sql = "\n-- comment\n  SELECT 1;\n  UPDATE users SET name = 'x' WHERE id = 2;";
-        var script = SqlCoreFacade.ParseScript(sql, dialect);
+        var script = SqlCoreFacade.ParseScript(sql, dialect, TestContext.Current.CancellationToken);
 
         Assert.Equal(2, script.Statements.Count);
         foreach (var statement in script.Statements)
@@ -97,7 +97,7 @@ public sealed class SqlCoreScriptFrontendTests
     public void Script_InvalidQueryIsNotMistakenForAParsedStatement()
     {
         const string sql = "SELECT FROM users; SELECT 1;";
-        var script = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres);
+        var script = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres, TestContext.Current.CancellationToken);
 
         Assert.Equal(SqlScriptParseStatus.Invalid, script.Statements[0].Status);
         Assert.Equal(SqlScriptParseStatus.Parsed, script.Statements[1].Status);
@@ -111,7 +111,7 @@ public sealed class SqlCoreScriptFrontendTests
     public void Script_UnknownProceduralBodyIsOpaqueUntilBatchBoundary()
     {
         const string sql = "CREATE PROCEDURE p AS BEGIN SELECT 1; END; SELECT 2";
-        var script = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer);
+        var script = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer, TestContext.Current.CancellationToken);
 
         Assert.Single(script.Statements);
         Assert.Equal(SqlScriptStatementKind.Procedural, script.Statements[0].Kind);
@@ -121,7 +121,7 @@ public sealed class SqlCoreScriptFrontendTests
     [Fact]
     public void Script_CommentsOnlyProduceNoExecutableOrValidatedStatements()
     {
-        var script = SqlCoreFacade.ParseScript("/* no SQL; */ -- just a comment", SqlAgentToolType.Postgres);
+        var script = SqlCoreFacade.ParseScript("/* no SQL; */ -- just a comment", SqlAgentToolType.Postgres, TestContext.Current.CancellationToken);
         Assert.Empty(script.Statements);
         Assert.Empty(script.Diagnostics);
         Assert.Equal(0, script.BatchCount);

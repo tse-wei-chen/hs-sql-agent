@@ -29,11 +29,7 @@ public sealed class CoreCompilerResourceTelemetryTests
             }));
         try
         {
-            var command = SqlCoreFacade.CompileQuery(
-                "SELECT 42 AS safe_output",
-                SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                new SqlPlanValidationContext("resource-telemetry-v1"),
-                new SqlExecutionPlanPolicy());
+            var command = SqlCoreFacade.CompileQuery("SELECT 42 AS safe_output", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("resource-telemetry-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
             Assert.NotEmpty(command.Sql);
             Assert.NotNull(SqlCoreInspection.GetQueryFacts(
                 "SELECT 1 AS result", SqlAgentToolType.Postgres));
@@ -108,10 +104,7 @@ public sealed class CoreCompilerResourceTelemetryTests
         try
         {
             var sql = "/*" + new string('x', contentLength) + "*/ SELECT 1";
-            var result = SqlCoreFacade.CompileQuery(
-                sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                new SqlPlanValidationContext("long-comment-work-budget-v1"),
-                new SqlExecutionPlanPolicy());
+            var result = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("long-comment-work-budget-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
             Assert.NotEmpty(result.Sql);
             Assert.Contains(samples, units => units >= contentLength);
         }
@@ -144,19 +137,11 @@ public sealed class CoreCompilerResourceTelemetryTests
             }));
         try
         {
-            var result = SqlCoreFacade.CompileQuery(
-                "SELECT 12 AS result",
-                SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                new SqlPlanValidationContext("telemetry-should-not-change-sql"),
-                new SqlExecutionPlanPolicy());
+            var result = SqlCoreFacade.CompileQuery("SELECT 12 AS result", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("telemetry-should-not-change-sql"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
             Assert.NotEmpty(result.Sql);
 
             var failure = Assert.Throws<SqlParseException>(() =>
-                SqlCoreFacade.CompileQuery(
-                    "SELECT (",
-                    SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                    new SqlPlanValidationContext("telemetry-should-not-change-error"),
-                    new SqlExecutionPlanPolicy()));
+                SqlCoreFacade.CompileQuery("SELECT (", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("telemetry-should-not-change-error"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
             Assert.NotNull(failure.Diagnostic);
             Assert.True(callbackInvocations > 0);
         }

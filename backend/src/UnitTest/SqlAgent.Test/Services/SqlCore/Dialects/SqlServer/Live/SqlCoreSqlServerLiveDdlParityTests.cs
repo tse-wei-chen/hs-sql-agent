@@ -70,9 +70,7 @@ public sealed class SqlCoreSqlServerLiveDdlParityTests
         // IF EXISTS native DDL capability (SQL Server 2016+).
         var profile = new SqlProviderCapabilityProfile(
             SqlAgentToolType.MsSqlServer, new Version(16, 0));
-        var analysis = SqlCoreFacade.AnalyzeScript(
-            sql, SqlAgentToolType.MsSqlServer,
-            SqlCatalogState.KnownEmpty(), profile);
+        var analysis = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.MsSqlServer, SqlCatalogState.KnownEmpty(), profile, TestContext.Current.CancellationToken);
         Assert.True(analysis.Statements.Count >= 2);
         Assert.All(analysis.Statements, x =>
             Assert.Equal(SqlStatementAnalysisStatus.Analyzed, x.Status));
@@ -143,8 +141,7 @@ public sealed class SqlCoreSqlServerLiveDdlParityTests
     public void UnsupportedCheckConstraintNeverBecomesCertifiedDDL()
     {
         const string sql = "CREATE TABLE constrained(id INT, CHECK (id > 0));";
-        var analysis = SqlCoreFacade.AnalyzeScript(
-            sql, SqlAgentToolType.MsSqlServer, SqlCatalogState.KnownEmpty());
+        var analysis = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.MsSqlServer, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported,
             Assert.Single(analysis.Statements).Status);
         Assert.False(analysis.FinalCatalog.IsClosedWorld);
@@ -231,8 +228,8 @@ public sealed class SqlCoreSqlServerLiveDdlParityTests
         foreach (var table in expected.Tables)
         {
             Assert.Equal(SqlCatalogKnowledge.Known, table.Knowledge);
-            var live = Assert.Single(actual.Where(x =>
-                string.Equals(x.Name, table.Name, StringComparison.OrdinalIgnoreCase)));
+            var live = Assert.Single(actual, x =>
+                string.Equals(x.Name, table.Name, StringComparison.OrdinalIgnoreCase));
             Assert.Equal(table.Columns.Count, live.Columns.Length);
             for (var c = 0; c < table.Columns.Count; c++)
             {

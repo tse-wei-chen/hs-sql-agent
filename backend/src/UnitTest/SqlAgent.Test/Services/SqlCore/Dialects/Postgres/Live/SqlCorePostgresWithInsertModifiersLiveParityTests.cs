@@ -47,12 +47,9 @@ public sealed class SqlCorePostgresWithInsertModifiersLiveParityTests
         var native = await ReadIdsAsync(connection, statement("sqlcore_mod_native"),
             Array.Empty<SqlParameterValue>(), cancellationToken);
 
-        var compiled = SqlCoreFacade.CompileDml(
-            statement("sqlcore_mod_compiled"),
-            SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("postgres-with-insert-modifier-parity",
+        var compiled = SqlCoreFacade.CompileDml(statement("sqlcore_mod_compiled"), SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("postgres-with-insert-modifier-parity",
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                { "sqlcore_mod_compiled" }));
+                { "sqlcore_mod_compiled" }), TestContext.Current.CancellationToken);
         Assert.StartsWith("WITH ", compiled.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("ON CONFLICT", compiled.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("RETURNING", compiled.Sql, StringComparison.OrdinalIgnoreCase);

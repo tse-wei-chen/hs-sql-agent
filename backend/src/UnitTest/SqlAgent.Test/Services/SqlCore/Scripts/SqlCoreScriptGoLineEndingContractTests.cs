@@ -19,7 +19,7 @@ public sealed class SqlCoreScriptGoLineEndingContractTests
     public void StandaloneGoSeparatesThreeSqlServerBatchesRegardlessOfNewline(string newline)
     {
         var sql = string.Join(newline, "SELECT 1", "GO", "SELECT 2;", "GO", "SELECT 3");
-        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer);
+        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer, TestContext.Current.CancellationToken);
 
         Assert.Equal(3, parsed.BatchCount);
         Assert.Equal(3, parsed.Statements.Count);
@@ -37,8 +37,7 @@ public sealed class SqlCoreScriptGoLineEndingContractTests
                 sql.Substring(statement.Span.Start, statement.Span.Length));
         }
 
-        var analyzed = SqlCoreFacade.AnalyzeScript(
-            sql, SqlAgentToolType.MsSqlServer, SqlCatalogState.KnownEmpty());
+        var analyzed = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.MsSqlServer, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(3, analyzed.Statements.Count);
         Assert.Equal(new[] { 0, 1, 2 },
             analyzed.Statements.Select(x => x.Syntax.BatchIndex).ToArray());
@@ -59,7 +58,7 @@ public sealed class SqlCoreScriptGoLineEndingContractTests
             "GO -- another comment",
             "SELECT 3");
 
-        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer);
+        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer, TestContext.Current.CancellationToken);
         Assert.Equal(3, parsed.BatchCount);
         Assert.Equal(new[] { 0, 1, 2 },
             parsed.Statements.Select(x => x.BatchIndex).ToArray());
@@ -76,7 +75,7 @@ public sealed class SqlCoreScriptGoLineEndingContractTests
     {
         var sql = "SELECT 'GO' AS marker, GO, GO FROM test_table;" +
                   newline + "GO" + newline + "SELECT 2";
-        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer);
+        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer, TestContext.Current.CancellationToken);
 
         Assert.Equal(2, parsed.Statements.Count);
         Assert.Equal(2, parsed.BatchCount);
@@ -92,7 +91,7 @@ public sealed class SqlCoreScriptGoLineEndingContractTests
     public void NonStandaloneGoWithRepetitionCountIsNeverAcceptedAsSeparator(string newline)
     {
         var sql = "SELECT 1" + newline + "GO 2" + newline + "SELECT 2";
-        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer);
+        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer, TestContext.Current.CancellationToken);
 
         Assert.Single(parsed.Statements);
         Assert.Equal(1, parsed.BatchCount);
@@ -108,8 +107,7 @@ public sealed class SqlCoreScriptGoLineEndingContractTests
     [InlineData(SqlAgentToolType.Firebird)]
     public void GoIsNotASeparatorOutsideSqlServer(SqlAgentToolType provider)
     {
-        var parsed = SqlCoreFacade.ParseScript(
-            "SELECT 1\rGO\rSELECT 2", provider);
+        var parsed = SqlCoreFacade.ParseScript("SELECT 1\rGO\rSELECT 2", provider, TestContext.Current.CancellationToken);
         Assert.Single(parsed.Statements);
         Assert.Equal(1, parsed.BatchCount);
     }
@@ -119,7 +117,7 @@ public sealed class SqlCoreScriptGoLineEndingContractTests
     {
         var sql = "SELECT " + string.Join(", ", Enumerable.Repeat("GO", 4_000))
                   + "\rGO\rSELECT 2";
-        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer);
+        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer, TestContext.Current.CancellationToken);
         Assert.Equal(2, parsed.Statements.Count);
         Assert.Equal(2, parsed.BatchCount);
         Assert.Equal(new[] { 0, 1 }, parsed.Statements.Select(x => x.BatchIndex));

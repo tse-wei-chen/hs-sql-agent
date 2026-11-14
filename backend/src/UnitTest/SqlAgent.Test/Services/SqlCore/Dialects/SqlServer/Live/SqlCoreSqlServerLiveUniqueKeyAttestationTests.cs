@@ -302,13 +302,8 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
                 db, Snapshot(target, source), "dbo." + target, "dbo." + source, "id");
             const string policy = "sqlserver-cte-approval-gate-v1";
             var context = new SqlPlanValidationContext(policy);
-            var mutation = SqlCoreFacade.CompileDml(
-                "UPDATE dbo.[" + target + "] SET label = 'changed' WHERE id = 1",
-                SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer, context);
-            var match = SqlCoreFacade.CompileQuery(
-                "SELECT id FROM dbo.[" + target + "] WHERE id = 1",
-                SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
-                context, new SqlExecutionPlanPolicy());
+            var mutation = SqlCoreFacade.CompileDml("UPDATE dbo.[" + target + "] SET label = 'changed' WHERE id = 1", SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer, context, TestContext.Current.CancellationToken);
+            var match = SqlCoreFacade.CompileQuery("SELECT id FROM dbo.[" + target + "] WHERE id = 1", SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
             var plan = new ValidatedDmlPlan(
                 DmlOperation.Update, "dbo." + target,
                 mutation, match, ImmutableArray.Create("id"),
@@ -478,9 +473,7 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
                     new SqlPlanValidationContext(policy, allowed)
                         .WithSqlServerCteUniqueKeyAssurance(legacySourceOnlyProof),
                     new DmlCompilationPolicy(), profile, null));
-            var withoutProof = SqlCoreFacade.TryCompileDml(
-                mutation, SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
-                new SqlPlanValidationContext(policy, allowed));
+            var withoutProof = SqlCoreFacade.TryCompileDml(mutation, SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer, new SqlPlanValidationContext(policy, allowed), TestContext.Current.CancellationToken);
             Assert.False(withoutProof.Success);
 
             var compiled = SqlCoreFacade.CompileDml(

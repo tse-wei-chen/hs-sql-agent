@@ -148,9 +148,7 @@ public sealed class SqlCoreSessionStatePropagationTests
     [Fact]
     public void OtherProviderDoesNotBorrowPostgresqlSessionSemantics()
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "SET search_path TO app; CREATE TABLE users(id INTEGER);",
-            SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript("SET search_path TO app; CREATE TABLE users(id INTEGER);", SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, result.Statements[0].Status);
         Assert.False(result.FinalSession.IsSearchPathProven);
         Assert.False(result.FinalCatalog.IsClosedWorld);

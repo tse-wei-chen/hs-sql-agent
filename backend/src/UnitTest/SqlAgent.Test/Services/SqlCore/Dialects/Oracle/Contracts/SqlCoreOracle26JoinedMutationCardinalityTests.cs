@@ -127,8 +127,7 @@ public sealed class SqlCoreOracle26JoinedMutationCardinalityTests
     {
         foreach (var profile in new SqlProviderCapabilityProfile?[] { null, Oracle23() })
         {
-            var stmt = Assert.Single(SqlCoreFacade.AnalyzeScript(sql + ";",
-                SqlAgentToolType.Oracle, Catalog(), profile).Statements);
+            var stmt = Assert.Single(SqlCoreFacade.AnalyzeScript(sql + ";", SqlAgentToolType.Oracle, Catalog(), profile, TestContext.Current.CancellationToken).Statements);
             Assert.NotEqual(SqlMutationSourceMatchCardinality.ProvenAtMostOne,
                 stmt.SourceMatchCardinality);
         }
@@ -163,8 +162,7 @@ public sealed class SqlCoreOracle26JoinedMutationCardinalityTests
     [InlineData(SqlAgentToolType.Firebird)]
     public void SixProviderTablelessQueriesKeepNotApplicable(SqlAgentToolType provider)
     {
-        var stmt = Assert.Single(SqlCoreFacade.AnalyzeScript("SELECT 1;", provider,
-            SqlCatalogState.KnownEmpty()).Statements);
+        var stmt = Assert.Single(SqlCoreFacade.AnalyzeScript("SELECT 1;", provider, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken).Statements);
         Assert.Equal(SqlMutationSourceMatchCardinality.NotApplicable, stmt.SourceMatchCardinality);
     }
 }

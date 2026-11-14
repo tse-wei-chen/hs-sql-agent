@@ -52,8 +52,7 @@ public sealed class SqlCoreMutationQualifierProvenanceTests
     public void ConflictingSourceQualifierCannotAcquireNameProofFromUniqueColumn(string sql)
     {
         var catalog = Catalog();
-        var result = SqlCoreFacade.AnalyzeScript(
-            sql + ";", SqlAgentToolType.Postgres, catalog);
+        var result = SqlCoreFacade.AnalyzeScript(sql + ";", SqlAgentToolType.Postgres, catalog, TestContext.Current.CancellationToken);
         var statement = Assert.Single(result.Statements);
 
         Assert.Equal(SqlScriptStatementKind.Mutation, statement.Kind);
@@ -76,8 +75,7 @@ public sealed class SqlCoreMutationQualifierProvenanceTests
     public void UniqueExplicitAliasOrFullyQualifiedSourceStillProvesMutation(string sql)
     {
         var catalog = Catalog();
-        var statement = Assert.Single(SqlCoreFacade.AnalyzeScript(
-            sql + ";", SqlAgentToolType.Postgres, catalog).Statements);
+        var statement = Assert.Single(SqlCoreFacade.AnalyzeScript(sql + ";", SqlAgentToolType.Postgres, catalog, TestContext.Current.CancellationToken).Statements);
         Assert.Equal(SqlCatalogBindingStatus.Verified, statement.NameBinding);
         Assert.Equal(SqlCatalogBindingStatus.Verified, statement.CatalogBinding);
         Assert.Equal(SqlStatementAnalysisStatus.PartiallyAnalyzed, statement.Status);
@@ -90,8 +88,7 @@ public sealed class SqlCoreMutationQualifierProvenanceTests
     [InlineData("DELETE FROM app.dest AS d USING app.src AS s WHERE id = 1")]
     public void ExistingUnqualifiedAmbiguityFenceStillRejects(string sql)
     {
-        var statement = Assert.Single(SqlCoreFacade.AnalyzeScript(
-            sql + ";", SqlAgentToolType.Postgres, Catalog()).Statements);
+        var statement = Assert.Single(SqlCoreFacade.AnalyzeScript(sql + ";", SqlAgentToolType.Postgres, Catalog(), TestContext.Current.CancellationToken).Statements);
         Assert.Equal(SqlCatalogBindingStatus.Rejected, statement.CatalogBinding);
         Assert.Contains(statement.Diagnostics, d => d.Code == "SQL_SCHEMA_COLUMN_AMBIGUOUS");
     }
@@ -123,9 +120,7 @@ public sealed class SqlCoreMutationQualifierProvenanceTests
         SqlAgentToolType dialect)
     {
         var ex = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                "SELECT src.source_only FROM app.src JOIN audit.src ON 1 = 1",
-                dialect, dialect, Snapshot(dialect), new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery("SELECT src.source_only FROM app.src JOIN audit.src ON 1 = 1", dialect, dialect, Snapshot(dialect), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_QUALIFIER_UNPROVABLE", ex.Diagnostic?.Code);
         Assert.Equal(SqlDiagnosticStage.Binding, ex.Diagnostic?.Stage);
     }
@@ -134,18 +129,14 @@ public sealed class SqlCoreMutationQualifierProvenanceTests
     [MemberData(nameof(SixProviderQueries))]
     public void DistinctAliasesStillPermitSixProviderQueryScope(SqlAgentToolType dialect)
     {
-        var command = SqlCoreFacade.CompileQuery(
-            "SELECT a.source_only FROM app.src a JOIN audit.src b ON a.id = b.id",
-            dialect, dialect, Snapshot(dialect), new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery("SELECT a.source_only FROM app.src a JOIN audit.src b ON a.id = b.id", dialect, dialect, Snapshot(dialect), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.NotEmpty(command.Sql);
     }
 
     [Fact]
     public void UnknownWorldNeverPromotesQualifierEvidence()
     {
-        var statement = Assert.Single(SqlCoreFacade.AnalyzeScript(
-            "UPDATE app.dest AS src SET label = 'changed' FROM app.src WHERE src.own_only = 1",
-            SqlAgentToolType.Postgres, SqlCatalogState.Unknown()).Statements);
+        var statement = Assert.Single(SqlCoreFacade.AnalyzeScript("UPDATE app.dest AS src SET label = 'changed' FROM app.src WHERE src.own_only = 1", SqlAgentToolType.Postgres, SqlCatalogState.Unknown(), TestContext.Current.CancellationToken).Statements);
         Assert.Equal(SqlCatalogBindingStatus.Unverified, statement.CatalogBinding);
         Assert.Contains(statement.Diagnostics, d => d.Code == "SQL_CATALOG_BINDING_INCOMPLETE");
     }

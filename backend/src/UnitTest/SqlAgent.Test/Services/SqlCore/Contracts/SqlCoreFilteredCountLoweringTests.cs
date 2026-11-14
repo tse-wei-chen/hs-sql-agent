@@ -100,11 +100,7 @@ public sealed class SqlCoreFilteredCountLoweringTests
     public void RawSourceFilterSyntax_RemainsRejected(SqlAgentToolType source)
     {
         Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                Query("COUNT(*)", false, "status = 1"),
-                source, SqlAgentToolType.Postgres,
-                new SqlPlanValidationContext("g10-filter-count-source"),
-                new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(Query("COUNT(*)", false, "status = 1"), source, SqlAgentToolType.Postgres, new SqlPlanValidationContext("g10-filter-count-source"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
     }
 
     [Theory]

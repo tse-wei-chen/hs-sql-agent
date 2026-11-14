@@ -118,9 +118,7 @@ public sealed class SqlCoreOpaqueSessionProofInvalidationTests
     [Fact]
     public void UnclassifiedSqlCannotKeepSqlServerNoCountProof()
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "SET NOCOUNT ON; DISCARD ALL;",
-            SqlAgentToolType.MsSqlServer, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript("SET NOCOUNT ON; DISCARD ALL;", SqlAgentToolType.MsSqlServer, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
 
         Assert.Equal(true, result.Statements[0].SessionAfter.NoCount);
         Assert.Equal(SqlScriptStatementKind.Unknown, result.Statements[1].Kind);

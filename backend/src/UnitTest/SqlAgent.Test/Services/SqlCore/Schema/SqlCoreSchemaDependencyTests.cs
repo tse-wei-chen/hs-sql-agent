@@ -75,9 +75,9 @@ public sealed class SqlCoreSchemaDependencyTests
         Assert.Empty(result.Statements[0].Diagnostics);
         Assert.Empty(result.Statements[1].Diagnostics);
         var fk = Assert.Single(Assert.Single(result.Statements[1].CatalogAfter.Tables
-            .Where(t => t.Name.Equals("child", StringComparison.OrdinalIgnoreCase))).Constraints);
+, t => t.Name.Equals("child", StringComparison.OrdinalIgnoreCase)).Constraints);
         Assert.Equal(SqlCatalogConstraintKind.ForeignKey, fk.Kind);
-        Assert.Equal(1, fk.ReferencedColumns.Count);
+        Assert.Single(fk.ReferencedColumns);
         Assert.Equal(SqlStatementAnalysisStatus.Invalid, result.Statements[2].Status);
         Assert.Empty(result.Statements[2].Changes);
         Assert.Equal(SqlStatementAnalysisStatus.Invalid, result.Statements[3].Status);
@@ -194,7 +194,7 @@ public sealed class SqlCoreSchemaDependencyTests
             "DROP TABLE parent;");
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[2].Status);
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
-        Assert.Empty(result.Statements[3].CatalogAfter.Tables.Where(t => t.Name == "child"));
+        Assert.DoesNotContain(result.Statements[3].CatalogAfter.Tables, t => t.Name == "child");
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[4].Status);
         Assert.Empty(result.FinalCatalog.Tables);
     }

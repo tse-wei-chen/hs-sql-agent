@@ -240,8 +240,8 @@ public sealed class SqlCorePostgresViewDependencyGraphTests
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, r.Statements[0].Status);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, r.Statements[1].Status);
         Assert.Equal(SqlCatalogKnowledge.Unknown, r.Statements[1].Certainty);
-        Assert.Empty(r.Statements[1].Changes.Where(x =>
-            x.Certainty == SqlCatalogKnowledge.Known));
+        Assert.DoesNotContain(r.Statements[1].Changes, x =>
+            x.Certainty == SqlCatalogKnowledge.Known);
         Assert.False(r.FinalCatalog.IsClosedWorld);
     }
 

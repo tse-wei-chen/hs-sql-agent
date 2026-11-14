@@ -27,7 +27,7 @@ public sealed class CoreCompileQueryWithFactsTests
         var policy = new SqlExecutionPlanPolicy(25);
 
         var combined = SqlCoreFacade.CompileQueryWithFacts(sql, provider, provider, validation, policy);
-        var command = SqlCoreFacade.CompileQuery(sql, provider, provider, validation, policy);
+        var command = SqlCoreFacade.CompileQuery(sql, provider, provider, validation, policy, TestContext.Current.CancellationToken);
         var facts = SqlCoreInspection.GetQueryFacts(sql, provider);
 
         Assert.Equal(command.Sql, combined.Command.Sql);

@@ -161,8 +161,7 @@ public sealed class SqlCoreInsertTargetProjectionContractTests
         ];
         foreach (var sql in valid)
         {
-            var result = SqlCoreFacade.AnalyzeScript(setup + sql + ";",
-                SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+            var result = SqlCoreFacade.AnalyzeScript(setup + sql + ";", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
             Assert.Equal(SqlCatalogBindingStatus.Verified, result.Statements[3].CatalogBinding);
             Assert.Empty(result.Statements[3].Diagnostics);
         }
@@ -174,16 +173,14 @@ public sealed class SqlCoreInsertTargetProjectionContractTests
         ];
         foreach (var sql in invalid)
         {
-            var result = SqlCoreFacade.AnalyzeScript(setup + sql + ";",
-                SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+            var result = SqlCoreFacade.AnalyzeScript(setup + sql + ";", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
             Assert.NotEqual(SqlCatalogBindingStatus.Verified, result.Statements[3].CatalogBinding);
             Assert.Contains(result.Statements[3].Diagnostics,
                 d => d.Code == "SQL_SCHEMA_SHAPE_UNPROVABLE");
         }
 
         var mismatch = SqlCoreFacade.AnalyzeScript(setup +
-            "INSERT INTO app.dest SELECT label_alias, id_alias FROM app.v;",
-            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+            "INSERT INTO app.dest SELECT label_alias, id_alias FROM app.v;", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlCatalogBindingStatus.Rejected, mismatch.Statements[3].CatalogBinding);
         Assert.Contains(mismatch.Statements[3].Diagnostics,
             d => d.Code == "SQL_SCHEMA_TYPE_MISMATCH");
@@ -198,8 +195,7 @@ public sealed class SqlCoreInsertTargetProjectionContractTests
     [InlineData(SqlAgentToolType.Firebird)]
     public void UnknownWorldCannotInventImplicitInsertTargetProof(SqlAgentToolType dialect)
     {
-        var r = SqlCoreFacade.AnalyzeScript(
-            "INSERT INTO dest SELECT 1;", dialect, SqlCatalogState.Unknown());
+        var r = SqlCoreFacade.AnalyzeScript("INSERT INTO dest SELECT 1;", dialect, SqlCatalogState.Unknown(), TestContext.Current.CancellationToken);
         var stmt = Assert.Single(r.Statements);
         Assert.Equal(SqlCatalogBindingStatus.Unverified, stmt.CatalogBinding);
         Assert.Contains(stmt.Diagnostics, d => d.Code == "SQL_CATALOG_BINDING_INCOMPLETE");

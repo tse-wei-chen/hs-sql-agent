@@ -21,7 +21,7 @@ public sealed class SqlCorePostgresWithInsertSelectTests
     [InlineData("WITH source_rows(id) AS (SELECT 42) INSERT INTO users(id) SELECT id FROM source_rows")]
     public void ParsesReadOnlyCtePrefixedInsertSelectAsMutation(string sql)
     {
-        var script = SqlCoreFacade.ParseScript(sql + "; SELECT 2", SqlAgentToolType.Postgres);
+        var script = SqlCoreFacade.ParseScript(sql + "; SELECT 2", SqlAgentToolType.Postgres, TestContext.Current.CancellationToken);
         Assert.Equal(2, script.Statements.Count);
         Assert.Empty(script.Diagnostics);
         Assert.Equal(SqlScriptStatementKind.Mutation, script.Statements[0].Kind);
@@ -31,8 +31,7 @@ public sealed class SqlCorePostgresWithInsertSelectTests
         Assert.Equal(sql, script.Statements[0].Text);
         Assert.Equal(1, script.BatchCount);
 
-        var analysis = SqlCoreFacade.AnalyzeScript(sql,
-            SqlAgentToolType.Postgres, SqlCatalogState.Unknown());
+        var analysis = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Postgres, SqlCatalogState.Unknown(), TestContext.Current.CancellationToken);
         var statement = Assert.Single(analysis.Statements);
         Assert.Equal(SqlScriptStatementKind.Mutation, statement.Syntax.Kind);
         Assert.Equal(SqlScriptParseStatus.Parsed, statement.Syntax.Status);
@@ -46,8 +45,7 @@ public sealed class SqlCorePostgresWithInsertSelectTests
             "WITH source_rows AS (SELECT 42 AS id) INSERT INTO users(id) SELECT id FROM source_rows";
         var validation = new SqlPlanValidationContext(
             "cte-insert-positive", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" });
-        var result = SqlCoreFacade.CompileDml(sql,
-            SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, validation);
+        var result = SqlCoreFacade.CompileDml(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, validation, TestContext.Current.CancellationToken);
 
         Assert.StartsWith("WITH ", result.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("INSERT INTO", result.Sql, StringComparison.OrdinalIgnoreCase);
@@ -62,10 +60,8 @@ public sealed class SqlCorePostgresWithInsertSelectTests
     {
         const string sql =
             "WITH source_rows AS (SELECT 42 AS id) INSERT INTO secrets(id) SELECT id FROM source_rows";
-        var result = SqlCoreFacade.TryCompileDml(sql,
-            SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("cte-insert-deny",
-                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" }));
+        var result = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("cte-insert-deny",
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" }), TestContext.Current.CancellationToken);
 
         Assert.False(result.Success);
         Assert.Null(result.Value);
@@ -78,12 +74,11 @@ public sealed class SqlCorePostgresWithInsertSelectTests
     [InlineData("WITH x AS (DELETE FROM users RETURNING id) INSERT INTO archive(id) SELECT id FROM x")]
     public void UnmodeledWithMutationFormsRemainFailClosed(string sql)
     {
-        var script = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres);
+        var script = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres, TestContext.Current.CancellationToken);
         Assert.NotEqual(SqlScriptParseStatus.Parsed, Assert.Single(script.Statements).Status);
         Assert.NotEmpty(script.Diagnostics);
         Assert.Throws<SqlParseException>(() =>
-            SqlCoreFacade.CompileDml(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                new SqlPlanValidationContext("cte-insert-negative")));
+            SqlCoreFacade.CompileDml(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("cte-insert-negative"), TestContext.Current.CancellationToken));
     }
 
     [Theory]
@@ -94,7 +89,7 @@ public sealed class SqlCorePostgresWithInsertSelectTests
     {
         const string sql =
             "WITH x AS (SELECT 1 AS id) INSERT INTO users(id) SELECT id FROM x";
-        var script = SqlCoreFacade.ParseScript(sql, provider);
+        var script = SqlCoreFacade.ParseScript(sql, provider, TestContext.Current.CancellationToken);
         Assert.NotEqual(SqlScriptParseStatus.Parsed, Assert.Single(script.Statements).Status);
         Assert.NotEmpty(script.Diagnostics);
     }
@@ -103,7 +98,7 @@ public sealed class SqlCorePostgresWithInsertSelectTests
     public void ContextualInsertCteNameNeverTurnsWithSelectIntoDml()
     {
         const string sql = "WITH insert AS (SELECT 1 AS id) SELECT id FROM insert";
-        var statement = Assert.Single(SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres).Statements);
+        var statement = Assert.Single(SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres, TestContext.Current.CancellationToken).Statements);
         Assert.Equal(SqlScriptStatementKind.Query, statement.Kind);
         Assert.Equal(SqlScriptParseStatus.Parsed, statement.Status);
     }
@@ -118,7 +113,7 @@ public sealed class SqlCorePostgresWithInsertSelectTests
     public void ExistingWithSelectIsStillAQuery(SqlAgentToolType provider)
     {
         const string sql = "WITH x AS (SELECT 1 AS id) SELECT id FROM x";
-        var statement = Assert.Single(SqlCoreFacade.ParseScript(sql, provider).Statements);
+        var statement = Assert.Single(SqlCoreFacade.ParseScript(sql, provider, TestContext.Current.CancellationToken).Statements);
         Assert.Equal(SqlScriptStatementKind.Query, statement.Kind);
         Assert.Equal(SqlScriptParseStatus.Parsed, statement.Status);
     }

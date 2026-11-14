@@ -217,8 +217,7 @@ public sealed class CoreAdversarialInjectionMatrixTests
         foreach (var provider in Providers)
         foreach (var (sql, code) in cases)
         {
-            var result = SqlCoreFacade.TryCompileDml(
-                sql, provider, provider, Validation());
+            var result = SqlCoreFacade.TryCompileDml(sql, provider, provider, Validation(), TestContext.Current.CancellationToken);
             Assert.False(result.Success, provider + " " + sql);
             Assert.Null(result.Value);
             Assert.Contains(
@@ -240,15 +239,11 @@ public sealed class CoreAdversarialInjectionMatrixTests
         foreach (var payload in LiteralPayloads)
         {
             var literal = QuoteSqlLiteral(payload);
-            var query = SqlCoreFacade.CompileQuery(
-                "SELECT id FROM users WHERE name = " + literal + " AND id = 7",
-                provider, provider, Validation(), new SqlExecutionPlanPolicy(100));
+            var query = SqlCoreFacade.CompileQuery("SELECT id FROM users WHERE name = " + literal + " AND id = 7", provider, provider, Validation(), new SqlExecutionPlanPolicy(100), TestContext.Current.CancellationToken);
             AssertParameterized(query, payload, provider + " Query");
             attempts++;
 
-            var dml = SqlCoreFacade.CompileDml(
-                "UPDATE users SET name = " + literal + " WHERE id = 7",
-                provider, provider, Validation());
+            var dml = SqlCoreFacade.CompileDml("UPDATE users SET name = " + literal + " WHERE id = 7", provider, provider, Validation(), TestContext.Current.CancellationToken);
             AssertParameterized(dml, payload, provider + " DML");
             attempts++;
         }
@@ -262,14 +257,10 @@ public sealed class CoreAdversarialInjectionMatrixTests
     {
         foreach (var provider in Providers)
         {
-            var query = SqlCoreFacade.CompileQuery(
-                "WITH visible AS (SELECT id FROM users) SELECT id FROM visible",
-                provider, provider, Validation(), new SqlExecutionPlanPolicy(100));
+            var query = SqlCoreFacade.CompileQuery("WITH visible AS (SELECT id FROM users) SELECT id FROM visible", provider, provider, Validation(), new SqlExecutionPlanPolicy(100), TestContext.Current.CancellationToken);
             Assert.False(string.IsNullOrWhiteSpace(query.Sql));
 
-            var dml = SqlCoreFacade.CompileDml(
-                "DELETE FROM users WHERE id = 7",
-                provider, provider, Validation());
+            var dml = SqlCoreFacade.CompileDml("DELETE FROM users WHERE id = 7", provider, provider, Validation(), TestContext.Current.CancellationToken);
             Assert.False(string.IsNullOrWhiteSpace(dml.Sql));
 
             var ddl = SqlCoreFacade.CompileDdl(

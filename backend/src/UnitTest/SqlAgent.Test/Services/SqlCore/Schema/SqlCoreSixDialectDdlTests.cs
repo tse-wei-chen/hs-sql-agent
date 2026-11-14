@@ -53,9 +53,7 @@ public sealed class SqlCoreSixDialectDdlTests
         var versionProof = provider == SqlAgentToolType.Sqlite
             ? new SqlProviderCapabilityProfile(provider, new Version(3, 45))
             : null;
-        var result = SqlCoreFacade.AnalyzeScript(
-            create + add + dropColumn + dropTable, provider,
-            SqlCatalogState.KnownEmpty(), versionProof);
+        var result = SqlCoreFacade.AnalyzeScript(create + add + dropColumn + dropTable, provider, SqlCatalogState.KnownEmpty(), versionProof, TestContext.Current.CancellationToken);
 
         Assert.Equal(4, result.Statements.Count);
         Assert.Empty(result.Diagnostics);
@@ -93,12 +91,10 @@ public sealed class SqlCoreSixDialectDdlTests
     public void IfNotExistsAndIfExists_AreExactNoOpsOnlyWhenProven(
         SqlAgentToolType provider, string tableName)
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "CREATE TABLE users (id INTEGER);" +
+        var result = SqlCoreFacade.AnalyzeScript("CREATE TABLE users (id INTEGER);" +
             "CREATE TABLE IF NOT EXISTS users (name TEXT);" +
             "DROP TABLE users;" +
-            "DROP TABLE IF EXISTS users;",
-            provider, SqlCatalogState.KnownEmpty());
+            "DROP TABLE IF EXISTS users;", provider, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
 
         Assert.Empty(result.Diagnostics);
         Assert.All(result.Statements, s =>
@@ -119,7 +115,7 @@ public sealed class SqlCoreSixDialectDdlTests
     public void UnprovenConditionalSyntax_DoesNotMintCatalogCertainty(
         SqlAgentToolType provider, string sql)
     {
-        var result = SqlCoreFacade.AnalyzeScript(sql, provider, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript(sql, provider, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
 
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, result.Statements[0].Status);
         Assert.Equal(SqlCatalogKnowledge.Unknown, result.Statements[0].Certainty);
@@ -143,9 +139,7 @@ public sealed class SqlCoreSixDialectDdlTests
             SqlAgentToolType.Oracle => "NUMBER",
             _ => "INTEGER"
         };
-        var result = SqlCoreFacade.AnalyzeScript(
-            $"CREATE TABLE users (id {typeName});" + alter + ";",
-            provider, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript($"CREATE TABLE users (id {typeName});" + alter + ";", provider, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
 
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[0].Status);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, result.Statements[1].Status);
@@ -168,10 +162,8 @@ public sealed class SqlCoreSixDialectDdlTests
             SqlAgentToolType.Oracle => "NUMBER",
             _ => "INTEGER"
         };
-        var result = SqlCoreFacade.AnalyzeScript(
-            $"CREATE TABLE users (id {typeName});" +
-            $"CREATE TABLE orders (id {typeName}, CHECK(id > 0));",
-            provider, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript($"CREATE TABLE users (id {typeName});" +
+            $"CREATE TABLE orders (id {typeName}, CHECK(id > 0));", provider, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
 
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, result.Statements[1].Status);
         Assert.False(result.FinalCatalog.IsClosedWorld);
@@ -185,19 +177,14 @@ public sealed class SqlCoreSixDialectDdlTests
     {
         const string script =
             "CREATE TABLE users(id INTEGER, name TEXT); ALTER TABLE users DROP COLUMN name;";
-        var unknown = SqlCoreFacade.AnalyzeScript(
-            script, SqlAgentToolType.Sqlite, SqlCatalogState.KnownEmpty());
+        var unknown = SqlCoreFacade.AnalyzeScript(script, SqlAgentToolType.Sqlite, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, unknown.Statements[1].Status);
         Assert.False(unknown.FinalCatalog.IsClosedWorld);
 
-        var tooOld = SqlCoreFacade.AnalyzeScript(
-            script, SqlAgentToolType.Sqlite, SqlCatalogState.KnownEmpty(),
-            new SqlProviderCapabilityProfile(SqlAgentToolType.Sqlite, new Version(3, 34)));
+        var tooOld = SqlCoreFacade.AnalyzeScript(script, SqlAgentToolType.Sqlite, SqlCatalogState.KnownEmpty(), new SqlProviderCapabilityProfile(SqlAgentToolType.Sqlite, new Version(3, 34)), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, tooOld.Statements[1].Status);
 
-        var supported = SqlCoreFacade.AnalyzeScript(
-            script, SqlAgentToolType.Sqlite, SqlCatalogState.KnownEmpty(),
-            new SqlProviderCapabilityProfile(SqlAgentToolType.Sqlite, new Version(3, 35)));
+        var supported = SqlCoreFacade.AnalyzeScript(script, SqlAgentToolType.Sqlite, SqlCatalogState.KnownEmpty(), new SqlProviderCapabilityProfile(SqlAgentToolType.Sqlite, new Version(3, 35)), TestContext.Current.CancellationToken);
         Assert.Empty(supported.Diagnostics);
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, supported.Statements[1].Status);
         Assert.Single(Assert.Single(supported.FinalCatalog.Tables).Columns);
@@ -207,14 +194,11 @@ public sealed class SqlCoreSixDialectDdlTests
     public void SqlServerIfExistsNeedsVersionProofFor2016OrLater()
     {
         const string sql = "DROP TABLE IF EXISTS absent";
-        var unknown = SqlCoreFacade.AnalyzeScript(
-            sql, SqlAgentToolType.MsSqlServer, SqlCatalogState.KnownEmpty());
+        var unknown = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.MsSqlServer, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported,
             Assert.Single(unknown.Statements).Status);
 
-        var proven = SqlCoreFacade.AnalyzeScript(
-            sql, SqlAgentToolType.MsSqlServer, SqlCatalogState.KnownEmpty(),
-            new SqlProviderCapabilityProfile(SqlAgentToolType.MsSqlServer, new Version(13, 0)));
+        var proven = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.MsSqlServer, SqlCatalogState.KnownEmpty(), new SqlProviderCapabilityProfile(SqlAgentToolType.MsSqlServer, new Version(13, 0)), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed,
             Assert.Single(proven.Statements).Status);
         Assert.Empty(proven.Diagnostics);
@@ -227,13 +211,10 @@ public sealed class SqlCoreSixDialectDdlTests
     {
         const string script =
             "CREATE TABLE users(id INTEGER, active BOOLEAN); ALTER TABLE users DROP COLUMN active;";
-        var unknown = SqlCoreFacade.AnalyzeScript(
-            script, SqlAgentToolType.Firebird, SqlCatalogState.KnownEmpty());
+        var unknown = SqlCoreFacade.AnalyzeScript(script, SqlAgentToolType.Firebird, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, unknown.Statements[0].Status);
 
-        var proven = SqlCoreFacade.AnalyzeScript(
-            script, SqlAgentToolType.Firebird, SqlCatalogState.KnownEmpty(),
-            new SqlProviderCapabilityProfile(SqlAgentToolType.Firebird, new Version(6, 0)));
+        var proven = SqlCoreFacade.AnalyzeScript(script, SqlAgentToolType.Firebird, SqlCatalogState.KnownEmpty(), new SqlProviderCapabilityProfile(SqlAgentToolType.Firebird, new Version(6, 0)), TestContext.Current.CancellationToken);
         Assert.Empty(proven.Diagnostics);
         Assert.Equal(2, proven.Statements.Count);
         Assert.All(proven.Statements, s =>
@@ -244,11 +225,9 @@ public sealed class SqlCoreSixDialectDdlTests
     [Fact]
     public void SqlServerGoBatchBoundaries_PreserveCatalogOrderWithoutGrantingExecution()
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "CREATE TABLE dbo.users (id INT);\nGO\n" +
+        var result = SqlCoreFacade.AnalyzeScript("CREATE TABLE dbo.users (id INT);\nGO\n" +
             "ALTER TABLE dbo.users ADD name NVARCHAR(32);\nGO\n" +
-            "DROP TABLE dbo.users;",
-            SqlAgentToolType.MsSqlServer, SqlCatalogState.KnownEmpty());
+            "DROP TABLE dbo.users;", SqlAgentToolType.MsSqlServer, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
 
         Assert.Equal(3, result.Statements.Count);
         Assert.Equal(new[] { 0, 1, 2 }, result.Statements.Select(s => s.Syntax.BatchIndex));
@@ -261,9 +240,7 @@ public sealed class SqlCoreSixDialectDdlTests
     {
         foreach (var provider in new[] { SqlAgentToolType.Oracle, SqlAgentToolType.Firebird })
         {
-            var result = SqlCoreFacade.AnalyzeScript(
-                "CREATE TABLE \"MixedCase\" (\"QuotedId\" INTEGER);",
-                provider, SqlCatalogState.KnownEmpty());
+            var result = SqlCoreFacade.AnalyzeScript("CREATE TABLE \"MixedCase\" (\"QuotedId\" INTEGER);", provider, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
             Assert.Empty(result.Diagnostics);
             var table = Assert.Single(result.FinalCatalog.Tables);
             Assert.Equal("MixedCase", table.Name);

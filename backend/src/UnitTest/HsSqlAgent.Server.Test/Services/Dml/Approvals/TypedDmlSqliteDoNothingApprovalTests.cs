@@ -37,8 +37,8 @@ public sealed class TypedDmlSqliteDoNothingApprovalTests
             Assert.Equal(DmlApprovalMode.InsertConflictDoNothing, preview.Plan.ApprovalMode);
             Assert.Equal(affected, preview.Preview.AffectedRows);
             Assert.NotNull(preview.Preview.Challenge.RowSetFingerprint);
-            Assert.Equal(1, preview.Plan.InsertRows.Length);
-            Assert.Equal(1, preview.Plan.RowIdentityColumns.Length);
+            Assert.Single(preview.Plan.InsertRows);
+            Assert.Single(preview.Plan.RowIdentityColumns);
             Assert.Equal("id", preview.Plan.RowIdentityColumns[0], ignoreCase: true);
 
             var committed = await runtime.CommitAsync(provider, cs, preview, Policy, Allowed,

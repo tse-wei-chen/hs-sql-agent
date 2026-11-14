@@ -12,7 +12,7 @@ public sealed class SqlAgentToolConstructorCompatibilityTests
         // Changing the primary constructor from 10 to 17 arguments removes the
         // CLR entry point and breaks previously compiled consuming assemblies.
         var legacy = Assert.Single(typeof(SqlAgentTool).GetConstructors()
-            .Where(constructor => constructor.GetParameters().Length == 10));
+, constructor => constructor.GetParameters().Length == 10);
 
         string[] v300ParameterTypes =
         [

@@ -28,15 +28,13 @@ public sealed class SqlCoreSqliteIntegerPkMatchLiveParityTests
         using var db = new SqliteConnection("Data Source=:memory:");
         db.Open();
         var profile = Profile(Version.Parse(db.ServerVersion));
-        var virtualCatalog = SqlCoreFacade.AnalyzeScript(
-            Schema, SqlAgentToolType.Sqlite, SqlCatalogState.KnownEmpty(), profile);
+        var virtualCatalog = SqlCoreFacade.AnalyzeScript(Schema, SqlAgentToolType.Sqlite, SqlCatalogState.KnownEmpty(), profile, TestContext.Current.CancellationToken);
         Assert.Empty(virtualCatalog.Diagnostics);
         Assert.True(virtualCatalog.FinalCatalog.IsClosedWorld);
 
         const string sql = "UPDATE dest SET label = s.payload " +
                            "FROM lookup s WHERE dest.id = s.id RETURNING id, label";
-        var stmt = Assert.Single(SqlCoreFacade.AnalyzeScript(
-            sql, SqlAgentToolType.Sqlite, virtualCatalog.FinalCatalog, profile).Statements);
+        var stmt = Assert.Single(SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Sqlite, virtualCatalog.FinalCatalog, profile, TestContext.Current.CancellationToken).Statements);
         Assert.Equal(SqlCatalogBindingStatus.Verified, stmt.NameBinding);
         Assert.Equal(SqlCatalogBindingStatus.Unverified, stmt.TypeBinding);
         Assert.Equal(SqlMutationSourceMatchCardinality.ProvenAtMostOne,
@@ -81,9 +79,7 @@ public sealed class SqlCoreSqliteIntegerPkMatchLiveParityTests
 
         const string duplicateSql =
             "UPDATE dest SET label = b.payload FROM bag b WHERE dest.id = b.id";
-        var uncertain = Assert.Single(SqlCoreFacade.AnalyzeScript(
-            duplicateSql, SqlAgentToolType.Sqlite,
-            virtualCatalog.FinalCatalog, profile).Statements);
+        var uncertain = Assert.Single(SqlCoreFacade.AnalyzeScript(duplicateSql, SqlAgentToolType.Sqlite, virtualCatalog.FinalCatalog, profile, TestContext.Current.CancellationToken).Statements);
         Assert.Equal(SqlMutationSourceMatchCardinality.Unverified,
             uncertain.SourceMatchCardinality);
         using var multiplicity = db.CreateCommand();

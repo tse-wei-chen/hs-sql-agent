@@ -49,8 +49,7 @@ public sealed class SqlCoreStaticTypeEvidenceBoundaryTests
         })
         {
             var ex = Assert.Throws<SqlCompilationException>(() =>
-                SqlCoreFacade.CompileQuery(sql, provider, provider, ctx,
-                    new SqlExecutionPlanPolicy()));
+                SqlCoreFacade.CompileQuery(sql, provider, provider, ctx, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
             Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", ex.Diagnostic?.Code);
             Assert.Equal(SqlDiagnosticStage.SemanticValidation, ex.Diagnostic?.Stage);
         }
@@ -66,8 +65,7 @@ public sealed class SqlCoreStaticTypeEvidenceBoundaryTests
             "SELECT id FROM items WHERE description = 'abc'"
         })
         {
-            var compiled = SqlCoreFacade.CompileQuery(sql, provider, provider,
-                Typed(provider), new SqlExecutionPlanPolicy());
+            var compiled = SqlCoreFacade.CompileQuery(sql, provider, provider, Typed(provider), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
             Assert.NotEmpty(compiled.Sql);
         }
     }
@@ -81,10 +79,8 @@ public sealed class SqlCoreStaticTypeEvidenceBoundaryTests
     [InlineData("integer", "SELECT v + 1;")]
     public void TextFamilyCannotBecomeAnExactPrimitiveProof(string returnType, string body)
     {
-        var report = SqlCoreFacade.AnalyzeScript(
-            "CREATE FUNCTION app.unproven(v text) RETURNS " + returnType +
-            " LANGUAGE SQL AS $f$ " + body + " $f$;",
-            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var report = SqlCoreFacade.AnalyzeScript("CREATE FUNCTION app.unproven(v text) RETURNS " + returnType +
+            " LANGUAGE SQL AS $f$ " + body + " $f$;", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Empty(report.ProceduralDefinitions);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, Assert.Single(report.Statements).Status);
         Assert.Contains(report.Diagnostics, d =>
@@ -104,10 +100,8 @@ public sealed class SqlCoreStaticTypeEvidenceBoundaryTests
     {
         var parameter = returnType == "integer" && body.Contains("v +", StringComparison.Ordinal)
             ? "v integer" : "";
-        var report = SqlCoreFacade.AnalyzeScript(
-            "CREATE FUNCTION app.exact(" + parameter + ") RETURNS " + returnType +
-            " LANGUAGE SQL AS $f$ " + body + " $f$;",
-            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var report = SqlCoreFacade.AnalyzeScript("CREATE FUNCTION app.exact(" + parameter + ") RETURNS " + returnType +
+            " LANGUAGE SQL AS $f$ " + body + " $f$;", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         var function = Assert.Single(report.ProceduralDefinitions);
         Assert.Equal(evidence, function.FunctionReturn!.Evidence);
         Assert.Equal(SqlCatalogKnowledge.Unknown, function.FunctionReturn.RuntimeCertainty);

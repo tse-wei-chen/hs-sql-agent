@@ -125,9 +125,7 @@ public sealed class SqlCoreMutationTransitiveEqualityClosureTests
     [Fact]
     public void AViewNeverInheritsPhysicalUniqueKeyThroughAnEquivalenceChain()
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            Ddl + "CREATE VIEW app.v AS SELECT code, bridge, note FROM app.one;",
-            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript(Ddl + "CREATE VIEW app.v AS SELECT code, bridge, note FROM app.one;", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Empty(result.Diagnostics);
         var stmt = One("UPDATE app.dest d SET label = 'x' FROM app.v v WHERE d.id = v.bridge AND v.bridge = v.code",
             result.FinalCatalog);
@@ -144,8 +142,7 @@ public sealed class SqlCoreMutationTransitiveEqualityClosureTests
     [InlineData(SqlAgentToolType.Firebird)]
     public void SixProviderTablelessQueryRetainsNotApplicable(SqlAgentToolType dialect)
     {
-        var stmt = Assert.Single(SqlCoreFacade.AnalyzeScript("SELECT 1;", dialect,
-            SqlCatalogState.KnownEmpty()).Statements);
+        var stmt = Assert.Single(SqlCoreFacade.AnalyzeScript("SELECT 1;", dialect, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken).Statements);
         Assert.Equal(SqlMutationSourceMatchCardinality.NotApplicable,
             stmt.SourceMatchCardinality);
     }

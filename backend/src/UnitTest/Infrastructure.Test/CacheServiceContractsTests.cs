@@ -19,7 +19,7 @@ public class CacheServiceContractsTests
         Assert.Equal("opaque-value", await service.GetAsync<string>("request:1", TestContext.Current.CancellationToken));
 
         await service.RemoveAsync("request:1", TestContext.Current.CancellationToken);
-        Assert.Null(await service.GetAsync<string>("request:1"));
+        Assert.Null(await service.GetAsync<string>("request:1", TestContext.Current.CancellationToken));
     }
 
     [Fact]

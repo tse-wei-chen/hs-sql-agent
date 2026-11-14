@@ -43,13 +43,13 @@ public sealed class SqlCoreScriptObjectDependencyTests
         var result = Analyze("INSERT INTO destination(id) SELECT id FROM source;");
         Assert.Equal(2, result.Dependencies.Count);
 
-        var writer = Assert.Single(result.Dependencies.Where(x =>
-            x.Kind == SqlScriptDependencyKind.MutationTarget));
+        var writer = Assert.Single(result.Dependencies, x =>
+            x.Kind == SqlScriptDependencyKind.MutationTarget);
         Assert.Equal("destination", writer.ObjectName);
         Assert.Equal(0, writer.StatementIndex);
 
-        var reader = Assert.Single(result.Dependencies.Where(x =>
-            x.Kind == SqlScriptDependencyKind.ReadTable));
+        var reader = Assert.Single(result.Dependencies, x =>
+            x.Kind == SqlScriptDependencyKind.ReadTable);
         Assert.Equal("source", reader.ObjectName);
         Assert.Equal(0, reader.StatementIndex);
         Assert.All(result.Dependencies,

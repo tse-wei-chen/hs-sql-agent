@@ -107,17 +107,13 @@ public sealed class SqlCoreFunctionPositionalExpressionParserTests
         Assert.Throws<SqlParseException>(() =>
             CoreSqlTextParser.ParseQuery("SELECT CAST($1 AS INTEGER)", SqlAgentToolType.Postgres));
         Assert.Throws<SqlParseException>(() =>
-            SqlCoreFacade.AnalyzeScript(
-                "CREATE FUNCTION app.f(a integer) RETURNS integer LANGUAGE SQL AS $q$ SELECT ($1); $q$;",
-                SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty()));
+            SqlCoreFacade.AnalyzeScript("CREATE FUNCTION app.f(a integer) RETURNS integer LANGUAGE SQL AS $q$ SELECT ($1); $q$;", SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken));
     }
 
     [Fact]
     public void ProcedureDoesNotInheritFunctionOnlyGrammar()
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "CREATE PROCEDURE app.p() LANGUAGE SQL AS $body$ SELECT ($1); $body$;",
-            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript("CREATE PROCEDURE app.p() LANGUAGE SQL AS $body$ SELECT ($1); $body$;", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Empty(result.ProceduralDefinitions);
         Assert.Contains(result.Diagnostics, d => d.Code == "SQL_PROCEDURAL_BODY_UNSUPPORTED");
     }
