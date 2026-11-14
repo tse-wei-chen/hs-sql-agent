@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PermissionGrant } from "@/lib/permissions";
+import { createPinia, setActivePinia } from "pinia";
 
 // Run the production Nuxt middleware, not a second copy of its routing rules.
 type TestRoute = { path: string; meta: { permission?: string } };
@@ -36,6 +37,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   window.localStorage.clear();
+  setActivePinia(createPinia());
   navigate.mockClear();
 });
 
