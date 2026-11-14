@@ -146,6 +146,20 @@ describe("Pinia auth session", () => {
     expect(sessionStorage.getItem("mfaToken")).toBeNull()
   })
 
+  it("clears a previous account when switching to an MFA-required identity", async () => {
+    persistAuthSession({
+      accessToken: tokenFor(), refreshToken: "previous",
+      userName: "Previous", permissions: grants,
+    })
+    vi.mocked(signIn).mockResolvedValue({ requiresMfa: true, mfaToken: "new-account-mfa" })
+    expect(await auth.login("another@example.com", "secret")).toBe("mfa")
+    expect(auth.isAuthenticated).toBe(false)
+    expect(auth.permissions).toEqual([])
+    expect(auth.userName).toBe("")
+    expect(localStorage.getItem("refreshToken")).toBeNull()
+    expect(sessionStorage.getItem("mfaToken")).toBe("new-account-mfa")
+  })
+
   it("keeps a failed MFA challenge available for retry", async () => {
     sessionStorage.setItem("mfaToken", "retry-challenge")
     vi.mocked(verifyMfa).mockRejectedValue(new Error("bad code"))
