@@ -59,8 +59,7 @@ public sealed class SqlCoreSqliteLiveDdlParityTests
 
         var profile = new SqlProviderCapabilityProfile(SqlAgentToolType.Sqlite, serverVersion);
         // Deliberately analyze completely BEFORE executing any statement.
-        var report = SqlCoreFacade.AnalyzeScript(
-            sql, SqlAgentToolType.Sqlite, SqlCatalogState.KnownEmpty(), profile);
+        var report = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Sqlite, SqlCatalogState.KnownEmpty(), profile, TestContext.Current.CancellationToken);
         Assert.True(report.Statements.Count >= 2);
         Assert.All(report.Statements, statement =>
             Assert.Equal(SqlStatementAnalysisStatus.Analyzed, statement.Status));
@@ -99,8 +98,7 @@ public sealed class SqlCoreSqliteLiveDdlParityTests
     public void RealSqliteAcceptsChecksThatAnalyzerStillFailsClosed()
     {
         const string sql = "CREATE TABLE unmodeled (id INTEGER, CHECK(id > 0));";
-        var analysis = SqlCoreFacade.AnalyzeScript(
-            sql, SqlAgentToolType.Sqlite, SqlCatalogState.KnownEmpty());
+        var analysis = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Sqlite, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported,
             Assert.Single(analysis.Statements).Status);
         Assert.False(analysis.FinalCatalog.IsClosedWorld);
@@ -124,8 +122,7 @@ public sealed class SqlCoreSqliteLiveDdlParityTests
         foreach (var table in expected)
         {
             Assert.Equal(SqlCatalogKnowledge.Known, table.Knowledge);
-            var physical = Assert.Single(actual.Where(
-                x => string.Equals(x.Name, table.Name, StringComparison.OrdinalIgnoreCase)));
+            var physical = Assert.Single(actual, x => string.Equals(x.Name, table.Name, StringComparison.OrdinalIgnoreCase));
             Assert.Equal(table.Columns.Count, physical.Columns.Length);
             for (var c = 0; c < table.Columns.Count; c++)
             {

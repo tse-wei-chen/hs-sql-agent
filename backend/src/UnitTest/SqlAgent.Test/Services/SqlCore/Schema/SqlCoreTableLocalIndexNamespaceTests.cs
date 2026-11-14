@@ -171,8 +171,8 @@ public sealed class SqlCoreTableLocalIndexNamespaceTests
         var statement = result.Statements[1];
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, statement.Status);
         Assert.Equal(SqlCatalogKnowledge.Unknown, statement.Certainty);
-        Assert.Empty(statement.Changes.Where(change =>
-            change.Certainty == SqlCatalogKnowledge.Known));
+        Assert.DoesNotContain(statement.Changes, change =>
+            change.Certainty == SqlCatalogKnowledge.Known);
         Assert.False(result.FinalCatalog.IsClosedWorld);
     }
 
@@ -195,8 +195,8 @@ public sealed class SqlCoreTableLocalIndexNamespaceTests
         var statement = result.Statements[2];
         Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, statement.Status);
         Assert.Equal(SqlCatalogKnowledge.Unknown, statement.Certainty);
-        Assert.Empty(statement.Changes.Where(change =>
-            change.Certainty == SqlCatalogKnowledge.Known));
+        Assert.DoesNotContain(statement.Changes, change =>
+            change.Certainty == SqlCatalogKnowledge.Known);
         Assert.False(statement.CatalogAfter.IsClosedWorld);
         Assert.False(result.FinalCatalog.IsClosedWorld);
         Assert.DoesNotContain(result.FinalCatalog.Tables,

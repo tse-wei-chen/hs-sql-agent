@@ -43,12 +43,7 @@ public sealed class CoreHistoricalSemanticDriftMutationTests
     [Fact]
     public void PostgresIlike_ToMySql_RemainsTargetCapabilityRejectionRatherThanLikeDowngrade()
     {
-        var result = SqlCoreFacade.TryCompileQuery(
-            "SELECT id FROM users WHERE name ILIKE 'a%'",
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.MySQL,
-            Validation(),
-            new SqlExecutionPlanPolicy(100));
+        var result = SqlCoreFacade.TryCompileQuery("SELECT id FROM users WHERE name ILIKE 'a%'", SqlAgentToolType.Postgres, SqlAgentToolType.MySQL, Validation(), new SqlExecutionPlanPolicy(100), TestContext.Current.CancellationToken);
 
         Assert.False(result.Success);
         var evidence = Assert.IsType<SqlCompileEvidence>(result.CompileEvidence);

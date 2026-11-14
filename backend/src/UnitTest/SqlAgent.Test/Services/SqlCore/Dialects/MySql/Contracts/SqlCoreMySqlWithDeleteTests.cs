@@ -150,9 +150,7 @@ public sealed class SqlCoreMySqlWithDeleteTests
     {
         const string sql = "WITH picked AS (SELECT 7 AS id) " +
                            "DELETE FROM users WHERE id IN (SELECT id FROM picked)";
-        var translated = SqlCoreFacade.TryCompileDml(sql,
-            SqlAgentToolType.MySQL, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("mysql-with-delete-cross"));
+        var translated = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.MySQL, SqlAgentToolType.Postgres, new SqlPlanValidationContext("mysql-with-delete-cross"), TestContext.Current.CancellationToken);
         Assert.False(translated.Success);
         Assert.NotEmpty(translated.TypedDiagnostics);
 

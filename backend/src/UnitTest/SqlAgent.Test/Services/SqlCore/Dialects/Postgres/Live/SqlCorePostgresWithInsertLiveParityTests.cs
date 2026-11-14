@@ -47,16 +47,12 @@ public sealed class SqlCorePostgresWithInsertLiveParityTests
             "INSERT INTO " + table + "(id) SELECT id FROM chosen_rows";
 
         await ExecuteAsync(connection, statement("cte_insert_parity_native"), token);
-        var compiled = SqlCoreFacade.CompileDml(
-            statement("cte_insert_parity_compiled"),
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext(
+        var compiled = SqlCoreFacade.CompileDml(statement("cte_insert_parity_compiled"), SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext(
                 "postgres-with-insert-live-parity",
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                 {
                     "cte_insert_parity_compiled", "cte_insert_parity_source"
-                }));
+                }), TestContext.Current.CancellationToken);
 
         Assert.StartsWith("WITH ", compiled.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(compiled.Parameters, parameter => Equals(parameter.Value, 2));

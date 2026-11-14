@@ -172,8 +172,8 @@ public sealed class SqlCorePostgresAtomicDropTableBatchTests
             "DROP TABLE app.parent, app.child;");
         var batch = r.Statements[2];
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, batch.Status);
-        Assert.Empty(batch.Changes.Where(x =>
-            x.Certainty == SqlCatalogKnowledge.Known));
+        Assert.DoesNotContain(batch.Changes, x =>
+            x.Certainty == SqlCatalogKnowledge.Known);
         Assert.False(r.FinalCatalog.IsClosedWorld);
     }
 

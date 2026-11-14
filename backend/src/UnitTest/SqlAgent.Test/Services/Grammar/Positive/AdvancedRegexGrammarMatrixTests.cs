@@ -108,12 +108,7 @@ public sealed class AdvancedRegexGrammarMatrixTests
         SqlAgentToolType sourceDialect,
         string sql)
     {
-        var result = SqlCoreFacade.TryCompileQuery(
-            sql,
-            sourceDialect,
-            sourceDialect,
-            new SqlPlanValidationContext("advanced-regex-negative-v1"),
-            new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.TryCompileQuery(sql, sourceDialect, sourceDialect, new SqlPlanValidationContext("advanced-regex-negative-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.False(result.Success, name);
         Assert.Equal("SQL_PARSE_ERROR", result.ErrorCode);

@@ -26,8 +26,7 @@ public sealed class SqlCoreScriptSymbolProjectionTests
         SqlAgentToolType provider, string idType, string textType)
     {
         var script = $"CREATE TABLE customers(id {idType}, label {textType});";
-        var result = SqlCoreFacade.AnalyzeScript(script,
-            provider, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript(script, provider, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
 
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed,
             Assert.Single(result.Statements).Status);
@@ -35,8 +34,7 @@ public sealed class SqlCoreScriptSymbolProjectionTests
         Assert.Equal(3, result.Symbols.Count);
 
         var table = Assert.Single(result.FinalCatalog.Tables);
-        var tableSymbol = Assert.Single(result.Symbols.Where(
-            x => x.Kind == SqlScriptSymbolKind.Table));
+        var tableSymbol = Assert.Single(result.Symbols, x => x.Kind == SqlScriptSymbolKind.Table);
         Assert.Equal(table.Name, tableSymbol.Name);
         Assert.Equal(table.QualifiedName.Key, tableSymbol.TableIdentity.Key);
         Assert.Equal(SqlCatalogKnowledge.Known, tableSymbol.Certainty);
@@ -57,10 +55,8 @@ public sealed class SqlCoreScriptSymbolProjectionTests
     [Fact]
     public void FinalSymbolsObserveAlterAndDropRatherThanHistoricalChanges()
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "CREATE TABLE orders(id INTEGER); ALTER TABLE orders ADD COLUMN total INTEGER;" +
-            "CREATE TABLE scratch(id INTEGER); DROP TABLE scratch;",
-            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript("CREATE TABLE orders(id INTEGER); ALTER TABLE orders ADD COLUMN total INTEGER;" +
+            "CREATE TABLE scratch(id INTEGER); DROP TABLE scratch;", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(4, result.Statements.Count);
         Assert.True(result.HasCompleteSymbolCatalog);
         Assert.Equal(4, result.CatalogChanges.Count);
@@ -75,9 +71,7 @@ public sealed class SqlCoreScriptSymbolProjectionTests
     [Fact]
     public void TransactionRollbackRemovesTransientSymbols()
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "BEGIN; CREATE TABLE payments(id INTEGER); ROLLBACK;",
-            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript("BEGIN; CREATE TABLE payments(id INTEGER); ROLLBACK;", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.True(result.HasCompleteSymbolCatalog);
         Assert.Empty(result.Symbols);
         Assert.Empty(result.FinalCatalog.Tables);
@@ -86,9 +80,7 @@ public sealed class SqlCoreScriptSymbolProjectionTests
     [Fact]
     public void UnsupportedStatementTaintsCatalogAndCannotMintKnownSymbols()
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "CREATE TABLE orders(id INTEGER); UNRECOGNIZED WORDS;",
-            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript("CREATE TABLE orders(id INTEGER); UNRECOGNIZED WORDS;", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.False(result.HasCompleteSymbolCatalog);
         Assert.False(result.FinalCatalog.IsClosedWorld);
         Assert.Empty(result.Symbols);
@@ -98,13 +90,11 @@ public sealed class SqlCoreScriptSymbolProjectionTests
     [Fact]
     public void OpenWorldUnknownCatalogDoesNotClaimCompleteSymbolsOrAbsence()
     {
-        var unknown = SqlCoreFacade.AnalyzeScript("SELECT 1",
-            SqlAgentToolType.Postgres);
+        var unknown = SqlCoreFacade.AnalyzeScript("SELECT 1", SqlAgentToolType.Postgres, TestContext.Current.CancellationToken);
         Assert.False(unknown.HasCompleteSymbolCatalog);
         Assert.Empty(unknown.Symbols);
 
-        var known = SqlCoreFacade.AnalyzeScript("SELECT 1",
-            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var known = SqlCoreFacade.AnalyzeScript("SELECT 1", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.True(known.HasCompleteSymbolCatalog);
         Assert.Empty(known.Symbols);
     }
@@ -112,10 +102,8 @@ public sealed class SqlCoreScriptSymbolProjectionTests
     [Fact]
     public void QuotedDottedIdentifierNeverCollapsesIntoQualifiedPath()
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "CREATE TABLE \"app.orders\"(id INTEGER);" +
-            "CREATE TABLE app.orders(id INTEGER, note TEXT);",
-            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript("CREATE TABLE \"app.orders\"(id INTEGER);" +
+            "CREATE TABLE app.orders(id INTEGER, note TEXT);", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.True(result.HasCompleteSymbolCatalog);
         var tables = result.Symbols.Where(x => x.Kind == SqlScriptSymbolKind.Table).ToArray();
         Assert.Equal(2, tables.Length);
@@ -128,8 +116,7 @@ public sealed class SqlCoreScriptSymbolProjectionTests
     [Fact]
     public void SymbolSnapshotIsImmutableAndContainsClrOnlySurface()
     {
-        var result = SqlCoreFacade.AnalyzeScript("CREATE TABLE a(id INTEGER)",
-            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript("CREATE TABLE a(id INTEGER)", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         var list = Assert.IsAssignableFrom<IList<SqlScriptSymbol>>(result.Symbols);
         Assert.Equal(2, list.Count);
         Assert.Throws<NotSupportedException>(() => list[0] = list[0]);

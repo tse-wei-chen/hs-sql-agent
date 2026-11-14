@@ -24,9 +24,7 @@ public sealed class SqlCoreOpenWorldDdlSemanticCertaintyTests
     public void InvalidDdlInUnknownCatalogMustNotPromoteCatalogCertainty(
         SqlAgentToolType provider, string typeName)
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            $"CREATE TABLE users(id {typeName}, id {typeName});",
-            provider, SqlCatalogState.Unknown());
+        var result = SqlCoreFacade.AnalyzeScript($"CREATE TABLE users(id {typeName}, id {typeName});", provider, SqlCatalogState.Unknown(), TestContext.Current.CancellationToken);
         var ddl = Assert.Single(result.Statements);
 
         Assert.Equal(SqlScriptStatementKind.Schema, ddl.Kind);
@@ -55,9 +53,7 @@ public sealed class SqlCoreOpenWorldDdlSemanticCertaintyTests
     public void KnownEmptyCatalogStillSupportsCertainSemanticRejection(
         SqlAgentToolType provider, string typeName)
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            $"CREATE TABLE users(id {typeName}, id {typeName});",
-            provider, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript($"CREATE TABLE users(id {typeName}, id {typeName});", provider, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         var ddl = Assert.Single(result.Statements);
 
         Assert.Equal(SqlStatementAnalysisStatus.Invalid, ddl.Status);
@@ -74,11 +70,9 @@ public sealed class SqlCoreOpenWorldDdlSemanticCertaintyTests
     [Fact]
     public void PartialCatalogCannotReestablishKnownThroughInvalidDdl()
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "CREATE TABLE users(id INTEGER);" +
+        var result = SqlCoreFacade.AnalyzeScript("CREATE TABLE users(id INTEGER);" +
             "CREATE TABLE orders(id INTEGER, id INTEGER);" +
-            "SELECT id FROM users;",
-            SqlAgentToolType.Postgres, SqlCatalogState.Unknown());
+            "SELECT id FROM users;", SqlAgentToolType.Postgres, SqlCatalogState.Unknown(), TestContext.Current.CancellationToken);
         Assert.Equal(3, result.Statements.Count);
         Assert.Equal(SqlStatementAnalysisStatus.PartiallyAnalyzed,
             result.Statements[0].Status);
@@ -97,12 +91,10 @@ public sealed class SqlCoreOpenWorldDdlSemanticCertaintyTests
     [Fact]
     public void UnsupportedDdlInvalidatesKnownObjectsAndLaterInvalidDdlStaysUnknown()
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "CREATE TABLE users(id INTEGER);" +
+        var result = SqlCoreFacade.AnalyzeScript("CREATE TABLE users(id INTEGER);" +
             "CREATE TABLE unsupported(id INTEGER DEFAULT 1);" +
             "CREATE TABLE orders(id INTEGER, id INTEGER);" +
-            "SELECT id FROM users;",
-            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+            "SELECT id FROM users;", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(4, result.Statements.Count);
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[0].Status);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, result.Statements[1].Status);
@@ -118,10 +110,8 @@ public sealed class SqlCoreOpenWorldDdlSemanticCertaintyTests
     [Fact]
     public void FullyModeledKnownDdlStillProducesExactCatalogChanges()
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "CREATE TABLE users(id INTEGER);" +
-            "ALTER TABLE users ADD COLUMN note TEXT;",
-            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript("CREATE TABLE users(id INTEGER);" +
+            "ALTER TABLE users ADD COLUMN note TEXT;", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(2, result.Statements.Count);
         Assert.All(result.Statements, s =>
         {

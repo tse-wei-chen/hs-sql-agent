@@ -27,7 +27,7 @@ public sealed class SqlCoreSqlServerNonemptyBatchContractTests
             "SELECT 2;",
             "GO");
 
-        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer);
+        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer, TestContext.Current.CancellationToken);
         Assert.Equal(2, parsed.BatchCount);
         Assert.Equal(new[] { 0, 1 }, parsed.Statements.Select(s => s.BatchIndex));
         Assert.Equal(new[] { "SELECT 1", "SELECT 2" },
@@ -36,8 +36,7 @@ public sealed class SqlCoreSqlServerNonemptyBatchContractTests
             Assert.Equal(SqlScriptParseStatus.Parsed, s.Status));
         Assert.Empty(parsed.Diagnostics);
 
-        var analyzed = SqlCoreFacade.AnalyzeScript(sql,
-            SqlAgentToolType.MsSqlServer, SqlCatalogState.KnownEmpty());
+        var analyzed = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.MsSqlServer, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(2, analyzed.Statements.Count);
         Assert.Equal(new[] { 0, 1 },
             analyzed.Statements.Select(s => s.Syntax.BatchIndex));
@@ -50,7 +49,7 @@ public sealed class SqlCoreSqlServerNonemptyBatchContractTests
     public void StandaloneTrailingGoDoesNotCreateAnExtraBatch(string newline)
     {
         var sql = "SELECT 1" + newline + "GO";
-        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer);
+        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer, TestContext.Current.CancellationToken);
 
         Assert.Equal(1, parsed.BatchCount);
         Assert.Equal(0, Assert.Single(parsed.Statements).BatchIndex);
@@ -65,14 +64,13 @@ public sealed class SqlCoreSqlServerNonemptyBatchContractTests
     {
         var sql = string.Join(newline,
             "-- comment", ";", "GO", "GO /* trivia */", ";");
-        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer);
+        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer, TestContext.Current.CancellationToken);
 
         Assert.Equal(0, parsed.BatchCount);
         Assert.Empty(parsed.Statements);
         Assert.Empty(parsed.Diagnostics);
 
-        var analyzed = SqlCoreFacade.AnalyzeScript(sql,
-            SqlAgentToolType.MsSqlServer, SqlCatalogState.KnownEmpty());
+        var analyzed = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.MsSqlServer, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Empty(analyzed.Statements);
         Assert.Empty(analyzed.Diagnostics);
     }
@@ -86,7 +84,7 @@ public sealed class SqlCoreSqlServerNonemptyBatchContractTests
     public void NonSqlServerDialectsNeverTreatGoAsBatchDelimiter(SqlAgentToolType provider)
     {
         const string sql = "SELECT 1\nGO\nSELECT 2";
-        var parsed = SqlCoreFacade.ParseScript(sql, provider);
+        var parsed = SqlCoreFacade.ParseScript(sql, provider, TestContext.Current.CancellationToken);
         Assert.Equal(1, parsed.BatchCount);
         Assert.Equal(0, Assert.Single(parsed.Statements).BatchIndex);
     }

@@ -76,8 +76,7 @@ public sealed class SqlCoreOracle26UpdateAssignmentNameBindingTests
     [InlineData(SqlAgentToolType.Firebird)]
     public void SixProviderOrdinarySelectDoesNotUseAssignmentAmbiguityRule(SqlAgentToolType dialect)
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "SELECT 1;", dialect, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript("SELECT 1;", dialect, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         var statement = Assert.Single(result.Statements);
         Assert.Equal(SqlCatalogBindingStatus.Verified, statement.CatalogBinding);
         Assert.Empty(statement.Diagnostics);

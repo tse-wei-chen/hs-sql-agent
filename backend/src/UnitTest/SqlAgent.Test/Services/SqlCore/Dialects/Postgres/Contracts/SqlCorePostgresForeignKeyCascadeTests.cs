@@ -88,7 +88,7 @@ public sealed class SqlCorePostgresForeignKeyCascadeTests
         Assert.Equal(3, ddl.Changes.Count);
         Assert.Equal(2, ddl.Changes.Count(x => x.Operation == SqlCatalogOperation.DropTable));
         Assert.Equal("fk_parent_ext",
-            Assert.Single(ddl.Changes.Where(x => x.Operation == SqlCatalogOperation.DropConstraint)).ConstraintName);
+            Assert.Single(ddl.Changes, x => x.Operation == SqlCatalogOperation.DropConstraint).ConstraintName);
         var survivor = Assert.Single(r.FinalCatalog.Tables);
         Assert.Equal("audit.external", survivor.Name);
         Assert.Empty(survivor.Constraints);
@@ -144,7 +144,7 @@ public sealed class SqlCorePostgresForeignKeyCascadeTests
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, ddl.Status);
         Assert.Equal(2, ddl.Changes.Count);
         Assert.Equal("fk_parent",
-            Assert.Single(ddl.Changes.Where(x => x.Operation == SqlCatalogOperation.DropConstraint)).ConstraintName);
+            Assert.Single(ddl.Changes, x => x.Operation == SqlCatalogOperation.DropConstraint).ConstraintName);
         Assert.Single(r.FinalCatalog.Tables);
         Assert.True(r.FinalCatalog.IsClosedWorld);
     }
@@ -206,7 +206,7 @@ public sealed class SqlCorePostgresForeignKeyCascadeTests
             Assert.Equal(SqlStatementAnalysisStatus.Unsupported, ddl.Status);
             Assert.Equal(SqlCatalogKnowledge.Unknown, ddl.Certainty);
             Assert.False(r.FinalCatalog.IsClosedWorld);
-            Assert.Empty(ddl.Changes.Where(x => x.Certainty == SqlCatalogKnowledge.Known));
+            Assert.DoesNotContain(ddl.Changes, x => x.Certainty == SqlCatalogKnowledge.Known);
         }
     }
 

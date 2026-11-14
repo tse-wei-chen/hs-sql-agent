@@ -20,7 +20,7 @@ public sealed class SqlCoreSqliteWithUpdateTests
     [InlineData("WITH picked(id) AS (SELECT 7) UPDATE users SET name = 'changed' WHERE id IN (SELECT id FROM picked) RETURNING id")]
     public void ScriptParsesOrdinaryWithUpdateAsMutation(string sql)
     {
-        var parsed = SqlCoreFacade.ParseScript(sql + "; SELECT 2", SqlAgentToolType.Sqlite, SqliteProfile());
+        var parsed = SqlCoreFacade.ParseScript(sql + "; SELECT 2", SqlAgentToolType.Sqlite, SqliteProfile(), TestContext.Current.CancellationToken);
         Assert.Equal(2, parsed.Statements.Count);
         Assert.Empty(parsed.Diagnostics);
         Assert.Equal(SqlScriptStatementKind.Mutation, parsed.Statements[0].Kind);
@@ -29,8 +29,7 @@ public sealed class SqlCoreSqliteWithUpdateTests
         Assert.Equal(SqlScriptStatementKind.Query, parsed.Statements[1].Kind);
         Assert.Equal(SqlScriptParseStatus.Parsed, parsed.Statements[1].Status);
 
-        var analyzed = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Sqlite,
-            SqlCatalogState.Unknown(), SqliteProfile());
+        var analyzed = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Sqlite, SqlCatalogState.Unknown(), SqliteProfile(), TestContext.Current.CancellationToken);
         Assert.True(Assert.Single(analyzed.Statements).Effects.HasFlag(SqlEffectKind.WriteData));
     }
 
@@ -112,8 +111,7 @@ public sealed class SqlCoreSqliteWithUpdateTests
     {
         const string sql = "WITH picked AS (SELECT id FROM source_rows WHERE id = 7) " +
                            "UPDATE users SET name = 'changed' WHERE id IN (SELECT id FROM picked)";
-        var effect = Assert.Single(SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Sqlite,
-            SqlCatalogState.Unknown(), SqliteProfile()).Statements).DetailedEffects;
+        var effect = Assert.Single(SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Sqlite, SqlCatalogState.Unknown(), SqliteProfile(), TestContext.Current.CancellationToken).Statements).DetailedEffects;
         Assert.Contains(effect, e => e.Operation == SqlStatementEffectOperation.ReadTable &&
                                      e.ObjectName == "source_rows");
         Assert.Contains(effect, e => e.Operation == SqlStatementEffectOperation.Update &&
@@ -127,7 +125,7 @@ public sealed class SqlCoreSqliteWithUpdateTests
     [InlineData("WITH picked AS (SELECT 7 AS id) UPDATE users AS u SET name = 'changed' WHERE u.id = 7")]
     public void UnsupportedMutationCteFormsStayFailClosed(string sql)
     {
-        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Sqlite, SqliteProfile());
+        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Sqlite, SqliteProfile(), TestContext.Current.CancellationToken);
         Assert.NotEqual(SqlScriptParseStatus.Parsed, Assert.Single(parsed.Statements).Status);
         Assert.NotEmpty(parsed.Diagnostics);
     }
@@ -139,7 +137,7 @@ public sealed class SqlCoreSqliteWithUpdateTests
     {
         const string sql = "WITH picked AS (SELECT 7 AS id) UPDATE users SET name = 'changed' " +
                            "WHERE id IN (SELECT id FROM picked)";
-        var parsed = SqlCoreFacade.ParseScript(sql, source);
+        var parsed = SqlCoreFacade.ParseScript(sql, source, TestContext.Current.CancellationToken);
         Assert.NotEqual(SqlScriptParseStatus.Parsed, Assert.Single(parsed.Statements).Status);
     }
 
@@ -147,7 +145,7 @@ public sealed class SqlCoreSqliteWithUpdateTests
     public void ContextualUpdateCteNameRemainsQuery()
     {
         const string sql = "WITH update AS (SELECT 7 AS id) SELECT id FROM update";
-        var statement = Assert.Single(SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Sqlite).Statements);
+        var statement = Assert.Single(SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Sqlite, TestContext.Current.CancellationToken).Statements);
         Assert.Equal(SqlScriptStatementKind.Query, statement.Kind);
         Assert.Equal(SqlScriptParseStatus.Parsed, statement.Status);
     }
@@ -157,7 +155,7 @@ public sealed class SqlCoreSqliteWithUpdateTests
     {
         const string sql = "WITH picked AS (SELECT 7 AS id) UPDATE users SET name = 'changed' WHERE id = 7";
         var profile = new SqlProviderCapabilityProfile(SqlAgentToolType.Sqlite, new Version(3, 8, 2));
-        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Sqlite, profile);
+        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Sqlite, profile, TestContext.Current.CancellationToken);
         Assert.Equal(SqlScriptParseStatus.Invalid, Assert.Single(parsed.Statements).Status);
     }
 
@@ -166,7 +164,7 @@ public sealed class SqlCoreSqliteWithUpdateTests
     {
         const string sql = "WITH picked AS (SELECT 7 AS id) UPDATE users SET name = 'changed' WHERE id = 7 RETURNING id";
         var profile = new SqlProviderCapabilityProfile(SqlAgentToolType.Sqlite, new Version(3, 34));
-        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Sqlite, profile);
+        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Sqlite, profile, TestContext.Current.CancellationToken);
         Assert.Equal(SqlScriptParseStatus.Invalid, Assert.Single(parsed.Statements).Status);
     }
 
@@ -175,8 +173,7 @@ public sealed class SqlCoreSqliteWithUpdateTests
     {
         const string sql = "WITH picked AS (SELECT 7 AS id) UPDATE users SET name = 'changed' " +
                            "WHERE id IN (SELECT id FROM picked)";
-        var across = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.Sqlite, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("sqlite-update-cross"));
+        var across = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.Sqlite, SqlAgentToolType.Postgres, new SqlPlanValidationContext("sqlite-update-cross"), TestContext.Current.CancellationToken);
         Assert.False(across.Success);
         Assert.NotEmpty(across.TypedDiagnostics);
 

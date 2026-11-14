@@ -64,10 +64,8 @@ public sealed class SqlCoreMySqlInsertCteProfileTests
     {
         const string sql = "INSERT INTO users(id) WITH source_rows AS " +
                            "(SELECT id FROM secret_source) SELECT id FROM source_rows";
-        var denied = SqlCoreFacade.TryCompileDml(sql,
-            SqlAgentToolType.MySQL, SqlAgentToolType.MySQL,
-            new SqlPlanValidationContext("mysql-insert-cte-read-denied",
-                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" }));
+        var denied = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.MySQL, SqlAgentToolType.MySQL, new SqlPlanValidationContext("mysql-insert-cte-read-denied",
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" }), TestContext.Current.CancellationToken);
         Assert.False(denied.Success);
         Assert.NotEmpty(denied.TypedDiagnostics);
     }

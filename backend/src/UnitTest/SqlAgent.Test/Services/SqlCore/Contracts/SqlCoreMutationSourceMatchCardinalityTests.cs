@@ -147,8 +147,7 @@ public sealed class SqlCoreMutationSourceMatchCardinalityTests
     [InlineData(SqlAgentToolType.Firebird)]
     public void SixDialectTablelessQueryHasNoMutationMatchClaim(SqlAgentToolType dialect)
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "SELECT 1;", dialect, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript("SELECT 1;", dialect, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         var stmt = Assert.Single(result.Statements);
         Assert.Equal(SqlCatalogBindingStatus.Verified, stmt.CatalogBinding);
         Assert.Equal(SqlMutationSourceMatchCardinality.NotApplicable, stmt.SourceMatchCardinality);

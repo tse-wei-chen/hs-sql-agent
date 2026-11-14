@@ -71,10 +71,8 @@ public sealed class SqlCoreSqlServerWithInsertSelectTests
     {
         const string sql = "WITH picked AS (SELECT 7 AS id) " +
             "INSERT INTO users(id) OUTPUT INSERTED.id SELECT id FROM picked";
-        var result = SqlCoreFacade.TryCompileDml(sql,
-            SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
-            new SqlPlanValidationContext("sqlserver-cte-insert-output-unproven",
-                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" }));
+        var result = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer, new SqlPlanValidationContext("sqlserver-cte-insert-output-unproven",
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" }), TestContext.Current.CancellationToken);
         Assert.False(result.Success);
         Assert.Contains(result.TypedDiagnostics, diagnostic =>
             diagnostic.Message.Contains("enabled trigger", StringComparison.OrdinalIgnoreCase));
@@ -87,16 +85,13 @@ public sealed class SqlCoreSqlServerWithInsertSelectTests
             "INSERT INTO users(id) SELECT id FROM picked";
         foreach (var allowed in new[] { new[] { "users" }, new[] { "private_source" } })
         {
-            var result = SqlCoreFacade.TryCompileDml(sql,
-                SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
-                new SqlPlanValidationContext("sqlserver-cte-insert-allowlist",
-                    new HashSet<string>(allowed, StringComparer.OrdinalIgnoreCase)));
+            var result = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer, new SqlPlanValidationContext("sqlserver-cte-insert-allowlist",
+                    new HashSet<string>(allowed, StringComparer.OrdinalIgnoreCase)), TestContext.Current.CancellationToken);
             Assert.False(result.Success);
             Assert.NotEmpty(result.TypedDiagnostics);
         }
 
-        var effects = Assert.Single(SqlCoreFacade.AnalyzeScript(sql,
-            SqlAgentToolType.MsSqlServer, SqlCatalogState.Unknown(), Profile()).Statements).DetailedEffects;
+        var effects = Assert.Single(SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.MsSqlServer, SqlCatalogState.Unknown(), Profile(), TestContext.Current.CancellationToken).Statements).DetailedEffects;
         Assert.Contains(effects, e => e.ObjectName == "private_source" &&
             e.Operation == SqlStatementEffectOperation.ReadTable);
         Assert.Contains(effects, e => e.ObjectName == "users" &&
@@ -116,11 +111,9 @@ public sealed class SqlCoreSqlServerWithInsertSelectTests
                 TestContext.Current.CancellationToken));
         Assert.Equal(SqlScriptParseStatus.Invalid, Assert.Single(script.Statements).Status);
         Assert.NotEmpty(script.Diagnostics);
-        var result = SqlCoreFacade.TryCompileDml(sql,
-            SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
-            new SqlPlanValidationContext("sqlserver-cte-insert-write-target",
+        var result = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer, new SqlPlanValidationContext("sqlserver-cte-insert-write-target",
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                { "users", "picked", "private_source" }));
+                { "users", "picked", "private_source" }), TestContext.Current.CancellationToken);
         Assert.False(result.Success);
         Assert.NotEmpty(result.TypedDiagnostics);
     }
@@ -169,7 +162,7 @@ public sealed class SqlCoreSqlServerWithInsertSelectTests
     [InlineData("WITH picked AS (SELECT 7 AS id) SELECT id FROM picked")]
     public void OrdinarySqlServerWithQueryIsNeverReclassifiedAsMutation(string sql)
     {
-        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer, Profile());
+        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer, Profile(), TestContext.Current.CancellationToken);
         var statement = Assert.Single(parsed.Statements);
         Assert.Empty(parsed.Diagnostics);
         Assert.Equal(SqlScriptStatementKind.Query, statement.Kind);
@@ -179,9 +172,7 @@ public sealed class SqlCoreSqlServerWithInsertSelectTests
     [Fact]
     public void OriginalInsertSelectWithoutWithStillWorksWithLegacyProfile()
     {
-        var parsed = SqlCoreFacade.ParseScript(
-            "INSERT INTO users(id) SELECT 7 AS id", SqlAgentToolType.MsSqlServer,
-            new SqlProviderCapabilityProfile(SqlAgentToolType.MsSqlServer, new Version(8, 0)));
+        var parsed = SqlCoreFacade.ParseScript("INSERT INTO users(id) SELECT 7 AS id", SqlAgentToolType.MsSqlServer, new SqlProviderCapabilityProfile(SqlAgentToolType.MsSqlServer, new Version(8, 0)), TestContext.Current.CancellationToken);
         Assert.Equal(SqlScriptParseStatus.Parsed, Assert.Single(parsed.Statements).Status);
     }
 

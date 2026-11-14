@@ -127,19 +127,13 @@ public sealed class RestrictedNativeFunctionQueryTests
     public void StandaloneSqlCore_MySqlNativeFunctionGrammarRetainsDefaultCompatibility()
     {
         const string sql = "SELECT app.temp_side_effect(id) AS affected FROM app.users";
-        var regular = SqlCoreFacade.CompileQuery(
-            sql, SqlAgentToolType.MySQL, SqlAgentToolType.MySQL,
-            new SqlPlanValidationContext("generic-compiler"),
-            new SqlExecutionPlanPolicy(20));
+        var regular = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.MySQL, SqlAgentToolType.MySQL, new SqlPlanValidationContext("generic-compiler"), new SqlExecutionPlanPolicy(20), TestContext.Current.CancellationToken);
         Assert.Contains("temp_side_effect", regular.Sql, StringComparison.OrdinalIgnoreCase);
 
         // The physical Query Host opts into the same typed F# Policy at the
         // public facade boundary without altering standalone SqlCore grammar.
         var error = Assert.Throws<UnauthorizedAccessException>(() =>
-            SqlCoreFacade.CompileQuery(
-                sql, SqlAgentToolType.MySQL, SqlAgentToolType.MySQL,
-                new SqlPlanValidationContext("host-query-guard"),
-                new SqlExecutionPlanPolicy(20, requireProvenMySqlNativeFunctions: true)));
+            SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.MySQL, SqlAgentToolType.MySQL, new SqlPlanValidationContext("host-query-guard"), new SqlExecutionPlanPolicy(20, requireProvenMySqlNativeFunctions: true), TestContext.Current.CancellationToken));
         Assert.IsType<SqlDiagnostic>(error.Data["HsSqlAgent.SqlCore.Diagnostic"]);
 
         var restriction = new SqlExecutionPlanPolicy(
@@ -150,10 +144,7 @@ public sealed class RestrictedNativeFunctionQueryTests
             new SqlExecutionPlanPolicy(20, requireProvenMySqlNativeFunctions: true)
                 .NativeFunctionPolicy);
         var typedError = Assert.Throws<UnauthorizedAccessException>(() =>
-            SqlCoreFacade.CompileQuery(
-                sql, SqlAgentToolType.MySQL, SqlAgentToolType.MySQL,
-                new SqlPlanValidationContext("typed-native-function-boundary"),
-                restriction));
+            SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.MySQL, SqlAgentToolType.MySQL, new SqlPlanValidationContext("typed-native-function-boundary"), restriction, TestContext.Current.CancellationToken));
         Assert.Equal(
             Assert.IsType<SqlDiagnostic>(error.Data["HsSqlAgent.SqlCore.Diagnostic"]).Code,
             Assert.IsType<SqlDiagnostic>(typedError.Data["HsSqlAgent.SqlCore.Diagnostic"]).Code);
@@ -187,10 +178,7 @@ public sealed class RestrictedNativeFunctionQueryTests
 
         // This is not a SqlCore grammar regression: standalone compilation
         // and explicit CLR policy opt-out can still represent native SQL.
-        var generic = SqlCoreFacade.CompileQuery(
-            sql, providerType, providerType,
-            new SqlPlanValidationContext("generic-native-grammar"),
-            new SqlExecutionPlanPolicy(20));
+        var generic = SqlCoreFacade.CompileQuery(sql, providerType, providerType, new SqlPlanValidationContext("generic-native-grammar"), new SqlExecutionPlanPolicy(20), TestContext.Current.CancellationToken);
         Assert.Contains("AUTONOMOUS_WRITE", generic.Sql, StringComparison.OrdinalIgnoreCase);
 
         var builtIn = new TypedQueryRuntime().Compile(
@@ -238,10 +226,7 @@ public sealed class RestrictedNativeFunctionQueryTests
 
         // Host-only policy cannot silently narrow the public standalone
         // SqlCore grammar used for analysis and non-MCP consumers.
-        var standalone = SqlCoreFacade.CompileQuery(
-            opaqueSql, SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
-            new SqlPlanValidationContext("standalone-sqlserver-grammar"),
-            new SqlExecutionPlanPolicy(20));
+        var standalone = SqlCoreFacade.CompileQuery(opaqueSql, SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer, new SqlPlanValidationContext("standalone-sqlserver-grammar"), new SqlExecutionPlanPolicy(20), TestContext.Current.CancellationToken);
         Assert.Contains("leak_secret", standalone.Sql, StringComparison.OrdinalIgnoreCase);
     }
 }

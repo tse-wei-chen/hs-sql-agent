@@ -23,7 +23,7 @@ public sealed class SqlCoreSqliteWithInsertSelectTests
     [InlineData("WITH input_rows AS (SELECT 7 AS id) INSERT INTO users(id) SELECT id FROM input_rows WHERE id > 0 ON CONFLICT(id) DO NOTHING RETURNING id")]
     public void ParseAndAnalyzeSqliteWithInsertAsTypedMutation(string sql)
     {
-        var script = SqlCoreFacade.ParseScript(sql + "; SELECT 2;", SqlAgentToolType.Sqlite, SqliteProfile());
+        var script = SqlCoreFacade.ParseScript(sql + "; SELECT 2;", SqlAgentToolType.Sqlite, SqliteProfile(), TestContext.Current.CancellationToken);
         Assert.Equal(2, script.Statements.Count);
         Assert.Empty(script.Diagnostics);
         Assert.Equal(SqlScriptStatementKind.Mutation, script.Statements[0].Kind);
@@ -31,8 +31,7 @@ public sealed class SqlCoreSqliteWithInsertSelectTests
         Assert.Equal(SqlScriptStatementKind.Query, script.Statements[1].Kind);
         Assert.Equal(sql, script.Statements[0].Text);
 
-        var analyzed = SqlCoreFacade.AnalyzeScript(sql,
-            SqlAgentToolType.Sqlite, SqlCatalogState.Unknown(), SqliteProfile());
+        var analyzed = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Sqlite, SqlCatalogState.Unknown(), SqliteProfile(), TestContext.Current.CancellationToken);
         var statement = Assert.Single(analyzed.Statements);
         Assert.Equal(SqlScriptStatementKind.Mutation, statement.Kind);
         Assert.Equal(SqlScriptParseStatus.Parsed, statement.Syntax.Status);
@@ -68,14 +67,10 @@ public sealed class SqlCoreSqliteWithInsertSelectTests
     {
         const string sql = "WITH input_rows AS (SELECT id FROM secret_source) " +
                            "INSERT INTO users(id) SELECT id FROM input_rows";
-        var noSource = SqlCoreFacade.TryCompileDml(sql,
-            SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite,
-            new SqlPlanValidationContext("sqlite-cte-read-denied",
-                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" }));
-        var noTarget = SqlCoreFacade.TryCompileDml(sql,
-            SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite,
-            new SqlPlanValidationContext("sqlite-cte-write-denied",
-                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "secret_source" }));
+        var noSource = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite, new SqlPlanValidationContext("sqlite-cte-read-denied",
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" }), TestContext.Current.CancellationToken);
+        var noTarget = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite, new SqlPlanValidationContext("sqlite-cte-write-denied",
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "secret_source" }), TestContext.Current.CancellationToken);
 
         Assert.False(noSource.Success);
         Assert.False(noTarget.Success);
@@ -90,7 +85,7 @@ public sealed class SqlCoreSqliteWithInsertSelectTests
             "WITH input_rows AS (SELECT 7 AS id) " +
             "INSERT INTO users(id) SELECT id FROM input_rows " +
             "ON CONFLICT(id) DO NOTHING RETURNING id";
-        var parse = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Sqlite, SqliteProfile());
+        var parse = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Sqlite, SqliteProfile(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlScriptParseStatus.Invalid, Assert.Single(parse.Statements).Status);
         Assert.NotEmpty(parse.Diagnostics);
         Assert.Throws<SqlParseException>(() => CompileWithProfile(
@@ -103,7 +98,7 @@ public sealed class SqlCoreSqliteWithInsertSelectTests
     [InlineData("WITH input_rows AS (DELETE FROM users RETURNING id) INSERT INTO users(id) SELECT id FROM input_rows")]
     public void UnmodeledSqliteMutationCteFormsStayFailClosed(string sql)
     {
-        var parse = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Sqlite);
+        var parse = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Sqlite, TestContext.Current.CancellationToken);
         Assert.NotEqual(SqlScriptParseStatus.Parsed, Assert.Single(parse.Statements).Status);
         Assert.NotEmpty(parse.Diagnostics);
     }
@@ -116,7 +111,7 @@ public sealed class SqlCoreSqliteWithInsertSelectTests
         var sql = "WITH input_rows AS (SELECT 7 AS id) " +
                   "INSERT INTO users(id) SELECT id FROM input_rows" + suffix;
         var oldProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Sqlite, new Version(major, minor));
-        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Sqlite, oldProfile);
+        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Sqlite, oldProfile, TestContext.Current.CancellationToken);
         Assert.Equal(SqlScriptParseStatus.Invalid, Assert.Single(parsed.Statements).Status);
         Assert.NotEmpty(parsed.Diagnostics);
     }
@@ -159,7 +154,7 @@ public sealed class SqlCoreSqliteWithInsertSelectTests
     {
         const string sql = "WITH input_rows AS (SELECT 7 AS id) " +
                            "INSERT INTO users(id) SELECT id FROM input_rows RETURNING id";
-        var parse = SqlCoreFacade.ParseScript(sql, source);
+        var parse = SqlCoreFacade.ParseScript(sql, source, TestContext.Current.CancellationToken);
         Assert.NotEqual(SqlScriptParseStatus.Parsed, Assert.Single(parse.Statements).Status);
     }
 }

@@ -68,15 +68,12 @@ public sealed class SqlCoreSqlServerWithMutationCteTests
                 : "DELETE FROM users WHERE id IN (SELECT id FROM picked)");
         foreach (var tables in new[] { new[] { "users" }, new[] { "secret_source" } })
         {
-            var result = SqlCoreFacade.TryCompileDml(sql,
-                SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
-                new SqlPlanValidationContext("sqlserver-native-cte-policy",
-                    new HashSet<string>(tables, StringComparer.OrdinalIgnoreCase)));
+            var result = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer, new SqlPlanValidationContext("sqlserver-native-cte-policy",
+                    new HashSet<string>(tables, StringComparer.OrdinalIgnoreCase)), TestContext.Current.CancellationToken);
             Assert.False(result.Success);
             Assert.NotEmpty(result.TypedDiagnostics);
         }
-        var statement = Assert.Single(SqlCoreFacade.AnalyzeScript(sql,
-            SqlAgentToolType.MsSqlServer, SqlCatalogState.Unknown(), Profile()).Statements);
+        var statement = Assert.Single(SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.MsSqlServer, SqlCatalogState.Unknown(), Profile(), TestContext.Current.CancellationToken).Statements);
         Assert.Contains(statement.DetailedEffects, e =>
             e.Operation == SqlStatementEffectOperation.ReadTable && e.ObjectName == "secret_source");
         Assert.Contains(statement.DetailedEffects, e =>
@@ -92,9 +89,7 @@ public sealed class SqlCoreSqlServerWithMutationCteTests
     [InlineData("WITH picked AS (SELECT 7 AS id) DELETE FROM users WHERE 1 = 1")]
     public void CteDoesNotBypassSelectiveMutationPolicy(string sql)
     {
-        var result = SqlCoreFacade.TryCompileDml(sql,
-            SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
-            new SqlPlanValidationContext("sqlserver-native-cte-unbounded"));
+        var result = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer, new SqlPlanValidationContext("sqlserver-native-cte-unbounded"), TestContext.Current.CancellationToken);
         Assert.False(result.Success);
         Assert.NotEmpty(result.TypedDiagnostics);
     }
@@ -104,9 +99,7 @@ public sealed class SqlCoreSqlServerWithMutationCteTests
     [InlineData("WITH picked AS (SELECT id FROM physical_source) DELETE FROM users FROM picked WHERE users.id = picked.id")]
     public void JoinedMutationRequiresSeparateProofAndIsRejected(string sql)
     {
-        var result = SqlCoreFacade.TryCompileDml(sql,
-            SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
-            new SqlPlanValidationContext("sqlserver-native-cte-joined"));
+        var result = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer, new SqlPlanValidationContext("sqlserver-native-cte-joined"), TestContext.Current.CancellationToken);
         Assert.False(result.Success);
         Assert.NotEmpty(result.TypedDiagnostics);
     }
@@ -124,11 +117,9 @@ public sealed class SqlCoreSqlServerWithMutationCteTests
         Assert.Equal(SqlScriptParseStatus.Invalid, Assert.Single(parse.Statements).Status);
         Assert.NotEmpty(parse.Diagnostics);
 
-        var compile = SqlCoreFacade.TryCompileDml(sql,
-            SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
-            new SqlPlanValidationContext("cte-write-target-identity",
+        var compile = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer, new SqlPlanValidationContext("cte-write-target-identity",
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                { "picked", "users", "secret_source" }));
+                { "picked", "users", "secret_source" }), TestContext.Current.CancellationToken);
         Assert.False(compile.Success);
         Assert.NotEmpty(compile.TypedDiagnostics);
     }
@@ -151,9 +142,7 @@ public sealed class SqlCoreSqlServerWithMutationCteTests
     public void NativeSqlServerCteMutationsRejectCrossProviderTarget(bool update)
     {
         var sql = update ? Update : Delete;
-        var result = SqlCoreFacade.TryCompileDml(sql,
-            SqlAgentToolType.MsSqlServer, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("sqlserver-native-cte-cross"));
+        var result = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.MsSqlServer, SqlAgentToolType.Postgres, new SqlPlanValidationContext("sqlserver-native-cte-cross"), TestContext.Current.CancellationToken);
         Assert.False(result.Success);
         Assert.NotEmpty(result.TypedDiagnostics);
     }

@@ -97,12 +97,7 @@ public sealed class PostgresCteGrammarMatrixTests
                 actual => string.Equals(actual, table, StringComparison.OrdinalIgnoreCase));
         }
 
-        var command = SqlCoreFacade.CompileQuery(
-            sql,
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("postgres-cte-grammar-matrix-v1"),
-            new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("postgres-cte-grammar-matrix-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         var rendered = command.Sql
             ?? throw new Xunit.Sdk.XunitException($"{name} compiled with a null SQL string.");

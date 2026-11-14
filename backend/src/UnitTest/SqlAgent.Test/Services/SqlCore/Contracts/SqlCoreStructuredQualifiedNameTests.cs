@@ -88,16 +88,12 @@ public sealed class SqlCoreStructuredQualifiedNameTests
         // DROP INDEX without a known schema cannot assert the physical owner
         // of app.idx_real. Use the modeled SET search_path for that operation,
         // then analyze the final independent qualified ALTER from its snapshot.
-        var removed = SqlCoreFacade.AnalyzeScript(
-            "SET search_path TO app; DROP INDEX idx_real;",
-            SqlAgentToolType.Postgres, original.FinalCatalog);
+        var removed = SqlCoreFacade.AnalyzeScript("SET search_path TO app; DROP INDEX idx_real;", SqlAgentToolType.Postgres, original.FinalCatalog, TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, removed.Statements[0].Status);
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, removed.Statements[1].Status);
         Assert.Equal(SqlCatalogOperation.DropIndex,
             Assert.Single(removed.Statements[1].Changes).Operation);
-        var final = SqlCoreFacade.AnalyzeScript(
-            "ALTER TABLE app.users DROP COLUMN id;",
-            SqlAgentToolType.Postgres, removed.FinalCatalog);
+        var final = SqlCoreFacade.AnalyzeScript("ALTER TABLE app.users DROP COLUMN id;", SqlAgentToolType.Postgres, removed.FinalCatalog, TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed,
             Assert.Single(final.Statements).Status);
         Assert.All(final.FinalCatalog.Tables, t => Assert.Single(t.Columns));
@@ -162,8 +158,7 @@ public sealed class SqlCoreStructuredQualifiedNameTests
     {
         var sql = $"CREATE TABLE \"{schema}.{table}\"(id {typeName});" +
                   $"CREATE TABLE {schema}.{table}(id {typeName});";
-        var result = SqlCoreFacade.AnalyzeScript(
-            sql, dialect, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript(sql, dialect, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Empty(result.Diagnostics);
         Assert.Equal(2, result.FinalCatalog.Tables.Count);
         Assert.Contains(result.FinalCatalog.Tables, t => t.QualifiedName.Parts.Count == 1);

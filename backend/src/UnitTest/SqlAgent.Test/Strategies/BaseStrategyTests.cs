@@ -950,11 +950,8 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
                     ])
             ]);
 
-        var compiled = SqlCoreFacade.CompileQuery(
-            sql, provider, provider,
-            new SqlPlanValidationContext("native-execution-v1")
-                .WithSchemaSnapshot(snapshot),
-            new SqlExecutionPlanPolicy(0));
+        var compiled = SqlCoreFacade.CompileQuery(sql, provider, provider, new SqlPlanValidationContext("native-execution-v1")
+                .WithSchemaSnapshot(snapshot), new SqlExecutionPlanPolicy(0), TestContext.Current.CancellationToken);
         Assert.Empty(compiled.Parameters);
 
         await using var connection = ProviderStrategy.CreateConnection(Fixture.ConnectionString);
@@ -1033,8 +1030,7 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
 
             foreach (var (sql, expectedNames) in cases)
             {
-                var compiled = SqlCoreFacade.CompileQuery(
-                    sql, source, target, context, new SqlExecutionPlanPolicy(0));
+                var compiled = SqlCoreFacade.CompileQuery(sql, source, target, context, new SqlExecutionPlanPolicy(0), TestContext.Current.CancellationToken);
 
                 // This first six-by-six intersection deliberately has no SQL
                 // parameters. Parameterized cases need separate provider rules.

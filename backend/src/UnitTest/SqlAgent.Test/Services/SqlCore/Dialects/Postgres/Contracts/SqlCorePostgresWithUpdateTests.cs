@@ -21,13 +21,13 @@ public sealed class SqlCorePostgresWithUpdateTests
     [InlineData("WITH selected(id) AS (SELECT 7) UPDATE users AS u SET name = 'done' FROM selected s WHERE u.id = s.id RETURNING u.id")]
     public void ScriptClassifiesPostgresReadOnlyWithUpdateAsMutation(string sql)
     {
-        var script = SqlCoreFacade.ParseScript(sql + "; SELECT 2", SqlAgentToolType.Postgres);
+        var script = SqlCoreFacade.ParseScript(sql + "; SELECT 2", SqlAgentToolType.Postgres, TestContext.Current.CancellationToken);
         Assert.Empty(script.Diagnostics);
         Assert.Equal(2, script.Statements.Count);
         Assert.Equal(SqlScriptStatementKind.Mutation, script.Statements[0].Kind);
         Assert.Equal(SqlScriptParseStatus.Parsed, script.Statements[0].Status);
         Assert.Equal(SqlScriptStatementKind.Query, script.Statements[1].Kind);
-        var analysis = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Postgres, SqlCatalogState.Unknown());
+        var analysis = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Postgres, SqlCatalogState.Unknown(), TestContext.Current.CancellationToken);
         Assert.True(Assert.Single(analysis.Statements).Effects.HasFlag(SqlEffectKind.WriteData));
     }
 
@@ -36,10 +36,8 @@ public sealed class SqlCorePostgresWithUpdateTests
     {
         const string sql = "WITH selected AS (SELECT 7 AS id) " +
                            "UPDATE users SET name = 'done' FROM selected AS s WHERE users.id = s.id RETURNING users.id";
-        var command = SqlCoreFacade.CompileDml(sql,
-            SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("postgres-with-update",
-                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" }));
+        var command = SqlCoreFacade.CompileDml(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("postgres-with-update",
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" }), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementKind.Update, command.Kind);
         Assert.StartsWith("WITH ", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.True(command.Sql.IndexOf("WITH ", StringComparison.OrdinalIgnoreCase) <
@@ -57,10 +55,8 @@ public sealed class SqlCorePostgresWithUpdateTests
     {
         const string sql = "WITH selected AS (SELECT 7 AS id) " +
                            "UPDATE secrets SET name = 'x' FROM selected s WHERE secrets.id = s.id";
-        var result = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("with-update-deny",
-                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "selected", "users" }));
+        var result = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("with-update-deny",
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "selected", "users" }), TestContext.Current.CancellationToken);
         Assert.False(result.Success);
         Assert.Null(result.Value);
         Assert.NotEmpty(result.TypedDiagnostics);
@@ -72,8 +68,7 @@ public sealed class SqlCorePostgresWithUpdateTests
     public void CteCannotBypassBoundedUpdatePolicy(string sql)
     {
         Assert.Throws<UnauthorizedAccessException>(() =>
-            SqlCoreFacade.CompileDml(sql, SqlAgentToolType.Postgres,
-                SqlAgentToolType.Postgres, new SqlPlanValidationContext("with-update-policy")));
+            SqlCoreFacade.CompileDml(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("with-update-policy"), TestContext.Current.CancellationToken));
     }
 
     [Theory]
@@ -82,12 +77,11 @@ public sealed class SqlCorePostgresWithUpdateTests
     [InlineData("WITH x AS (SELECT 1 AS id) MERGE INTO users u USING (VALUES (1)) s(id) ON u.id=s.id WHEN MATCHED THEN DELETE")]
     public void UnmodeledWithMutationsRemainFailClosed(string sql)
     {
-        var script = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres);
+        var script = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres, TestContext.Current.CancellationToken);
         Assert.NotEqual(SqlScriptParseStatus.Parsed, Assert.Single(script.Statements).Status);
         Assert.NotEmpty(script.Diagnostics);
         Assert.ThrowsAny<Exception>(() =>
-            SqlCoreFacade.CompileDml(sql, SqlAgentToolType.Postgres,
-                SqlAgentToolType.Postgres, new SqlPlanValidationContext("with-update-negative")));
+            SqlCoreFacade.CompileDml(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("with-update-negative"), TestContext.Current.CancellationToken));
     }
 
     [Theory]
@@ -98,7 +92,7 @@ public sealed class SqlCorePostgresWithUpdateTests
     {
         const string sql = "WITH x AS (SELECT 7 AS id) " +
                            "UPDATE users SET name = 'x' FROM x WHERE users.id = x.id";
-        var syntax = SqlCoreFacade.ParseScript(sql, provider);
+        var syntax = SqlCoreFacade.ParseScript(sql, provider, TestContext.Current.CancellationToken);
         Assert.NotEqual(SqlScriptParseStatus.Parsed, Assert.Single(syntax.Statements).Status);
     }
 
@@ -118,8 +112,7 @@ public sealed class SqlCorePostgresWithUpdateTests
                            "UPDATE users SET name = 'done' FROM selected s WHERE users.id = s.id";
         var context = new SqlPlanValidationContext("strict-cte-update-schema")
             .WithSchemaSnapshot(snapshot);
-        var command = SqlCoreFacade.CompileDml(sql,
-            SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context);
+        var command = SqlCoreFacade.CompileDml(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementKind.Update, command.Kind);
         Assert.StartsWith("WITH ", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
@@ -129,7 +122,7 @@ public sealed class SqlCorePostgresWithUpdateTests
     {
         const string sql = "WITH selected AS (SELECT id FROM inputs WHERE id = 2) " +
                            "UPDATE users SET name = 'done' FROM selected s WHERE users.id = s.id";
-        var analysis = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Postgres);
+        var analysis = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Postgres, TestContext.Current.CancellationToken);
         var effects = Assert.Single(analysis.Statements).DetailedEffects;
         Assert.Contains(effects, e => e.Operation == SqlStatementEffectOperation.ReadTable
                                       && e.ObjectName == "inputs");
@@ -142,7 +135,7 @@ public sealed class SqlCorePostgresWithUpdateTests
     public void ContextualUpdateCteNameDoesNotChangeSelectFamily()
     {
         const string sql = "WITH update AS (SELECT 7 AS id) SELECT id FROM update";
-        var stmt = Assert.Single(SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres).Statements);
+        var stmt = Assert.Single(SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres, TestContext.Current.CancellationToken).Statements);
         Assert.Equal(SqlScriptStatementKind.Query, stmt.Kind);
         Assert.Equal(SqlScriptParseStatus.Parsed, stmt.Status);
     }

@@ -51,10 +51,9 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         var error = Assert.Throws<SqlCompilationException>(() =>
         {
             if (dml)
-                SqlCoreFacade.CompileDml(sql, dialect, dialect, context);
+                SqlCoreFacade.CompileDml(sql, dialect, dialect, context, TestContext.Current.CancellationToken);
             else
-                SqlCoreFacade.CompileQuery(
-                    sql, dialect, dialect, context, new SqlExecutionPlanPolicy());
+                SqlCoreFacade.CompileQuery(sql, dialect, dialect, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         });
 
         Assert.NotNull(error.Diagnostic);
@@ -70,20 +69,14 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         var valid = "SELECT id FROM users";
         for (var level = 0; level < depth; level++)
             valid = $"SELECT id FROM users UNION ({valid})";
-        var compiled = SqlCoreFacade.CompileQuery(
-            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            Context(SqlAgentToolType.Postgres, typed: true),
-            new SqlExecutionPlanPolicy());
+        var compiled = SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, Context(SqlAgentToolType.Postgres, typed: true), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.NotEmpty(compiled.Sql);
 
         var invalid = "SELECT name + 2 AS id FROM users";
         for (var level = 0; level < depth; level++)
             invalid = $"SELECT id FROM users UNION ({invalid})";
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                Context(SqlAgentToolType.Postgres, typed: true),
-                new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, Context(SqlAgentToolType.Postgres, typed: true), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
     }
 
@@ -97,9 +90,7 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         var sql = "SELECT id FROM users";
         for (var depth = 0; depth < 256; depth++)
             sql = $"WITH c AS ({sql}) SELECT id FROM c";
-        var result = SqlCoreFacade.CompileQuery(
-            sql, dialect, dialect, Context(dialect, typed: true),
-            new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.CompileQuery(sql, dialect, dialect, Context(dialect, typed: true), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.NotEmpty(result.Sql);
     }
 
@@ -113,9 +104,7 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         var sql = "WITH c AS (WITH inner_c AS (SELECT id FROM users) " +
                   "SELECT id FROM inner_c) SELECT id FROM c";
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                sql, dialect, dialect, Context(dialect, typed: true),
-                new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(sql, dialect, dialect, Context(dialect, typed: true), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Contains("select.cte_scope", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -130,9 +119,7 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         for (var depth = 0; depth < 256; depth++)
             query = $"SELECT d.id FROM ({query}) d";
 
-        var compiled = SqlCoreFacade.CompileQuery(
-            query, dialect, dialect, Context(dialect, typed: true),
-            new SqlExecutionPlanPolicy());
+        var compiled = SqlCoreFacade.CompileQuery(query, dialect, dialect, Context(dialect, typed: true), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(compiled.Sql);
     }
@@ -150,16 +137,13 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         var valid = "SELECT id + 1 FROM users";
         for (var i = 0; i < depth; i++)
             valid = "SELECT CASE WHEN 1 = 1 THEN (" + valid + ") ELSE 0 END";
-        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
-            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            context, new SqlExecutionPlanPolicy()).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
 
         var invalid = "SELECT name + 1 FROM users";
         for (var i = 0; i < depth; i++)
             invalid = "SELECT CASE WHEN 1 = 1 THEN (" + invalid + ") ELSE 0 END";
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                context, new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
     }
 
@@ -171,16 +155,13 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         var valid = "SELECT id + 1 FROM users";
         for (var i = 0; i < depth; i++)
             valid = "SELECT (" + valid + ")";
-        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
-            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            context, new SqlExecutionPlanPolicy()).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
 
         var invalid = "SELECT name + 1 FROM users";
         for (var i = 0; i < depth; i++)
             invalid = "SELECT (" + invalid + ")";
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                context, new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
     }
 
@@ -192,17 +173,13 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         var valid = "SELECT id FROM users";
         for (var level = 0; level < depth; level++)
             valid = $"SELECT id FROM users WHERE id IN ({valid})";
-        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
-            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            context, new SqlExecutionPlanPolicy()).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
 
         var invalid = "SELECT name FROM users";
         for (var level = 0; level < depth; level++)
             invalid = $"SELECT id FROM users WHERE id IN ({invalid})";
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                context, new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
     }
     [Fact]
@@ -213,17 +190,13 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         var sql = "SELECT 1 WHERE u.id = 1";
         for (var level = 0; level < depth; level++)
             sql = $"SELECT u.id FROM users u WHERE EXISTS ({sql})";
-        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
-            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            context, new SqlExecutionPlanPolicy()).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
 
         var invalid = "SELECT 1 WHERE u.name + 1 = 0";
         for (var level = 0; level < depth; level++)
             invalid = $"SELECT u.id FROM users u WHERE EXISTS ({invalid})";
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                context, new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
     }
 
@@ -248,16 +221,14 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         var sql = "SELECT b.id FROM users u JOIN LATERAL (" + left
             + ") a ON TRUE JOIN LATERAL (" + right + ") b ON TRUE";
         var context = Context(SqlAgentToolType.Postgres, typed: true);
-        Assert.NotEmpty(SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
 
         var broken = right.Replace("WHERE EXISTS (SELECT x.id)",
             "WHERE EXISTS (SELECT x.id + 'not-numeric')");
         var invalid = "SELECT b.id FROM users u JOIN LATERAL (" + left
             + ") a ON TRUE JOIN LATERAL (" + broken + ") b ON TRUE";
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres,
-                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
     }
 
@@ -278,16 +249,14 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         var sql = "SELECT b.id FROM users u "
             + "JOIN LATERAL (" + left + ") a ON TRUE "
             + "JOIN LATERAL (" + right + ") b ON TRUE";
-        Assert.NotEmpty(SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
 
         var invalid = "SELECT b.id FROM users u "
             + "JOIN LATERAL (" + left + ") a ON TRUE "
             + "JOIN LATERAL (" + right.Replace("SELECT a.id AS id",
                                                 "SELECT a.id + 'invalid' AS id") + ") b ON TRUE";
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres,
-                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
     }
 
@@ -303,14 +272,12 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
             + "JOIN LATERAL (" + sql + ") c ON c.id = b.id";
         var valid = "SELECT b.id AS id";
         for (var i = 0; i < depth; i++) valid = Wrap(valid);
-        Assert.NotEmpty(SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
 
         var invalid = "SELECT b.id + 'not-numeric' AS id";
         for (var i = 0; i < depth; i++) invalid = Wrap(invalid);
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres,
-                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
     }
 
@@ -326,15 +293,13 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         var valid = "SELECT a.id AS id";
         for (var i = 0; i < depth; i++)
             valid = Wrap(valid);
-        Assert.NotEmpty(SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
 
         var invalid = "SELECT a.id + 'not-numeric' AS id";
         for (var i = 0; i < depth; i++)
             invalid = Wrap(invalid);
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres,
-                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
     }
 
@@ -349,15 +314,13 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         var valid = "SELECT v.id AS id";
         for (var level = 0; level < depth; level++)
             valid = Wrap(valid);
-        Assert.NotEmpty(SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
 
         var invalid = "SELECT v.name + 1 AS id";
         for (var level = 0; level < depth; level++)
             invalid = Wrap(invalid);
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres,
-                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
     }
 
@@ -371,17 +334,13 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         var valid = "SELECT u.id AS id";
         for (var level = 0; level < depth; level++)
             valid = Wrap(valid);
-        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
-            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            context, new SqlExecutionPlanPolicy()).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
 
         var invalid = "SELECT u.name + 1 AS id";
         for (var level = 0; level < depth; level++)
             invalid = Wrap(invalid);
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                context, new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
         Assert.Equal(SqlDiagnosticStage.SemanticValidation, error.Diagnostic?.Stage);
     }
@@ -393,15 +352,11 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
     {
         var suffix = string.Concat(Enumerable.Repeat(" AND id = 1", 384));
         var sql = "SELECT id FROM users WHERE id = 1" + suffix;
-        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
-            sql, dialect, dialect, Context(dialect, typed: true),
-            new SqlExecutionPlanPolicy()).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(sql, dialect, dialect, Context(dialect, typed: true), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
 
         var invalid = "SELECT id FROM users WHERE name + 2 = 1" + suffix;
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                invalid, dialect, dialect, Context(dialect, typed: true),
-                new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalid, dialect, dialect, Context(dialect, typed: true), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
     }
 
@@ -411,22 +366,15 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         SqlAgentToolType dialect)
     {
         var context = Context(dialect, typed: true);
-        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
-            "SELECT id, name FROM users WHERE id = 7 AND name = 'Alice'",
-            dialect, dialect, context, new SqlExecutionPlanPolicy()).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery("SELECT id, name FROM users WHERE id = 7 AND name = 'Alice'", dialect, dialect, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
 
-        Assert.NotEmpty(SqlCoreFacade.CompileDml(
-            "UPDATE users SET name = 'Alice' WHERE id = 7",
-            dialect, dialect, context).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileDml("UPDATE users SET name = 'Alice' WHERE id = 7", dialect, dialect, context, TestContext.Current.CancellationToken).Sql);
 
-        Assert.NotEmpty(SqlCoreFacade.CompileDml(
-            "INSERT INTO users (id, name) VALUES (7, 'Alice')",
-            dialect, dialect, context).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileDml("INSERT INTO users (id, name) VALUES (7, 'Alice')", dialect, dialect, context, TestContext.Current.CancellationToken).Sql);
 
         var parsed = CoreSqlTextParser.ParseQuery(
             "SELECT id FROM users WHERE id = 7", dialect);
-        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
-            parsed, dialect, context, new SqlExecutionPlanPolicy()).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(parsed, dialect, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
     }
 
     [Theory]
@@ -444,7 +392,7 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         foreach (var sql in sqls)
         {
             var error = Assert.Throws<SqlCompilationException>(() =>
-                SqlCoreFacade.CompileDml(sql, dialect, dialect, context));
+                SqlCoreFacade.CompileDml(sql, dialect, dialect, context, TestContext.Current.CancellationToken));
             Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
             Assert.Equal(SqlDiagnosticStage.SemanticValidation, error.Diagnostic?.Stage);
         }
@@ -463,12 +411,10 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         };
 
         foreach (var sql in sqls)
-            Assert.NotEmpty(SqlCoreFacade.CompileDml(sql, dialect, dialect, context).Sql);
+            Assert.NotEmpty(SqlCoreFacade.CompileDml(sql, dialect, dialect, context, TestContext.Current.CancellationToken).Sql);
 
         // A name-only snapshot cannot prove a type-family mismatch.
-        Assert.NotEmpty(SqlCoreFacade.CompileDml(
-            "INSERT INTO users (name) SELECT id FROM users",
-            dialect, dialect, Context(dialect, typed: false)).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileDml("INSERT INTO users (name) SELECT id FROM users", dialect, dialect, Context(dialect, typed: false), TestContext.Current.CancellationToken).Sql);
     }
 
     [Theory]
@@ -477,9 +423,7 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         SqlAgentToolType dialect)
     {
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileDml(
-                "INSERT INTO users (name) SELECT id, name FROM users",
-                dialect, dialect, Context(dialect, typed: true)));
+            SqlCoreFacade.CompileDml("INSERT INTO users (name) SELECT id, name FROM users", dialect, dialect, Context(dialect, typed: true), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_SHAPE_UNPROVABLE", error.Diagnostic?.Code);
         Assert.Equal(SqlDiagnosticStage.Binding, error.Diagnostic?.Stage);
     }
@@ -489,10 +433,7 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
     {
         var sql = "SELECT id FROM users WHERE id = 'bad'";
         var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres);
-        var command = SqlCoreFacade.CompileQuery(
-            parsed, SqlAgentToolType.Postgres,
-            Context(SqlAgentToolType.Postgres, typed: false),
-            new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery(parsed, SqlAgentToolType.Postgres, Context(SqlAgentToolType.Postgres, typed: false), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.NotEmpty(command.Sql);
     }
 
@@ -502,8 +443,7 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         SqlAgentToolType dialect)
     {
         var context = Context(dialect, typed: true);
-        var command = SqlCoreFacade.CompileDml(
-            "DELETE FROM users WHERE id = 7", dialect, dialect, context);
+        var command = SqlCoreFacade.CompileDml("DELETE FROM users WHERE id = 7", dialect, dialect, context, TestContext.Current.CancellationToken);
 
         // Preview/commit intentionally compute the fingerprint from the approved command.
         // The schema proof must not disappear at that boundary.
@@ -519,14 +459,8 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
     [Fact]
     public void TypeProofChangesAlterPlanAndEvidenceIdentity()
     {
-        var typed = SqlCoreFacade.CompileQuery(
-            "SELECT id FROM users", SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres, Context(SqlAgentToolType.Postgres, typed: true),
-            new SqlExecutionPlanPolicy());
-        var untyped = SqlCoreFacade.CompileQuery(
-            "SELECT id FROM users", SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres, Context(SqlAgentToolType.Postgres, typed: false),
-            new SqlExecutionPlanPolicy());
+        var typed = SqlCoreFacade.CompileQuery("SELECT id FROM users", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, Context(SqlAgentToolType.Postgres, typed: true), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
+        var untyped = SqlCoreFacade.CompileQuery("SELECT id FROM users", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, Context(SqlAgentToolType.Postgres, typed: false), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.NotEqual(typed.PlanFingerprint, untyped.PlanFingerprint);
         Assert.NotNull(typed.CompileEvidence);
         Assert.NotNull(untyped.CompileEvidence);
@@ -574,9 +508,7 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         SqlAgentToolType dialect, string sql)
     {
         var exception = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                sql, dialect, dialect, Context(dialect, typed: true),
-                new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(sql, dialect, dialect, Context(dialect, typed: true), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", exception.Diagnostic?.Code);
         Assert.Equal(SqlDiagnosticStage.SemanticValidation, exception.Diagnostic?.Stage);
     }
@@ -595,9 +527,7 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         };
         foreach (var sql in sqls)
         {
-            var command = SqlCoreFacade.CompileQuery(
-                sql, dialect, dialect, Context(dialect, typed: true),
-                new SqlExecutionPlanPolicy());
+            var command = SqlCoreFacade.CompileQuery(sql, dialect, dialect, Context(dialect, typed: true), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
             Assert.NotEmpty(command.Sql);
         }
     }
@@ -638,8 +568,7 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
             "WITH x AS (SELECT * FROM users u JOIN orders o USING (id)) SELECT id FROM x WHERE id = 7"
         };
         foreach (var sql in valid)
-            Assert.NotEmpty(SqlCoreFacade.CompileQuery(
-                sql, dialect, dialect, context, new SqlExecutionPlanPolicy()).Sql);
+            Assert.NotEmpty(SqlCoreFacade.CompileQuery(sql, dialect, dialect, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
 
         var invalid = new[]
         {
@@ -652,8 +581,7 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         foreach (var sql in invalid)
         {
             var error = Assert.Throws<SqlCompilationException>(() =>
-                SqlCoreFacade.CompileQuery(
-                    sql, dialect, dialect, context, new SqlExecutionPlanPolicy()));
+                SqlCoreFacade.CompileQuery(sql, dialect, dialect, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
             Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
             Assert.Equal(SqlDiagnosticStage.SemanticValidation, error.Diagnostic?.Stage);
         }
@@ -677,8 +605,7 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
             "WITH x AS (SELECT * FROM users u NATURAL JOIN orders o) SELECT id FROM x WHERE id = 7"
         };
         foreach (var sql in valid)
-            Assert.NotEmpty(SqlCoreFacade.CompileQuery(
-                sql, dialect, dialect, context, new SqlExecutionPlanPolicy()).Sql);
+            Assert.NotEmpty(SqlCoreFacade.CompileQuery(sql, dialect, dialect, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
 
         var incompatible = new[]
         {
@@ -689,8 +616,7 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         foreach (var sql in incompatible)
         {
             var error = Assert.Throws<SqlCompilationException>(() =>
-                SqlCoreFacade.CompileQuery(
-                    sql, dialect, dialect, context, new SqlExecutionPlanPolicy()));
+                SqlCoreFacade.CompileQuery(sql, dialect, dialect, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
             Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
         }
     }
@@ -725,9 +651,7 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         foreach (var sql in statements)
         {
             var error = Assert.Throws<SqlCompilationException>(() =>
-                SqlCoreFacade.CompileQuery(
-                    sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                    context, new SqlExecutionPlanPolicy()));
+                SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
             Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
         }
     }

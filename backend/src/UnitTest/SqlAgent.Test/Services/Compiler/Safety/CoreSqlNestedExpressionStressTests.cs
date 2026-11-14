@@ -57,12 +57,9 @@ public sealed class CoreSqlNestedExpressionStressTests
             "WITH first_cte (a) AS (SELECT 1), "
             + "second_cte (b) AS (SELECT a FROM first_cte) "
             + "SELECT b FROM second_cte";
-        var result = SqlCoreFacade.CompileQuery(
-            sql, dialect, dialect,
-            new SqlPlanValidationContext("iterative-cte-parse-v1"),
-            new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.CompileQuery(sql, dialect, dialect, new SqlPlanValidationContext("iterative-cte-parse-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.Contains("WITH", result.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(1, result.Parameters.Length);
+        Assert.Single(result.Parameters);
     }
 
     [Theory]
@@ -114,12 +111,10 @@ public sealed class CoreSqlNestedExpressionStressTests
         var sql = "SELECT " + new string('(', depth) + "1" + new string(')', depth);
         var context = new SqlPlanValidationContext("iterative-grouping-v1");
 
-        var compiled = SqlCoreFacade.CompileQuery(
-            sql, dialect, dialect, context, new SqlExecutionPlanPolicy());
+        var compiled = SqlCoreFacade.CompileQuery(sql, dialect, dialect, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.NotEmpty(compiled.Sql);
         Assert.Equal(
-            SqlCoreFacade.CompileQuery(
-                "SELECT 1", dialect, dialect, context, new SqlExecutionPlanPolicy()).Sql,
+            SqlCoreFacade.CompileQuery("SELECT 1", dialect, dialect, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql,
             compiled.Sql);
     }
 
@@ -188,11 +183,7 @@ public sealed class CoreSqlNestedExpressionStressTests
     public void NestedUnarySigns_PreserveLiteralFoldingAndCastPrecedence(
         SqlAgentToolType dialect)
     {
-        var compiled = SqlCoreFacade.CompileQuery(
-            "SELECT - - 7",
-            dialect, dialect,
-            new SqlPlanValidationContext("iterative-unary-sign-v1"),
-            new SqlExecutionPlanPolicy());
+        var compiled = SqlCoreFacade.CompileQuery("SELECT - - 7", dialect, dialect, new SqlPlanValidationContext("iterative-unary-sign-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.NotEmpty(compiled.Sql);
         Assert.Contains(compiled.Parameters, parameter => Convert.ToInt64(parameter.Value) == -7L);
     }
@@ -238,11 +229,7 @@ public sealed class CoreSqlNestedExpressionStressTests
             predicate = $"(id = {index}{op}{predicate})";
         }
 
-        var command = SqlCoreFacade.CompileQuery(
-            "SELECT id FROM users WHERE " + predicate,
-            dialect, dialect,
-            new SqlPlanValidationContext("iterative-boolean-graph-v1"),
-            new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery("SELECT id FROM users WHERE " + predicate, dialect, dialect, new SqlPlanValidationContext("iterative-boolean-graph-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(command.Sql);
         Assert.Equal(depth, command.Parameters.Length);
@@ -280,11 +267,7 @@ public sealed class CoreSqlNestedExpressionStressTests
         const int depth = 256;
         var expression = "id" + string.Concat(
             Enumerable.Range(1, depth).Select(value => " + " + value));
-        var command = SqlCoreFacade.CompileQuery(
-            "SELECT " + expression + " FROM users",
-            dialect, dialect,
-            new SqlPlanValidationContext("iterative-postorder-binary-v1"),
-            new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery("SELECT " + expression + " FROM users", dialect, dialect, new SqlPlanValidationContext("iterative-postorder-binary-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(command.Sql);
         Assert.Equal(depth, command.Parameters.Length);
@@ -304,11 +287,7 @@ public sealed class CoreSqlNestedExpressionStressTests
         for (var index = 1; index <= depth; index++)
             expression += operators[(index - 1) % operators.Length] + index;
 
-        var command = SqlCoreFacade.CompileQuery(
-            "SELECT " + expression + " FROM users",
-            dialect, dialect,
-            new SqlPlanValidationContext("iterative-arithmetic-render-v1"),
-            new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery("SELECT " + expression + " FROM users", dialect, dialect, new SqlPlanValidationContext("iterative-arithmetic-render-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(command.Sql);
         Assert.Equal(depth, command.Parameters.Length);
@@ -345,12 +324,8 @@ public sealed class CoreSqlNestedExpressionStressTests
     {
         // CASE arms and WHERE predicates include branching nodes rather
         // than a trivially linear expression chain.
-        var command = SqlCoreFacade.CompileQuery(
-            "SELECT CASE WHEN id = 1 THEN COALESCE(id, 2) ELSE 3 END FROM users "
-            + "WHERE id BETWEEN 4 AND 5 AND id IN (6, 7)",
-            dialect, dialect,
-            new SqlPlanValidationContext("iterative-postorder-mixed-v1"),
-            new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery("SELECT CASE WHEN id = 1 THEN COALESCE(id, 2) ELSE 3 END FROM users "
+            + "WHERE id BETWEEN 4 AND 5 AND id IN (6, 7)", dialect, dialect, new SqlPlanValidationContext("iterative-postorder-mixed-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.Equal(
             new long[] { 1, 2, 3, 4, 5, 6, 7 },
@@ -370,10 +345,7 @@ public sealed class CoreSqlNestedExpressionStressTests
         // proveOrderingExpr rather than rejecting safely.
         var sql = "SELECT id FROM users WHERE "
             + string.Join(" AND ", Enumerable.Repeat("id = 7", 128));
-        var command = SqlCoreFacade.CompileQuery(
-            sql, dialect, dialect,
-            new SqlPlanValidationContext("iterative-ordering-proof-v1"),
-            new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery(sql, dialect, dialect, new SqlPlanValidationContext("iterative-ordering-proof-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.NotEmpty(command.Sql);
         Assert.Equal(128, command.Parameters.Length);
     }
@@ -390,10 +362,7 @@ public sealed class CoreSqlNestedExpressionStressTests
             + "SELECT id FROM archived WHERE id = 1 "
             + "UNION ALL SELECT id FROM old_archive WHERE id = 2"
             + ") AS d WHERE d.id = u.id) AND u.id > 3";
-        var result = SqlCoreFacade.CompileQuery(
-            sql, dialect, dialect,
-            new SqlPlanValidationContext("iterative-mixed-query-graph-v1"),
-            new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.CompileQuery(sql, dialect, dialect, new SqlPlanValidationContext("iterative-mixed-query-graph-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.Contains("EXISTS", result.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("UNION ALL", result.Sql, StringComparison.OrdinalIgnoreCase);
@@ -409,10 +378,7 @@ public sealed class CoreSqlNestedExpressionStressTests
         var sql = "WITH scoped_rows (row_key) AS ("
             + "SELECT id FROM archived WHERE id = 7) "
             + "SELECT row_key FROM scoped_rows WHERE row_key > 9";
-        var result = SqlCoreFacade.CompileQuery(
-            sql, dialect, dialect,
-            new SqlPlanValidationContext("iterative-mixed-query-graph-v1"),
-            new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.CompileQuery(sql, dialect, dialect, new SqlPlanValidationContext("iterative-mixed-query-graph-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.Contains("WITH", result.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("row_key", result.Sql, StringComparison.OrdinalIgnoreCase);
@@ -430,10 +396,7 @@ public sealed class CoreSqlNestedExpressionStressTests
             + "SELECT id FROM archived UNION ALL "
             + "SELECT id, name FROM old_archive) AS d)";
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                sql, dialect, dialect,
-                new SqlPlanValidationContext("iterative-mixed-query-graph-v1"),
-                new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(sql, dialect, dialect, new SqlPlanValidationContext("iterative-mixed-query-graph-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
 
         Assert.Contains("projection width", error.Message,
             StringComparison.OrdinalIgnoreCase);
@@ -447,10 +410,7 @@ public sealed class CoreSqlNestedExpressionStressTests
         var sql = "WITH scoped_rows (first_id, second_id) AS ("
             + "SELECT id FROM archived) SELECT first_id FROM scoped_rows";
         var error = Assert.ThrowsAny<Exception>(() =>
-            SqlCoreFacade.CompileQuery(
-                sql, dialect, dialect,
-                new SqlPlanValidationContext("iterative-mixed-query-graph-v1"),
-                new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(sql, dialect, dialect, new SqlPlanValidationContext("iterative-mixed-query-graph-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
 
         Assert.Contains("column alias", error.Message,
             StringComparison.OrdinalIgnoreCase);
@@ -470,10 +430,7 @@ public sealed class CoreSqlNestedExpressionStressTests
             + "WHERE d.id = u.id) AND EXISTS ("
             + "SELECT a.id FROM accounts AS a WHERE a.id = u.id) "
             + "AND u.id > 3";
-        var command = SqlCoreFacade.CompileQuery(
-            sql, dialect, dialect,
-            new SqlPlanValidationContext("scope-aware-mixed-binder-v1"),
-            new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery(sql, dialect, dialect, new SqlPlanValidationContext("scope-aware-mixed-binder-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.Contains("UNION ALL", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("EXISTS", command.Sql, StringComparison.OrdinalIgnoreCase);
@@ -489,10 +446,7 @@ public sealed class CoreSqlNestedExpressionStressTests
         var sql = "WITH scoped AS (SELECT id FROM users WHERE id = 11) "
             + "SELECT s.id FROM scoped AS s WHERE EXISTS ("
             + "SELECT o.id FROM orders AS o WHERE o.id = s.id)";
-        var command = SqlCoreFacade.CompileQuery(
-            sql, dialect, dialect,
-            new SqlPlanValidationContext("scope-aware-mixed-binder-v1"),
-            new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery(sql, dialect, dialect, new SqlPlanValidationContext("scope-aware-mixed-binder-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.Contains("WITH", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Single(command.Parameters);
@@ -511,10 +465,7 @@ public sealed class CoreSqlNestedExpressionStressTests
             + "CROSS JOIN LATERAL (SELECT z.id FROM (" + query
             + ") AS z WHERE z.id = s.id) AS x "
             + "WHERE s.id > 3";
-        var result = SqlCoreFacade.CompileQuery(
-            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("mixed-join-query-proof-v1"),
-            new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("mixed-join-query-proof-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.Contains("LATERAL", result.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("UNION ALL", result.Sql, StringComparison.OrdinalIgnoreCase);
@@ -532,10 +483,7 @@ public sealed class CoreSqlNestedExpressionStressTests
         // Both directions of the CTE/derived crossing must share one
         // output buffer while preserving the original innermost-first
         // binding semantics for CTE bodies and WHERE predicates.
-        var result = SqlCoreFacade.CompileQuery(
-            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("mixed-cte-derived-emitter-v1"),
-            new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("mixed-cte-derived-emitter-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.Contains("WITH", result.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("FROM (", result.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(new long[] { 1, 2, 3 },
@@ -553,10 +501,7 @@ public sealed class CoreSqlNestedExpressionStressTests
                 ? $"SELECT d.id FROM ({sql}) AS d"
                 : $"WITH c AS ({sql}) SELECT id FROM c";
 
-        var result = SqlCoreFacade.CompileQuery(
-            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("mixed-join-query-proof-v1"),
-            new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("mixed-join-query-proof-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(result.Sql);
     }
@@ -570,10 +515,7 @@ public sealed class CoreSqlNestedExpressionStressTests
         var predicate = string.Join(" AND ",
             Enumerable.Repeat("id = 7", 512));
         var sql = "SELECT SUM(id) FILTER (WHERE " + predicate + ") FROM users";
-        var command = SqlCoreFacade.CompileQuery(
-            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("iterative-filter-predicate-v1"),
-            new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("iterative-filter-predicate-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.Contains("FILTER", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(512, command.Parameters.Length);
     }
@@ -584,10 +526,7 @@ public sealed class CoreSqlNestedExpressionStressTests
         var sql = "SELECT u.id, q.id, r.id FROM users AS u "
             + "CROSS JOIN LATERAL (SELECT u.id AS id) AS q "
             + "LEFT JOIN LATERAL (SELECT q.id AS id) AS r ON r.id = q.id";
-        var command = SqlCoreFacade.CompileQuery(
-            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("scope-aware-mixed-binder-v1"),
-            new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("scope-aware-mixed-binder-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.Contains("CROSS JOIN LATERAL", command.Sql,
             StringComparison.OrdinalIgnoreCase);
@@ -660,10 +599,7 @@ public sealed class CoreSqlNestedExpressionStressTests
             $"INNER JOIN parts AS p{index} ON p{index}.id = {index}");
         var sql = "SELECT u.id FROM users AS u "
             + string.Join(" ", clauses) + " WHERE u.id = 99";
-        var result = SqlCoreFacade.CompileQuery(
-            sql, dialect, dialect,
-            new SqlPlanValidationContext("streaming-wide-select-v1"),
-            new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.CompileQuery(sql, dialect, dialect, new SqlPlanValidationContext("streaming-wide-select-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.Equal(joinCount,
             result.Sql.Split("INNER JOIN", StringSplitOptions.None).Length - 1);
@@ -681,10 +617,7 @@ public sealed class CoreSqlNestedExpressionStressTests
         var branches = Enumerable.Range(1, branchCount)
             .Select(index => $"SELECT id FROM users WHERE id = {index}");
         var sql = string.Join(" UNION ALL ", branches);
-        var result = SqlCoreFacade.CompileQuery(
-            sql, dialect, dialect,
-            new SqlPlanValidationContext("streaming-wide-set-v1"),
-            new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.CompileQuery(sql, dialect, dialect, new SqlPlanValidationContext("streaming-wide-set-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.Equal(branchCount - 1,
             result.Sql.Split("UNION ALL", StringSplitOptions.None).Length - 1);
@@ -708,10 +641,7 @@ public sealed class CoreSqlNestedExpressionStressTests
             + string.Concat(prefixes)
             + "SELECT u.id" + new string(')', depth + 1);
 
-        var result = SqlCoreFacade.CompileQuery(
-            sql, dialect, dialect,
-            new SqlPlanValidationContext("streaming-exists-query-v1"),
-            new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.CompileQuery(sql, dialect, dialect, new SqlPlanValidationContext("streaming-exists-query-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.Equal(
             Enumerable.Range(1, depth).Select(i => (long)i),
@@ -733,10 +663,7 @@ public sealed class CoreSqlNestedExpressionStressTests
             + "SELECT 1 WHERE EXISTS ("
             + "SELECT 2 WHERE EXISTS ("
             + "SELECT a.id FROM archived AS a WHERE a.id = u.id AND a.id > 3)))";
-        var result = SqlCoreFacade.CompileQuery(
-            sql, dialect, dialect,
-            new SqlPlanValidationContext("streaming-exists-query-v1"),
-            new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.CompileQuery(sql, dialect, dialect, new SqlPlanValidationContext("streaming-exists-query-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.Equal(new long[] { 1, 2, 3 },
             result.Parameters.Select(p => Convert.ToInt64(p.Value)));
@@ -755,10 +682,7 @@ public sealed class CoreSqlNestedExpressionStressTests
         var sql = "SELECT u.id FROM users u WHERE EXISTS ("
             + string.Concat(Enumerable.Repeat("SELECT 1 WHERE EXISTS (", depth))
             + "SELECT u.id" + new string(')', depth + 1);
-        var command = SqlCoreFacade.CompileQuery(
-            sql, dialect, dialect,
-            new SqlPlanValidationContext("mixed-binder-depth-v1"),
-            new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery(sql, dialect, dialect, new SqlPlanValidationContext("mixed-binder-depth-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(command.Sql);
         Assert.Equal(depth + 1,
@@ -772,10 +696,7 @@ public sealed class CoreSqlNestedExpressionStressTests
                   "WITH inner_cte AS (SELECT 11 AS a, 22 AS b) " +
                   "SELECT a FROM inner_cte WHERE b = 33" +
                   ") SELECT a FROM outer_cte WHERE a = 44";
-        var command = SqlCoreFacade.CompileQuery(
-            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("nested-cte-parameter-order-v1"),
-            new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("nested-cte-parameter-order-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.Equal(4, command.Parameters.Count());
         Assert.Equal(new long[] { 11, 22, 33, 44 },
             command.Parameters.Select(item => Convert.ToInt64(item.Value)).ToArray());
@@ -789,10 +710,7 @@ public sealed class CoreSqlNestedExpressionStressTests
         var query = "SELECT id FROM users";
         for (var i = 1; i <= 64; i++)
             query = $"SELECT d.id FROM ({query}) d WHERE d.id > {i}";
-        var compiled = SqlCoreFacade.CompileQuery(
-            query, dialect, dialect,
-            new SqlPlanValidationContext("derived-where-stream-v1"),
-            new SqlExecutionPlanPolicy());
+        var compiled = SqlCoreFacade.CompileQuery(query, dialect, dialect, new SqlPlanValidationContext("derived-where-stream-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.Equal(64, compiled.Sql.Split(" WHERE ", StringSplitOptions.None).Length - 1);
         Assert.Equal(Enumerable.Range(1, 64).Select(i => (long)i),
             compiled.Parameters.Select(parameter => Convert.ToInt64(parameter.Value)));
@@ -805,10 +723,7 @@ public sealed class CoreSqlNestedExpressionStressTests
         for (var i = 1; i <= 32; i++)
             query = $"SELECT d.id FROM ({query}) d WHERE d.id >= {i} " +
                     $"ORDER BY d.id LIMIT {i + 1}";
-        var compiled = SqlCoreFacade.CompileQuery(
-            query, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("derived-paging-stream-v1"),
-            new SqlExecutionPlanPolicy());
+        var compiled = SqlCoreFacade.CompileQuery(query, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("derived-paging-stream-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         var expected = Enumerable.Range(1, 32)
             .SelectMany(i => new long[] { i, i + 1 });
         Assert.Equal(expected, compiled.Parameters.Select(x => Convert.ToInt64(x.Value)));
@@ -823,10 +738,7 @@ public sealed class CoreSqlNestedExpressionStressTests
         for (var i = 2; i <= depth; i++)
             sql = $"SELECT id FROM users WHERE id = {i} UNION ({sql})";
 
-        var compiled = SqlCoreFacade.CompileQuery(
-            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("nested-set-stream-v1"),
-            new SqlExecutionPlanPolicy());
+        var compiled = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("nested-set-stream-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(compiled.Sql);
         Assert.Equal(depth - 1,
@@ -842,10 +754,7 @@ public sealed class CoreSqlNestedExpressionStressTests
         var query = "SELECT id FROM users";
         for (var level = 0; level < depth; level++)
             query = $"WITH c AS ({query}) SELECT id FROM c";
-        var compiled = SqlCoreFacade.CompileQuery(
-            query, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("nested-cte-render-v1"),
-            new SqlExecutionPlanPolicy());
+        var compiled = SqlCoreFacade.CompileQuery(query, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("nested-cte-render-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(compiled.Sql);
         Assert.Equal(depth,
@@ -861,10 +770,7 @@ public sealed class CoreSqlNestedExpressionStressTests
         var query = "SELECT id FROM users";
         for (var i = 0; i < depth; i++)
             query = $"SELECT d.id FROM ({query}) d";
-        var compiled = SqlCoreFacade.CompileQuery(
-            query, dialect, dialect,
-            new SqlPlanValidationContext("derived-render-chain-v1"),
-            new SqlExecutionPlanPolicy());
+        var compiled = SqlCoreFacade.CompileQuery(query, dialect, dialect, new SqlPlanValidationContext("derived-render-chain-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.NotEmpty(compiled.Sql);
         Assert.Equal(depth,
             compiled.Sql.Split(" FROM (", StringSplitOptions.None).Length - 1);
@@ -881,10 +787,7 @@ public sealed class CoreSqlNestedExpressionStressTests
         const int depth = 128;
         var sql = "SELECT " + string.Concat(Enumerable.Repeat("(SELECT ", depth)) +
             "1" + new string(')', depth);
-        var compiled = SqlCoreFacade.CompileQuery(
-            sql, dialect, dialect,
-            new SqlPlanValidationContext("nested-scalar-render-v1"),
-            new SqlExecutionPlanPolicy());
+        var compiled = SqlCoreFacade.CompileQuery(sql, dialect, dialect, new SqlPlanValidationContext("nested-scalar-render-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.NotEmpty(compiled.Sql);
         Assert.Single(compiled.Parameters);
         Assert.Equal(depth + 1, compiled.Sql.Split("SELECT ", StringSplitOptions.None).Length - 1);
@@ -902,10 +805,7 @@ public sealed class CoreSqlNestedExpressionStressTests
             + "u.id" + new string(')', depth)
             + " AS echoed FROM users AS u WHERE u.id = 9";
 
-        var compiled = SqlCoreFacade.CompileQuery(
-            sql, dialect, dialect,
-            new SqlPlanValidationContext("iterative-cross-query-scope-v1"),
-            new SqlExecutionPlanPolicy());
+        var compiled = SqlCoreFacade.CompileQuery(sql, dialect, dialect, new SqlPlanValidationContext("iterative-cross-query-scope-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.Equal(depth + 1, compiled.Sql.Split("SELECT ", StringSplitOptions.None).Length - 1);
         Assert.Single(compiled.Parameters);
@@ -952,9 +852,7 @@ public sealed class CoreSqlNestedExpressionStressTests
             Compile("SELECT (SELECT 1)"),
             Compile("SELECT (SELECT 1) AS outer_value"));
 
-        var pair = SqlCoreFacade.CompileQuery(
-            "SELECT (SELECT 1), (SELECT 2)",
-            dialect, dialect, context, new SqlExecutionPlanPolicy());
+        var pair = SqlCoreFacade.CompileQuery("SELECT (SELECT 1), (SELECT 2)", dialect, dialect, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.Equal(2, pair.Parameters.Length);
     }
 
@@ -971,11 +869,7 @@ public sealed class CoreSqlNestedExpressionStressTests
         for (var index = depth - 1; index >= 1; index--)
             expression = $"id + (-({expression}) + {index})";
 
-        var result = SqlCoreFacade.CompileQuery(
-            "SELECT " + expression + " FROM users",
-            dialect, dialect,
-            new SqlPlanValidationContext("iterative-scalar-render-graph-v1"),
-            new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.CompileQuery("SELECT " + expression + " FROM users", dialect, dialect, new SqlPlanValidationContext("iterative-scalar-render-graph-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.Equal(depth, result.Parameters.Length);
         Assert.Equal(
@@ -993,10 +887,7 @@ public sealed class CoreSqlNestedExpressionStressTests
         var sql = "SELECT id FROM users WHERE "
             + "(id + 1) BETWEEN 2 AND (3 + id) "
             + "AND id IN (4, 5 + 6) AND name LIKE 'a%'";
-        var result = SqlCoreFacade.CompileQuery(
-            sql, dialect, dialect,
-            new SqlPlanValidationContext("iterative-scalar-render-graph-v1"),
-            new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.CompileQuery(sql, dialect, dialect, new SqlPlanValidationContext("iterative-scalar-render-graph-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.Equal(7, result.Parameters.Length);
         Assert.Equal(
@@ -1015,10 +906,7 @@ public sealed class CoreSqlNestedExpressionStressTests
         // in the existing renderer, *before* its left expression is visited.
         var sql = "SELECT (payload -> 'root') ->> 'name' "
             + "FROM events WHERE id = 7";
-        var result = SqlCoreFacade.CompileQuery(
-            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("iterative-scalar-render-graph-v1"),
-            new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("iterative-scalar-render-graph-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.Equal(
             new[] { "name", "root", "7" },
@@ -1041,8 +929,7 @@ public sealed class CoreSqlNestedExpressionStressTests
         };
         foreach (var sql in inputs)
         {
-            var result = SqlCoreFacade.CompileQuery(
-                sql, dialect, dialect, context, new SqlExecutionPlanPolicy());
+            var result = SqlCoreFacade.CompileQuery(sql, dialect, dialect, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
             Assert.NotEmpty(result.Sql);
         }
     }
@@ -1054,9 +941,7 @@ public sealed class CoreSqlNestedExpressionStressTests
         var sql = "SELECT " + new string('(', depth) +
             "(SELECT 1)" + new string(')', depth);
         var context = new SqlPlanValidationContext("iterative-grouping-v1");
-        var compiled = SqlCoreFacade.CompileQuery(
-            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            context, new SqlExecutionPlanPolicy());
+        var compiled = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.NotEmpty(compiled.Sql);
     }
 
@@ -1068,10 +953,7 @@ public sealed class CoreSqlNestedExpressionStressTests
         // Below the independent SQL source-length and token-count limits,
         // but large enough to exhaust a naive recursive-descent call stack.
         var text = "SELECT " + new string('(', 25_000) + "1";
-        var error = Assert.Throws<SqlParseException>(() => SqlCoreFacade.CompileQuery(
-            text, dialect, dialect,
-            new SqlPlanValidationContext("iterative-grouping-v1"),
-            new SqlExecutionPlanPolicy()));
+        var error = Assert.Throws<SqlParseException>(() => SqlCoreFacade.CompileQuery(text, dialect, dialect, new SqlPlanValidationContext("iterative-grouping-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_LEXICAL_UNBALANCED_PARENTHESIS", error.Diagnostic?.Code);
         Assert.Equal(SqlDiagnosticStage.Lexical, error.Diagnostic?.Stage);
     }
@@ -1083,10 +965,7 @@ public sealed class CoreSqlNestedExpressionStressTests
     {
         var sql = "SELECT " + new string('(', 8_193) + "1";
         var error = Assert.Throws<SqlParseException>(() =>
-            SqlCoreFacade.CompileQuery(
-                sql, dialect, dialect,
-                new SqlPlanValidationContext("nesting-budget-v1"),
-                new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(sql, dialect, dialect, new SqlPlanValidationContext("nesting-budget-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
 
         Assert.Equal("SQL_LEXICAL_UNBALANCED_PARENTHESIS", error.Diagnostic?.Code);
         Assert.Equal(SqlDiagnosticCategory.Syntax, error.Diagnostic?.Category);
@@ -1097,10 +976,7 @@ public sealed class CoreSqlNestedExpressionStressTests
     public void ExtraClosingParenthesis_IsRejectedWithTypedLexicalDiagnostic(
         SqlAgentToolType dialect)
     {
-        var error = Assert.Throws<SqlParseException>(() => SqlCoreFacade.CompileQuery(
-            "SELECT 1)", dialect, dialect,
-            new SqlPlanValidationContext("iterative-grouping-v1"),
-            new SqlExecutionPlanPolicy()));
+        var error = Assert.Throws<SqlParseException>(() => SqlCoreFacade.CompileQuery("SELECT 1)", dialect, dialect, new SqlPlanValidationContext("iterative-grouping-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_LEXICAL_UNBALANCED_PARENTHESIS", error.Diagnostic?.Code);
     }
 
@@ -1109,10 +985,7 @@ public sealed class CoreSqlNestedExpressionStressTests
     {
         const int depth = 128;
         var sql = "SELECT " + new string('(', depth) + "1" + new string(')', depth - 1);
-        var error = Assert.Throws<SqlParseException>(() => SqlCoreFacade.CompileQuery(
-            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("iterative-grouping-v1"),
-            new SqlExecutionPlanPolicy()));
+        var error = Assert.Throws<SqlParseException>(() => SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("iterative-grouping-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_LEXICAL_UNBALANCED_PARENTHESIS", error.Diagnostic?.Code);
         Assert.Equal(SqlDiagnosticStage.Lexical, error.Diagnostic?.Stage);
     }

@@ -61,18 +61,14 @@ public sealed class CoreSchemaSnapshotBindingTests
         var valid = "SELECT id FROM users";
         for (var level = 0; level < depth; level++)
             valid = $"SELECT id FROM users UNION ({valid})";
-        var result = SqlCoreFacade.CompileQuery(
-            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.NotEmpty(result.Sql);
 
         var invalid = "SELECT missing FROM users";
         for (var level = 0; level < depth; level++)
             invalid = $"SELECT id FROM users UNION ({invalid})";
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
     }
 
@@ -86,8 +82,7 @@ public sealed class CoreSchemaSnapshotBindingTests
         var sql = "SELECT id FROM users";
         for (var depth = 0; depth < 256; depth++)
             sql = $"WITH c AS ({sql}) SELECT id FROM c";
-        var result = SqlCoreFacade.CompileQuery(
-            sql, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.CompileQuery(sql, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.NotEmpty(result.Sql);
     }
 
@@ -101,9 +96,7 @@ public sealed class CoreSchemaSnapshotBindingTests
         var sql = "WITH c AS (WITH inner_c AS (SELECT id FROM users) " +
                   "SELECT id FROM inner_c) SELECT id FROM c";
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                sql, dialect, dialect, Context(dialect),
-                new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(sql, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Contains("select.cte_scope", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -118,8 +111,7 @@ public sealed class CoreSchemaSnapshotBindingTests
         for (var depth = 0; depth < 256; depth++)
             query = $"SELECT d.id FROM ({query}) d";
 
-        var compiled = SqlCoreFacade.CompileQuery(
-            query, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy());
+        var compiled = SqlCoreFacade.CompileQuery(query, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(compiled.Sql);
     }
@@ -134,13 +126,11 @@ public sealed class CoreSchemaSnapshotBindingTests
         // with a trailing AND still belongs to the expression parser.
         var dialect = SqlAgentToolType.Postgres;
         var sql = "SELECT u.id FROM users u WHERE EXISTS (SELECT u.id) AND u.id = 1";
-        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
-            sql, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy()).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(sql, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
 
         var invalid = "SELECT u.id FROM users u WHERE EXISTS (SELECT u.id) AND u.missing = 1";
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                invalid, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalid, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
     }
 
@@ -151,13 +141,11 @@ public sealed class CoreSchemaSnapshotBindingTests
     {
         var dialect = SqlAgentToolType.Postgres;
         var valid = "SELECT id FROM users WHERE id IN (SELECT user_id FROM orders) AND id = 7";
-        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
-            valid, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy()).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(valid, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
 
         var invalid = "SELECT id FROM users WHERE id IN (SELECT user_id FROM orders) AND missing = 7";
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                invalid, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalid, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
     }
 
@@ -170,16 +158,13 @@ public sealed class CoreSchemaSnapshotBindingTests
         var valid = "SELECT id FROM users";
         for (var i = 0; i < depth; i++)
             valid = "SELECT CASE WHEN 1 = 1 THEN (" + valid + ") ELSE 0 END";
-        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
-            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy()).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
 
         var invalid = "SELECT missing FROM users";
         for (var i = 0; i < depth; i++)
             invalid = "SELECT CASE WHEN 1 = 1 THEN (" + invalid + ") ELSE 0 END";
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
     }
 
@@ -190,16 +175,13 @@ public sealed class CoreSchemaSnapshotBindingTests
         var valid = "SELECT id FROM users";
         for (var i = 0; i < depth; i++)
             valid = "SELECT (" + valid + ")";
-        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
-            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy()).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
 
         var invalid = "SELECT missing FROM users";
         for (var i = 0; i < depth; i++)
             invalid = "SELECT (" + invalid + ")";
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
     }
 
@@ -210,18 +192,14 @@ public sealed class CoreSchemaSnapshotBindingTests
         var valid = "SELECT id FROM users";
         for (var level = 0; level < depth; level++)
             valid = $"SELECT id FROM users WHERE id IN ({valid})";
-        var compiled = SqlCoreFacade.CompileQuery(
-            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy());
+        var compiled = SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.NotEmpty(compiled.Sql);
 
         var invalid = "SELECT missing FROM users";
         for (var level = 0; level < depth; level++)
             invalid = $"SELECT id FROM users WHERE id IN ({invalid})";
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
     }
     [Fact]
@@ -231,18 +209,14 @@ public sealed class CoreSchemaSnapshotBindingTests
         var sql = "SELECT 1 WHERE u.id = 1";
         for (var level = 0; level < depth; level++)
             sql = $"SELECT u.id FROM users u WHERE EXISTS ({sql})";
-        var compiled = SqlCoreFacade.CompileQuery(
-            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy());
+        var compiled = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.Equal(depth, compiled.Sql.Split("EXISTS (", StringSplitOptions.None).Length - 1);
 
         var invalid = "SELECT 1 WHERE u.not_in_schema = 1";
         for (var level = 0; level < depth; level++)
             invalid = $"SELECT u.id FROM users u WHERE EXISTS ({invalid})";
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
     }
 
@@ -267,16 +241,14 @@ public sealed class CoreSchemaSnapshotBindingTests
         var sql = "SELECT b.id FROM users u JOIN LATERAL (" + left
             + ") a ON TRUE JOIN LATERAL (" + right + ") b ON TRUE";
         var context = Context(SqlAgentToolType.Postgres);
-        Assert.NotEmpty(SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
 
         var broken = right.Replace("WHERE EXISTS (SELECT x.id)",
             "WHERE EXISTS (SELECT x.missing)");
         var invalid = "SELECT b.id FROM users u JOIN LATERAL (" + left
             + ") a ON TRUE JOIN LATERAL (" + broken + ") b ON TRUE";
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres,
-                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
     }
 
@@ -297,15 +269,13 @@ public sealed class CoreSchemaSnapshotBindingTests
             + "JOIN LATERAL (" + left + ") a ON TRUE "
             + "JOIN LATERAL (" + right + ") b ON TRUE";
         var context = Context(SqlAgentToolType.Postgres);
-        Assert.NotEmpty(SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
 
         var invalid = "SELECT b.id FROM users u "
             + "JOIN LATERAL (" + left + ") a ON TRUE "
             + "JOIN LATERAL (" + right.Replace("SELECT a.id AS id", "SELECT a.missing AS id") + ") b ON TRUE";
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres,
-                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
     }
 
@@ -321,24 +291,20 @@ public sealed class CoreSchemaSnapshotBindingTests
             + "JOIN LATERAL (" + sql + ") c ON c.id = b.id";
         var valid = "SELECT b.id AS id";
         for (var i = 0; i < depth; i++) valid = Wrap(valid);
-        var result = SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.Equal(depth * 3, result.Sql.Split("LATERAL (", StringSplitOptions.None).Length - 1);
 
         var missing = "SELECT b.missing AS id";
         for (var i = 0; i < depth; i++) missing = Wrap(missing);
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(missing, SqlAgentToolType.Postgres,
-                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(missing, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
 
         var forward = "SELECT c.id FROM users u "
             + "JOIN LATERAL (SELECT b.id AS id) a ON a.id = u.id "
             + "JOIN LATERAL (SELECT a.id AS id) b ON b.id = a.id "
             + "JOIN LATERAL (SELECT b.id AS id) c ON c.id = b.id";
-        Assert.NotNull(Record.Exception(() => SqlCoreFacade.CompileQuery(
-            forward, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            context, new SqlExecutionPlanPolicy())));
+        Assert.NotNull(Record.Exception(() => SqlCoreFacade.CompileQuery(forward, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken)));
     }
 
     [Fact]
@@ -353,17 +319,14 @@ public sealed class CoreSchemaSnapshotBindingTests
         var valid = "SELECT a.id AS id";
         for (var i = 0; i < depth; i++)
             valid = Wrap(valid);
-        var compiled = SqlCoreFacade.CompileQuery(
-            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            context, new SqlExecutionPlanPolicy());
+        var compiled = SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.Equal(depth * 2, compiled.Sql.Split("LATERAL (", StringSplitOptions.None).Length - 1);
 
         var invalid = "SELECT a.missing AS id";
         for (var i = 0; i < depth; i++)
             invalid = Wrap(invalid);
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres,
-                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
 
         // LATERAL A must not see B's alias: the continuation must not
@@ -373,8 +336,7 @@ public sealed class CoreSchemaSnapshotBindingTests
             + "JOIN LATERAL (SELECT b.id AS id) a ON a.id = u.id "
             + "JOIN LATERAL (SELECT a.id AS id) b ON b.id = a.id";
         var hidden = Record.Exception(() =>
-            SqlCoreFacade.CompileQuery(futureAlias, SqlAgentToolType.Postgres,
-                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(futureAlias, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.NotNull(hidden);
         Assert.DoesNotContain("SQL_COMPILER_STACK_RESERVE", hidden.ToString(),
             StringComparison.OrdinalIgnoreCase);
@@ -391,16 +353,14 @@ public sealed class CoreSchemaSnapshotBindingTests
         var valid = "SELECT v.id AS id";
         for (var level = 0; level < depth; level++)
             valid = Wrap(valid);
-        var compiled = SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy());
+        var compiled = SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.Equal(depth, compiled.Sql.Split("LATERAL (", StringSplitOptions.None).Length - 1);
 
         var invalid = "SELECT v.missing AS id";
         for (var level = 0; level < depth; level++)
             invalid = Wrap(invalid);
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres,
-                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
     }
 
@@ -414,18 +374,14 @@ public sealed class CoreSchemaSnapshotBindingTests
         var valid = "SELECT u.id AS id";
         for (var level = 0; level < depth; level++)
             valid = Wrap(valid);
-        var compiled = SqlCoreFacade.CompileQuery(
-            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            context, new SqlExecutionPlanPolicy());
+        var compiled = SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.Equal(depth, compiled.Sql.Split("LATERAL (", StringSplitOptions.None).Length - 1);
 
         var invalid = "SELECT u.missing AS id";
         for (var level = 0; level < depth; level++)
             invalid = Wrap(invalid);
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                context, new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
     }
 
@@ -441,9 +397,7 @@ public sealed class CoreSchemaSnapshotBindingTests
                 SqlAgentToolType.Postgres, "typed-lateral-heap-v1",
                 new[] { SqlSchemaTable.WithTypes("users",
                     new[] { new SqlSchemaColumn("id", SqlSchemaValueKind.Numeric) }) }));
-        var compiled = SqlCoreFacade.CompileQuery(
-            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            context, new SqlExecutionPlanPolicy());
+        var compiled = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.Equal(128, compiled.Sql.Split("LATERAL (", StringSplitOptions.None).Length - 1);
     }
@@ -459,9 +413,7 @@ public sealed class CoreSchemaSnapshotBindingTests
                 SqlAgentToolType.Postgres, "typed-lateral-correlation-v1",
                 new[] { SqlSchemaTable.WithTypes("users",
                     new[] { new SqlSchemaColumn("id", SqlSchemaValueKind.Numeric) }) }));
-        var compiled = SqlCoreFacade.CompileQuery(
-            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            context, new SqlExecutionPlanPolicy());
+        var compiled = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.Contains("LATERAL", compiled.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("EXISTS", compiled.Sql, StringComparison.OrdinalIgnoreCase);
     }
@@ -472,15 +424,13 @@ public sealed class CoreSchemaSnapshotBindingTests
     {
         var conditions = string.Concat(Enumerable.Repeat(" AND id = 1", 256));
         var query = "SELECT id FROM users WHERE id = 1" + conditions;
-        var result = SqlCoreFacade.CompileQuery(
-            query, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.CompileQuery(query, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.NotEmpty(result.Sql);
 
         // The first unproven column must still win the left-to-right proof.
         var invalid = "SELECT id FROM users WHERE missing = 1" + conditions;
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                invalid, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalid, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
     }
 
@@ -489,9 +439,7 @@ public sealed class CoreSchemaSnapshotBindingTests
     public void AllDialects_ValidateExistingQualifiedAndUnqualifiedColumns(SqlAgentToolType dialect)
     {
         var context = Context(dialect);
-        var compiled = SqlCoreFacade.CompileQuery(
-            "SELECT u.id, u.name FROM users u WHERE u.id = 7",
-            dialect, dialect, context, new SqlExecutionPlanPolicy(10));
+        var compiled = SqlCoreFacade.CompileQuery("SELECT u.id, u.name FROM users u WHERE u.id = 7", dialect, dialect, context, new SqlExecutionPlanPolicy(10), TestContext.Current.CancellationToken);
         Assert.NotEmpty(compiled.Sql);
         Assert.NotEmpty(compiled.Parameters);
 
@@ -511,8 +459,7 @@ public sealed class CoreSchemaSnapshotBindingTests
         SqlAgentToolType dialect, string sql, string expectedCode)
     {
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                sql, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy(10)));
+            SqlCoreFacade.CompileQuery(sql, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy(10), TestContext.Current.CancellationToken));
 
         var diagnostic = Assert.IsType<SqlDiagnostic>(error.Diagnostic);
         Assert.Equal(expectedCode, diagnostic.Code);
@@ -525,20 +472,14 @@ public sealed class CoreSchemaSnapshotBindingTests
     public void AllDialects_DmlTargetColumnsAndPredicatesRequireSnapshotProof(
         SqlAgentToolType dialect)
     {
-        Assert.NotEmpty(SqlCoreFacade.CompileDml(
-            "UPDATE users SET name = 'Updated' WHERE id = 1",
-            dialect, dialect, Context(dialect)).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileDml("UPDATE users SET name = 'Updated' WHERE id = 1", dialect, dialect, Context(dialect), TestContext.Current.CancellationToken).Sql);
 
         var ex = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileDml(
-                "DELETE FROM users WHERE missing = 1",
-                dialect, dialect, Context(dialect)));
+            SqlCoreFacade.CompileDml("DELETE FROM users WHERE missing = 1", dialect, dialect, Context(dialect), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", ex.Diagnostic?.Code);
 
         var insert = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileDml(
-                "INSERT INTO users (missing) VALUES (3)",
-                dialect, dialect, Context(dialect)));
+            SqlCoreFacade.CompileDml("INSERT INTO users (missing) VALUES (3)", dialect, dialect, Context(dialect), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", insert.Diagnostic?.Code);
     }
 
@@ -561,22 +502,17 @@ public sealed class CoreSchemaSnapshotBindingTests
         };
         foreach (var sql in valid)
         {
-            var command = SqlCoreFacade.CompileQuery(
-                sql, dialect, dialect, context, new SqlExecutionPlanPolicy());
+            var command = SqlCoreFacade.CompileQuery(sql, dialect, dialect, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
             Assert.NotEmpty(command.Sql);
         }
 
         var ambiguous = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                "SELECT id FROM users u JOIN orders o USING (id) " +
-                "JOIN users another ON another.id = u.id",
-                dialect, dialect, context, new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery("SELECT id FROM users u JOIN orders o USING (id) " +
+                "JOIN users another ON another.id = u.id", dialect, dialect, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_COLUMN_AMBIGUOUS", ambiguous.Diagnostic?.Code);
 
         var missing = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                "SELECT id FROM users u JOIN orders o USING (name)",
-                dialect, dialect, context, new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery("SELECT id FROM users u JOIN orders o USING (name)", dialect, dialect, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", missing.Diagnostic?.Code);
     }
 
@@ -603,14 +539,11 @@ public sealed class CoreSchemaSnapshotBindingTests
             "(SELECT * FROM users u NATURAL JOIN (SELECT name AS renamed FROM users) b) d"
         };
         foreach (var sql in valid)
-            Assert.NotEmpty(SqlCoreFacade.CompileQuery(
-                sql, dialect, dialect, context, new SqlExecutionPlanPolicy()).Sql);
+            Assert.NotEmpty(SqlCoreFacade.CompileQuery(sql, dialect, dialect, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
 
         var ambiguous = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                "SELECT id FROM users u NATURAL JOIN orders o " +
-                "JOIN users extra ON extra.id = u.id",
-                dialect, dialect, context, new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery("SELECT id FROM users u NATURAL JOIN orders o " +
+                "JOIN users extra ON extra.id = u.id", dialect, dialect, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_COLUMN_AMBIGUOUS", ambiguous.Diagnostic?.Code);
     }
 
@@ -618,17 +551,11 @@ public sealed class CoreSchemaSnapshotBindingTests
     public void Postgres_CteAndCorrelatedQueries_UseActualScopedColumns()
     {
         var context = Context(SqlAgentToolType.Postgres);
-        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
-            "WITH x AS (SELECT id, name FROM users) SELECT x.name FROM x",
-            SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            context, new SqlExecutionPlanPolicy()).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery("WITH x AS (SELECT id, name FROM users) SELECT x.name FROM x", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
 
         var ex = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                "SELECT u.id FROM users u WHERE EXISTS " +
-                "(SELECT 1 FROM orders o WHERE o.user_id = u.id AND o.missing = 1)",
-                SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                context, new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery("SELECT u.id FROM users u WHERE EXISTS " +
+                "(SELECT 1 FROM orders o WHERE o.user_id = u.id AND o.missing = 1)", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", ex.Diagnostic?.Code);
     }
 
@@ -644,9 +571,7 @@ public sealed class CoreSchemaSnapshotBindingTests
         var sql = "SELECT u.id FROM users u WHERE " + nested;
         var context = Context(SqlAgentToolType.Postgres);
 
-        var compiled = SqlCoreFacade.CompileQuery(
-            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            context, new SqlExecutionPlanPolicy());
+        var compiled = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.Contains("EXISTS", compiled.Sql, StringComparison.OrdinalIgnoreCase);
 
         // An outer alias still resolves, but its missing column must fail
@@ -656,9 +581,7 @@ public sealed class CoreSchemaSnapshotBindingTests
                 "EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id AND ", depth))
             + "u.missing = 7" + new string(')', depth);
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                invalidSql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                context, new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(invalidSql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
         Assert.Equal(SqlDiagnosticStage.Binding, error.Diagnostic?.Stage);
     }
@@ -668,29 +591,19 @@ public sealed class CoreSchemaSnapshotBindingTests
     {
         var context = Context(SqlAgentToolType.Postgres);
         var recursive = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) " +
-                "SELECT n FROM x",
-                SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                context, new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery("WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) " +
+                "SELECT n FROM x", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_RECURSIVE_CTE_UNPROVABLE", recursive.Diagnostic?.Code);
 
         var computed = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                "SELECT x.anonymous FROM (SELECT id + 1 FROM users) x",
-                SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                context, new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery("SELECT x.anonymous FROM (SELECT id + 1 FROM users) x", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_SCHEMA_SHAPE_UNPROVABLE", computed.Diagnostic?.Code);
     }
 
     [Fact]
     public void MissingSnapshot_RetainsExistingCompilerCompatibility()
     {
-        var command = SqlCoreFacade.CompileQuery(
-            "SELECT unknown_field FROM users",
-            SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("legacy-scope-v1"),
-            new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery("SELECT unknown_field FROM users", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("legacy-scope-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.NotEmpty(command.Sql);
     }
 
@@ -725,14 +638,8 @@ public sealed class CoreSchemaSnapshotBindingTests
         Assert.NotEqual(baseline.CompileEvidence.EvidenceFingerprint,
             revisedVersion.CompileEvidence!.EvidenceFingerprint);
 
-        var baselineDml = SqlCoreFacade.CompileDml(
-            "DELETE FROM users WHERE id = 7",
-            SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            WithSchema("v1", "id", "name"));
-        var revisedDml = SqlCoreFacade.CompileDml(
-            "DELETE FROM users WHERE id = 7",
-            SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            WithSchema("v2", "id", "name"));
+        var baselineDml = SqlCoreFacade.CompileDml("DELETE FROM users WHERE id = 7", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, WithSchema("v1", "id", "name"), TestContext.Current.CancellationToken);
+        var revisedDml = SqlCoreFacade.CompileDml("DELETE FROM users WHERE id = 7", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, WithSchema("v2", "id", "name"), TestContext.Current.CancellationToken);
         Assert.NotEqual(baselineDml.PlanFingerprint, revisedDml.PlanFingerprint);
     }
 
@@ -746,10 +653,6 @@ public sealed class CoreSchemaSnapshotBindingTests
         var schema = new SqlSchemaSnapshot(SqlAgentToolType.Postgres, "stable-v1", new[] { table });
         Assert.Equal("stable-v1", schema.Version);
 
-        Assert.Throws<ArgumentException>(() => SqlCoreFacade.CompileQuery(
-            "SELECT id FROM users",
-            SqlAgentToolType.MySQL, SqlAgentToolType.MySQL,
-            new SqlPlanValidationContext("mismatched").WithSchemaSnapshot(schema),
-            new SqlExecutionPlanPolicy()));
+        Assert.Throws<ArgumentException>(() => SqlCoreFacade.CompileQuery("SELECT id FROM users", SqlAgentToolType.MySQL, SqlAgentToolType.MySQL, new SqlPlanValidationContext("mismatched").WithSchemaSnapshot(schema), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
     }
 }

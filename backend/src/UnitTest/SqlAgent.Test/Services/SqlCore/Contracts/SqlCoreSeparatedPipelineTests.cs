@@ -21,12 +21,7 @@ public sealed class SqlCoreSeparatedPipelineTests
     [InlineData(SqlAgentToolType.Firebird)]
     public void QueryPipeline_StillProducesANativeQueryCommand(SqlAgentToolType provider)
     {
-        var command = SqlCoreFacade.CompileQuery(
-            "SELECT id FROM users WHERE id = 1",
-            provider,
-            provider,
-            new SqlPlanValidationContext("separated-pipeline-v1"),
-            new SqlExecutionPlanPolicy(5));
+        var command = SqlCoreFacade.CompileQuery("SELECT id FROM users WHERE id = 1", provider, provider, new SqlPlanValidationContext("separated-pipeline-v1"), new SqlExecutionPlanPolicy(5), TestContext.Current.CancellationToken);
 
         Assert.Equal(SqlStatementKind.Query, command.Kind);
         Assert.Contains("SELECT", command.Sql, StringComparison.OrdinalIgnoreCase);
@@ -44,11 +39,7 @@ public sealed class SqlCoreSeparatedPipelineTests
     [InlineData(SqlAgentToolType.Firebird)]
     public void MutationPipeline_StillProducesAParameterizedCommand(SqlAgentToolType provider)
     {
-        var command = SqlCoreFacade.CompileDml(
-            "UPDATE users SET name = 'Ada' WHERE id = 1",
-            provider,
-            provider,
-            new SqlPlanValidationContext("separated-pipeline-v1"));
+        var command = SqlCoreFacade.CompileDml("UPDATE users SET name = 'Ada' WHERE id = 1", provider, provider, new SqlPlanValidationContext("separated-pipeline-v1"), TestContext.Current.CancellationToken);
 
         Assert.Equal(SqlStatementKind.Update, command.Kind);
         Assert.Contains("UPDATE", command.Sql, StringComparison.OrdinalIgnoreCase);
@@ -67,11 +58,7 @@ public sealed class SqlCoreSeparatedPipelineTests
     public void MutationPipeline_StillDeniesUnboundedUpdate(SqlAgentToolType provider)
     {
         var denied = Assert.Throws<UnauthorizedAccessException>(() =>
-            SqlCoreFacade.CompileDml(
-                "UPDATE users SET name = 'Ada'",
-                provider,
-                provider,
-                new SqlPlanValidationContext("separated-pipeline-v1")));
+            SqlCoreFacade.CompileDml("UPDATE users SET name = 'Ada'", provider, provider, new SqlPlanValidationContext("separated-pipeline-v1"), TestContext.Current.CancellationToken));
 
         Assert.Contains("WHERE", denied.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -94,11 +81,6 @@ public sealed class SqlCoreSeparatedPipelineTests
     public void QueryPipeline_RejectsMutationAtPublicApiBoundary()
     {
         Assert.ThrowsAny<Exception>(() =>
-            SqlCoreFacade.CompileQuery(
-                "UPDATE users SET name = 'Ada' WHERE id = 1",
-                SqlAgentToolType.Postgres,
-                SqlAgentToolType.Postgres,
-                new SqlPlanValidationContext("separated-pipeline-api-v1"),
-                new SqlExecutionPlanPolicy(5)));
+            SqlCoreFacade.CompileQuery("UPDATE users SET name = 'Ada' WHERE id = 1", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("separated-pipeline-api-v1"), new SqlExecutionPlanPolicy(5), TestContext.Current.CancellationToken));
     }
 }

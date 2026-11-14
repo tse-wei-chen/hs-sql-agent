@@ -106,10 +106,7 @@ public sealed class SqlCoreFilteredDistinctCountTests
     public void InvalidSourceDistinctFilter_RemainsRejected(SqlAgentToolType source)
     {
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(GroupQuery("orders", "status = 1"),
-                source, SqlAgentToolType.Postgres,
-                new SqlPlanValidationContext("g10-distinct-source-proof"),
-                new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(GroupQuery("orders", "status = 1"), source, SqlAgentToolType.Postgres, new SqlPlanValidationContext("g10-distinct-source-proof"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Contains("source dialect", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 

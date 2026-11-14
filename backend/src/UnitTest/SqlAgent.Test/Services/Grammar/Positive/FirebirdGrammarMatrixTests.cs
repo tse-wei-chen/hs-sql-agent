@@ -176,12 +176,7 @@ public sealed class FirebirdGrammarMatrixTests
                 actual => string.Equals(actual, table, StringComparison.OrdinalIgnoreCase));
         }
 
-        var command = SqlCoreFacade.CompileQuery(
-            sql,
-            SqlAgentToolType.Firebird,
-            SqlAgentToolType.Firebird,
-            new SqlPlanValidationContext("firebird-combinatorial-grammar-matrix-v1"),
-            new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Firebird, SqlAgentToolType.Firebird, new SqlPlanValidationContext("firebird-combinatorial-grammar-matrix-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.False(string.IsNullOrWhiteSpace(command.Sql));
         Assert.Contains("WITH", command.Sql, StringComparison.OrdinalIgnoreCase);

@@ -184,9 +184,7 @@ public sealed class SqlCoreSqliteWithDeleteTests
     {
         const string sql =
             "WITH picked AS (SELECT 7 AS id) DELETE FROM users WHERE id IN (SELECT id FROM picked)";
-        var crossProvider = SqlCoreFacade.TryCompileDml(sql,
-            SqlAgentToolType.Sqlite, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("sqlite-delete-cross-provider"));
+        var crossProvider = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.Sqlite, SqlAgentToolType.Postgres, new SqlPlanValidationContext("sqlite-delete-cross-provider"), TestContext.Current.CancellationToken);
         Assert.False(crossProvider.Success);
         Assert.NotEmpty(crossProvider.TypedDiagnostics);
 

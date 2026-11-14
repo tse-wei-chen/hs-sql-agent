@@ -140,15 +140,11 @@ public sealed class SqlCoreOracleTransactionBoundaryTests
     [Fact]
     public void OtherDialectTransactionBehaviorIsNotChanged()
     {
-        var pg = SqlCoreFacade.AnalyzeScript(
-            "CREATE TABLE orders(ID INTEGER); ROLLBACK;",
-            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var pg = SqlCoreFacade.AnalyzeScript("CREATE TABLE orders(ID INTEGER); ROLLBACK;", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, pg.Statements[1].Status);
         Assert.False(pg.FinalCatalog.IsClosedWorld);
 
-        var fb = SqlCoreFacade.AnalyzeScript(
-            "CREATE TABLE orders(ID INTEGER); ROLLBACK;",
-            SqlAgentToolType.Firebird, SqlCatalogState.KnownEmpty());
+        var fb = SqlCoreFacade.AnalyzeScript("CREATE TABLE orders(ID INTEGER); ROLLBACK;", SqlAgentToolType.Firebird, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, fb.Statements[1].Status);
         Assert.False(fb.FinalCatalog.IsClosedWorld);
     }

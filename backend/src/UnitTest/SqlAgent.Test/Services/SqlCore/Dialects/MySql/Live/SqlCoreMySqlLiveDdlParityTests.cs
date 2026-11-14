@@ -69,8 +69,7 @@ public sealed class SqlCoreMySqlLiveDdlParityTests
         var source = ConnectionString();
         var script = Scenarios.Single(x => x.Id == id).Sql;
         // Analyze the entire script BEFORE opening an execution connection.
-        var result = SqlCoreFacade.AnalyzeScript(
-            script, SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript(script, SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.True(result.Statements.Count >= 2);
         Assert.All(result.Statements, x =>
             Assert.Equal(SqlStatementAnalysisStatus.Analyzed, x.Status));
@@ -114,9 +113,7 @@ public sealed class SqlCoreMySqlLiveDdlParityTests
         // SQL-level START TRANSACTION and a subsequent ordinary CREATE TABLE
         // must not be modeled as a rollbackable Catalog. The MySQL server,
         // independently of SqlCore, proves the actual implicit-commit fence.
-        var contract = SqlCoreFacade.AnalyzeScript(
-            "START TRANSACTION; CREATE TABLE marker(id INT); ROLLBACK;",
-            SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty());
+        var contract = SqlCoreFacade.AnalyzeScript("START TRANSACTION; CREATE TABLE marker(id INT); ROLLBACK;", SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported,
             contract.Statements[1].Status);
         Assert.Equal(SqlTransactionEffectOrigin.PossibleImplicitCommit,
@@ -160,8 +157,7 @@ public sealed class SqlCoreMySqlLiveDdlParityTests
     public void UnmodeledCheckIsNeverPromotedToProvenCatalogEvenWhenMySqlSupportsIt()
     {
         const string sql = "CREATE TABLE constrained(id INT, CHECK (id > 0));";
-        var result = SqlCoreFacade.AnalyzeScript(
-            sql, SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported,
             Assert.Single(result.Statements).Status);
         Assert.False(result.FinalCatalog.IsClosedWorld);
@@ -235,8 +231,8 @@ public sealed class SqlCoreMySqlLiveDdlParityTests
         foreach (var table in modeled.Tables)
         {
             Assert.Equal(SqlCatalogKnowledge.Known, table.Knowledge);
-            var live = Assert.Single(actual.Where(x =>
-                string.Equals(x.Name, table.Name, StringComparison.OrdinalIgnoreCase)));
+            var live = Assert.Single(actual, x =>
+                string.Equals(x.Name, table.Name, StringComparison.OrdinalIgnoreCase));
             Assert.Equal(table.Columns.Count, live.Columns.Length);
             for (var c = 0; c < table.Columns.Count; c++)
             {

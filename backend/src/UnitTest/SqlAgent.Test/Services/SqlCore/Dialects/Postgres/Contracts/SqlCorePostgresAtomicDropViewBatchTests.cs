@@ -215,7 +215,7 @@ public sealed class SqlCorePostgresAtomicDropViewBatchTests
         var r = Analyze(Chain + "DROP VIEW v_child, app.v_grandchild CASCADE;");
         var drop = r.Statements[4];
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, drop.Status);
-        Assert.Empty(drop.Changes.Where(x => x.Certainty == SqlCatalogKnowledge.Known));
+        Assert.DoesNotContain(drop.Changes, x => x.Certainty == SqlCatalogKnowledge.Known);
         Assert.False(r.FinalCatalog.IsClosedWorld);
     }
 
@@ -244,7 +244,7 @@ public sealed class SqlCorePostgresAtomicDropViewBatchTests
         var drop = Assert.Single(r.Statements);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, drop.Status);
         Assert.Equal(SqlCatalogKnowledge.Unknown, drop.Certainty);
-        Assert.Empty(drop.Changes.Where(x => x.Certainty == SqlCatalogKnowledge.Known));
+        Assert.DoesNotContain(drop.Changes, x => x.Certainty == SqlCatalogKnowledge.Known);
         Assert.False(r.FinalCatalog.IsClosedWorld);
     }
 

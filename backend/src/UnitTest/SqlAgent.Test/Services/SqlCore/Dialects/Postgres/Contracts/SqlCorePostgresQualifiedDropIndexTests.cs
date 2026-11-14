@@ -80,8 +80,8 @@ public sealed class SqlCorePostgresQualifiedDropIndexTests
             "CREATE INDEX ix_users ON app.users(id);" +
             "DROP INDEX ix_users;");
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, r.Statements[2].Status);
-        Assert.Empty(r.Statements[2].Changes.Where(x =>
-            x.Certainty == SqlCatalogKnowledge.Known));
+        Assert.DoesNotContain(r.Statements[2].Changes, x =>
+            x.Certainty == SqlCatalogKnowledge.Known);
         Assert.False(r.FinalCatalog.IsClosedWorld);
     }
 
@@ -96,8 +96,8 @@ public sealed class SqlCorePostgresQualifiedDropIndexTests
         Assert.Equal(SqlCatalogKnowledge.Unknown, r.Statements[2].Certainty);
         Assert.Contains(r.Statements[2].Diagnostics,
             x => x.Code == "SQL_SCHEMA_DEPENDENCY_UNPROVEN");
-        Assert.Empty(r.Statements[2].Changes.Where(x =>
-            x.Certainty == SqlCatalogKnowledge.Known));
+        Assert.DoesNotContain(r.Statements[2].Changes, x =>
+            x.Certainty == SqlCatalogKnowledge.Known);
         Assert.False(r.FinalCatalog.IsClosedWorld);
     }
 
@@ -152,8 +152,8 @@ public sealed class SqlCorePostgresQualifiedDropIndexTests
         // Name collisions with unqualified owner already invalidate the
         // proof, independent of a later qualified DROP.
         Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, r.Statements[3].Status);
-        Assert.Empty(r.Statements[3].Changes.Where(x =>
-            x.Certainty == SqlCatalogKnowledge.Known));
+        Assert.DoesNotContain(r.Statements[3].Changes, x =>
+            x.Certainty == SqlCatalogKnowledge.Known);
     }
 
     [Fact]
@@ -197,8 +197,8 @@ public sealed class SqlCorePostgresQualifiedDropIndexTests
             var drop = Assert.Single(result.Statements);
             Assert.Equal(SqlStatementAnalysisStatus.Unsupported, drop.Status);
             Assert.Equal(SqlCatalogKnowledge.Unknown, drop.Certainty);
-            Assert.Empty(drop.Changes.Where(x =>
-                x.Certainty == SqlCatalogKnowledge.Known));
+            Assert.DoesNotContain(drop.Changes, x =>
+                x.Certainty == SqlCatalogKnowledge.Known);
             Assert.False(result.FinalCatalog.IsClosedWorld);
         }
     }
@@ -212,9 +212,7 @@ public sealed class SqlCorePostgresQualifiedDropIndexTests
     public void QualifiedPostgresDropIndexSyntaxIsNeverAcceptedAsAnotherDialect(
         SqlAgentToolType provider)
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "DROP INDEX app.ix_users;",
-            provider, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript("DROP INDEX app.ix_users;", provider, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         var statement = Assert.Single(result.Statements);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, statement.Status);
         Assert.Equal(SqlCatalogKnowledge.Unknown, statement.Certainty);
@@ -235,7 +233,7 @@ public sealed class SqlCorePostgresQualifiedDropIndexTests
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, drop.Status);
         Assert.Equal(SqlCatalogKnowledge.Unknown, drop.Certainty);
         Assert.False(r.FinalCatalog.IsClosedWorld);
-        Assert.Empty(drop.Changes.Where(x =>
-            x.Certainty == SqlCatalogKnowledge.Known));
+        Assert.DoesNotContain(drop.Changes, x =>
+            x.Certainty == SqlCatalogKnowledge.Known);
     }
 }

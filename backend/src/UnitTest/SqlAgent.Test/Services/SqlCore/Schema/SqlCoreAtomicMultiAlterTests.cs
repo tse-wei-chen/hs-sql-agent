@@ -29,8 +29,7 @@ public sealed class SqlCoreAtomicMultiAlterTests
         SqlAgentToolType provider, string create, string alter,
         string tableName, string addedName1, string addedName2)
     {
-        var analysis = SqlCoreFacade.AnalyzeScript(
-            create + alter, provider, SqlCatalogState.KnownEmpty());
+        var analysis = SqlCoreFacade.AnalyzeScript(create + alter, provider, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(2, analysis.Statements.Count);
         Assert.Empty(analysis.Diagnostics);
         var mutation = analysis.Statements[1];
@@ -71,8 +70,7 @@ public sealed class SqlCoreAtomicMultiAlterTests
     public void ColumnListsUseTheirNativeDialectGrammar(
         SqlAgentToolType dialect, string create, string add, string drop)
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            create + add + drop, dialect, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript(create + add + drop, dialect, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Empty(result.Diagnostics);
         Assert.All(result.Statements, s =>
             Assert.Equal(SqlStatementAnalysisStatus.Analyzed, s.Status));
@@ -98,9 +96,7 @@ public sealed class SqlCoreAtomicMultiAlterTests
     public void LateDuplicateAction_DoesNotCommitEarlyAddition(
         SqlAgentToolType dialect, string idType, string alter)
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            $"CREATE TABLE users(id {idType});" + alter + "SELECT id FROM users;",
-            dialect, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript($"CREATE TABLE users(id {idType});" + alter + "SELECT id FROM users;", dialect, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Invalid, result.Statements[1].Status);
         Assert.Equal("SQL_SCHEMA_SEMANTIC_INVALID",
             Assert.Single(result.Statements[1].Diagnostics).Code);
@@ -127,9 +123,7 @@ public sealed class SqlCoreAtomicMultiAlterTests
     public void LaterInvalidDrop_LeavesOriginalSchemaIntact(
         SqlAgentToolType dialect, string idType, string alter)
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            $"CREATE TABLE users(id {idType});" + alter,
-            dialect, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript($"CREATE TABLE users(id {idType});" + alter, dialect, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Invalid, result.Statements[1].Status);
         Assert.Empty(result.Statements[1].Changes);
         Assert.Single(Assert.Single(result.FinalCatalog.Tables).Columns);
@@ -138,9 +132,7 @@ public sealed class SqlCoreAtomicMultiAlterTests
     [Fact]
     public void UnknownCatalog_NeverClaimsIndividualMultiAlterEffects()
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "ALTER TABLE users ADD COLUMN a INTEGER, DROP COLUMN b;",
-            SqlAgentToolType.Postgres);
+        var result = SqlCoreFacade.AnalyzeScript("ALTER TABLE users ADD COLUMN a INTEGER, DROP COLUMN b;", SqlAgentToolType.Postgres, TestContext.Current.CancellationToken);
         var stmt = Assert.Single(result.Statements);
         Assert.Equal(SqlStatementAnalysisStatus.PartiallyAnalyzed, stmt.Status);
         Assert.Equal(SqlCatalogKnowledge.Unknown, stmt.Certainty);
@@ -163,9 +155,7 @@ public sealed class SqlCoreAtomicMultiAlterTests
     {
         var typeName = dialect == SqlAgentToolType.Oracle ? "NUMBER" : "INTEGER";
         if (dialect == SqlAgentToolType.MsSqlServer) typeName = "INT";
-        var result = SqlCoreFacade.AnalyzeScript(
-            $"CREATE TABLE users(id {typeName});" + alter,
-            dialect, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript($"CREATE TABLE users(id {typeName});" + alter, dialect, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, result.Statements[1].Status);
         Assert.Equal("SQL_SCHEMA_UNSUPPORTED_STATEMENT",
             Assert.Single(result.Statements[1].Diagnostics).Code);
@@ -177,13 +167,11 @@ public sealed class SqlCoreAtomicMultiAlterTests
     [Fact]
     public void PostgresMultiAlterWithinRollback_RestoresPriorCatalogExactly()
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "CREATE TABLE users (id INTEGER, old_name TEXT);" +
+        var result = SqlCoreFacade.AnalyzeScript("CREATE TABLE users (id INTEGER, old_name TEXT);" +
             "BEGIN;" +
             "ALTER TABLE users ADD COLUMN new_name TEXT, DROP COLUMN old_name;" +
             "ROLLBACK;" +
-            "SELECT old_name FROM users;",
-            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+            "SELECT old_name FROM users;", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(2, result.Statements[2].Changes.Count);
         Assert.Equal(SqlTransactionState.Outside, result.FinalTransaction);
         Assert.Equal(SqlCatalogBindingStatus.Verified, result.Statements[4].CatalogBinding);
@@ -194,10 +182,8 @@ public sealed class SqlCoreAtomicMultiAlterTests
     [Fact]
     public void ConditionalNoOpsDoNotMintPhantomDeltasInMultiAlter()
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "CREATE TABLE users(id INTEGER, present TEXT);" +
-            "ALTER TABLE users DROP COLUMN IF EXISTS absent, ADD COLUMN added TEXT;",
-            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript("CREATE TABLE users(id INTEGER, present TEXT);" +
+            "ALTER TABLE users DROP COLUMN IF EXISTS absent, ADD COLUMN added TEXT;", SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Empty(result.Diagnostics);
         Assert.Equal(SqlCatalogOperation.AddColumn,
             Assert.Single(result.Statements[1].Changes).Operation);
@@ -228,9 +214,7 @@ public sealed class SqlCoreAtomicMultiAlterTests
             ? new HsSqlAgent.SqlCore.Models.SqlProviderCapabilityProfile(
                 dialect, new Version(3, 35))
             : null;
-        var result = SqlCoreFacade.AnalyzeScript(
-            $"CREATE TABLE users(id {typeName});ALTER TABLE users {drop};",
-            dialect, SqlCatalogState.KnownEmpty(), profile);
+        var result = SqlCoreFacade.AnalyzeScript($"CREATE TABLE users(id {typeName});ALTER TABLE users {drop};", dialect, SqlCatalogState.KnownEmpty(), profile, TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Invalid, result.Statements[1].Status);
         Assert.Empty(result.Statements[1].Changes);
         Assert.Single(Assert.Single(result.FinalCatalog.Tables).Columns);
@@ -247,15 +231,11 @@ public sealed class SqlCoreAtomicMultiAlterTests
         SqlAgentToolType dialect, string columnType)
     {
         var create = $"CREATE TABLE users (id {columnType});";
-        var valid = SqlCoreFacade.AnalyzeScript(
-            create + "CREATE INDEX idx_users_id ON users (id);",
-            dialect, SqlCatalogState.KnownEmpty());
+        var valid = SqlCoreFacade.AnalyzeScript(create + "CREATE INDEX idx_users_id ON users (id);", dialect, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, valid.Statements[1].Status);
         Assert.Single(Assert.Single(valid.FinalCatalog.Tables).Indexes);
 
-        var invalid = SqlCoreFacade.AnalyzeScript(
-            create + "CREATE INDEX idx_users_id ON users (id,);",
-            dialect, SqlCatalogState.KnownEmpty());
+        var invalid = SqlCoreFacade.AnalyzeScript(create + "CREATE INDEX idx_users_id ON users (id,);", dialect, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, invalid.Statements[1].Status);
         // Unsupported syntax poisons the virtual Catalog with an explicit
         // unknown effect; it must never pretend no schema change occurred.

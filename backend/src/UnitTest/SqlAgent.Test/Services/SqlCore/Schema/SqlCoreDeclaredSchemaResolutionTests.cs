@@ -178,8 +178,7 @@ public sealed class SqlCoreDeclaredSchemaResolutionTests
     public void SearchPathWithCallerUnqualifiedCatalogFactsCannotClaimProof()
     {
         var known = Analyze("CREATE TABLE users(id INTEGER);", null).FinalCatalog;
-        var analysis = SqlCoreFacade.AnalyzeScript(
-            "SELECT id FROM users;", SqlAgentToolType.Postgres, known, Profile("app"));
+        var analysis = SqlCoreFacade.AnalyzeScript("SELECT id FROM users;", SqlAgentToolType.Postgres, known, Profile("app"), TestContext.Current.CancellationToken);
         Assert.Equal(SqlCatalogBindingStatus.Unverified, analysis.Statements[0].CatalogBinding);
         Assert.Equal("SQL_CATALOG_SCHEMA_SCOPE_UNPROVEN",
             Assert.Single(analysis.Statements[0].Diagnostics).Code);
@@ -207,9 +206,7 @@ public sealed class SqlCoreDeclaredSchemaResolutionTests
         var settings = new Dictionary<string, string> { ["SEARCH_PATH"] = "app" };
         var profile = new SqlProviderCapabilityProfile(
             SqlAgentToolType.Oracle, null, default, null, settings);
-        var result = SqlCoreFacade.AnalyzeScript(
-            "CREATE TABLE APP.USERS(ID NUMBER);SELECT ID FROM USERS;",
-            SqlAgentToolType.Oracle, SqlCatalogState.KnownEmpty(), profile);
+        var result = SqlCoreFacade.AnalyzeScript("CREATE TABLE APP.USERS(ID NUMBER);SELECT ID FROM USERS;", SqlAgentToolType.Oracle, SqlCatalogState.KnownEmpty(), profile, TestContext.Current.CancellationToken);
         Assert.Equal(SqlCatalogBindingStatus.Unverified, result.Statements[1].NameBinding);
     }
 }

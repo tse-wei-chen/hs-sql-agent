@@ -59,11 +59,9 @@ public sealed class SqlCoreSqlServerWithJoinedMutationSingletonTests
     {
         // This is syntactically native SQL Server, but not an at-most-one-row
         // guarantee. Reject at capability validation, not raw-string rewrite.
-        var result = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.MsSqlServer,
-            SqlAgentToolType.MsSqlServer,
-            new SqlPlanValidationContext("sqlserver-cte-joined-negative",
+        var result = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer, new SqlPlanValidationContext("sqlserver-cte-joined-negative",
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                { "users", "source_rows", "extra_source" }));
+                { "users", "source_rows", "extra_source" }), TestContext.Current.CancellationToken);
         Assert.False(result.Success);
         Assert.NotEmpty(result.TypedDiagnostics);
     }
@@ -75,8 +73,7 @@ public sealed class SqlCoreSqlServerWithJoinedMutationSingletonTests
     [InlineData("WITH picked AS (SELECT 7 AS id) DELETE FROM users FROM picked WHERE 1 = 1")]
     public void SingletonDoesNotBypassBoundedWherePolicy(string sql)
     {
-        var result = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.MsSqlServer,
-            SqlAgentToolType.MsSqlServer, new SqlPlanValidationContext("sqlserver-cte-no-unbounded"));
+        var result = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer, new SqlPlanValidationContext("sqlserver-cte-no-unbounded"), TestContext.Current.CancellationToken);
         Assert.False(result.Success);
     }
 
@@ -85,7 +82,7 @@ public sealed class SqlCoreSqlServerWithJoinedMutationSingletonTests
     [InlineData("WITH picked AS (SELECT 7 AS id) DELETE FROM picked FROM picked WHERE id = 7")]
     public void CteAliasCannotBeThePhysicalWriteTarget(string sql)
     {
-        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer, Profile());
+        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer, Profile(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlScriptParseStatus.Invalid, Assert.Single(parsed.Statements).Status);
     }
 
@@ -118,9 +115,7 @@ public sealed class SqlCoreSqlServerWithJoinedMutationSingletonTests
         var sql = update
             ? "WITH picked AS (SELECT 7 AS id) UPDATE users SET label = 'changed' FROM picked WHERE users.id = picked.id"
             : "WITH picked AS (SELECT 7 AS id) DELETE FROM users FROM picked WHERE users.id = picked.id";
-        var result = SqlCoreFacade.TryCompileDml(sql,
-            SqlAgentToolType.MsSqlServer, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("sqlserver-cte-joined-cross"));
+        var result = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.MsSqlServer, SqlAgentToolType.Postgres, new SqlPlanValidationContext("sqlserver-cte-joined-cross"), TestContext.Current.CancellationToken);
         Assert.False(result.Success);
     }
 
@@ -129,8 +124,7 @@ public sealed class SqlCoreSqlServerWithJoinedMutationSingletonTests
     {
         const string sql = "WITH picked AS (SELECT 7 AS id) " +
                            "UPDATE users SET label = 'changed' FROM picked WHERE users.id = picked.id";
-        var statement = Assert.Single(SqlCoreFacade.AnalyzeScript(sql,
-            SqlAgentToolType.MsSqlServer, SqlCatalogState.Unknown(), Profile()).Statements);
+        var statement = Assert.Single(SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.MsSqlServer, SqlCatalogState.Unknown(), Profile(), TestContext.Current.CancellationToken).Statements);
         Assert.True(statement.Effects.HasFlag(SqlEffectKind.WriteData));
         Assert.Contains(statement.DetailedEffects, e =>
             e.ObjectName == "users" && e.Operation == SqlStatementEffectOperation.Update);

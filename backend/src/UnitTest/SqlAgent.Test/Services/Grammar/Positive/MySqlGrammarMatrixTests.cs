@@ -248,13 +248,8 @@ public sealed class MySqlGrammarMatrixTests
                     StringComparison.OrdinalIgnoreCase));
         }
 
-        var command = SqlCoreFacade.CompileQuery(
-            sql,
-            SqlAgentToolType.MySQL,
-            SqlAgentToolType.MySQL,
-            new SqlPlanValidationContext(
-                "mysql-combinatorial-grammar-matrix-v1"),
-            new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.MySQL, SqlAgentToolType.MySQL, new SqlPlanValidationContext(
+                "mysql-combinatorial-grammar-matrix-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.False(string.IsNullOrWhiteSpace(command.Sql));
         Assert.Contains("WITH", command.Sql, StringComparison.OrdinalIgnoreCase);

@@ -21,7 +21,7 @@ public sealed class SqlCoreSqliteSingletonCteUpdateFromTests
     public void SingletonReadOnlyCteCanDriveBoundedSqliteUpdateFrom(string sql)
     {
         var profile = SqliteProfile();
-        var script = SqlCoreFacade.ParseScript(sql + "; SELECT 4", SqlAgentToolType.Sqlite, profile);
+        var script = SqlCoreFacade.ParseScript(sql + "; SELECT 4", SqlAgentToolType.Sqlite, profile, TestContext.Current.CancellationToken);
         Assert.Empty(script.Diagnostics);
         Assert.Equal(SqlScriptStatementKind.Mutation, script.Statements[0].Kind);
         Assert.Equal(SqlScriptParseStatus.Parsed, script.Statements[0].Status);
@@ -56,9 +56,7 @@ public sealed class SqlCoreSqliteSingletonCteUpdateFromTests
     [InlineData("WITH picked AS (SELECT 2 AS id, 'x' AS label) UPDATE users SET name = src.label FROM source_rows src WHERE users.id = src.id")]
     public void MultiRowUnknownOrNonCteFromSourceRemainsFailClosed(string sql)
     {
-        var result = SqlCoreFacade.TryCompileDml(sql,
-            SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite,
-            new SqlPlanValidationContext("sqlite-unproven-cardinality"));
+        var result = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite, new SqlPlanValidationContext("sqlite-unproven-cardinality"), TestContext.Current.CancellationToken);
         Assert.False(result.Success);
         Assert.NotEmpty(result.TypedDiagnostics);
     }
@@ -68,9 +66,7 @@ public sealed class SqlCoreSqliteSingletonCteUpdateFromTests
     [InlineData("WITH PICKED AS (SELECT id, label FROM source_rows), picked AS (SELECT 2 AS id, 'x' AS label) UPDATE users SET name = picked.label FROM picked WHERE users.id = picked.id")]
     public void DuplicateCanonicalCteNameMustNotConferSingletonProof(string sql)
     {
-        var result = SqlCoreFacade.TryCompileDml(sql,
-            SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite,
-            new SqlPlanValidationContext("sqlite-duplicate-cte"));
+        var result = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite, new SqlPlanValidationContext("sqlite-duplicate-cte"), TestContext.Current.CancellationToken);
         Assert.False(result.Success);
         Assert.NotEmpty(result.TypedDiagnostics);
     }
@@ -80,9 +76,7 @@ public sealed class SqlCoreSqliteSingletonCteUpdateFromTests
     [InlineData("WITH picked AS (SELECT 2 AS id, 'x' AS label) UPDATE users SET name = picked.label FROM picked WHERE TRUE")]
     public void SourceSingletonDoesNotAuthorizeFullTableUpdate(string sql)
     {
-        var attempt = SqlCoreFacade.TryCompileDml(sql,
-            SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite,
-            new SqlPlanValidationContext("sqlite-singleton-policy"));
+        var attempt = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite, new SqlPlanValidationContext("sqlite-singleton-policy"), TestContext.Current.CancellationToken);
         Assert.False(attempt.Success);
         Assert.NotEmpty(attempt.TypedDiagnostics);
     }
@@ -92,10 +86,8 @@ public sealed class SqlCoreSqliteSingletonCteUpdateFromTests
     {
         const string sql = "WITH picked AS (SELECT 2 AS id, 'x' AS label) " +
                            "UPDATE users SET name = picked.label FROM picked WHERE users.id = picked.id";
-        var noTarget = SqlCoreFacade.TryCompileDml(sql,
-            SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite,
-            new SqlPlanValidationContext("sqlite-singleton-denied",
-                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "picked" }));
+        var noTarget = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite, new SqlPlanValidationContext("sqlite-singleton-denied",
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "picked" }), TestContext.Current.CancellationToken);
         Assert.False(noTarget.Success);
         Assert.NotEmpty(noTarget.TypedDiagnostics);
     }
@@ -106,7 +98,7 @@ public sealed class SqlCoreSqliteSingletonCteUpdateFromTests
         const string sql = "WITH picked AS (SELECT 2 AS id, 'x' AS label) " +
                            "UPDATE users SET name = picked.label FROM picked WHERE users.id = picked.id";
         var outdated = new SqlProviderCapabilityProfile(SqlAgentToolType.Sqlite, new Version(3, 32));
-        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Sqlite, outdated);
+        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Sqlite, outdated, TestContext.Current.CancellationToken);
         Assert.Equal(SqlScriptParseStatus.Invalid, Assert.Single(parsed.Statements).Status);
 
         var modern = SqliteProfile();
@@ -122,8 +114,7 @@ public sealed class SqlCoreSqliteSingletonCteUpdateFromTests
     {
         const string sql = "WITH picked AS (SELECT 2 AS id, 'x' AS label) " +
                            "UPDATE users SET name = picked.label FROM picked WHERE users.id = picked.id";
-        var attempt = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.Sqlite,
-            SqlAgentToolType.Postgres, new SqlPlanValidationContext("sqlite-singleton-cross"));
+        var attempt = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.Sqlite, SqlAgentToolType.Postgres, new SqlPlanValidationContext("sqlite-singleton-cross"), TestContext.Current.CancellationToken);
         Assert.False(attempt.Success);
         Assert.NotEmpty(attempt.TypedDiagnostics);
     }
@@ -135,9 +126,7 @@ public sealed class SqlCoreSqliteSingletonCteUpdateFromTests
     {
         const string sql = "WITH picked(id,label) AS (SELECT 2, 'changed') " +
                            "SELECT label FROM picked";
-        var result = SqlCoreFacade.CompileQuery(sql, provider, provider,
-            new SqlPlanValidationContext("cte-column-render-regression"),
-            new SqlExecutionPlanPolicy(0));
+        var result = SqlCoreFacade.CompileQuery(sql, provider, provider, new SqlPlanValidationContext("cte-column-render-regression"), new SqlExecutionPlanPolicy(0), TestContext.Current.CancellationToken);
 
         // Query normalization may lower CTE(a,b) into SELECT ... AS a,
         // ... AS b instead of retaining the original CTE header spelling.

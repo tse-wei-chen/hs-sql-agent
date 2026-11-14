@@ -81,8 +81,7 @@ public sealed class SqlCoreOracleLiveDdlParityTests
             .Replace("{I2}", prefix + "_I2", StringComparison.Ordinal);
 
         // Complete static analysis BEFORE the execution connection is opened.
-        var analysis = SqlCoreFacade.AnalyzeScript(
-            sql, SqlAgentToolType.Oracle, SqlCatalogState.KnownEmpty());
+        var analysis = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Oracle, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.True(analysis.Statements.Count >= 2, id);
         Assert.All(analysis.Statements, step =>
             Assert.Equal(SqlStatementAnalysisStatus.Analyzed, step.Status));
@@ -124,8 +123,7 @@ public sealed class SqlCoreOracleLiveDdlParityTests
                      $"INSERT INTO {original}(ID) VALUES (7);" +
                      $"CREATE TABLE {second}(ID NUMBER);" +
                      "ROLLBACK;";
-        var modeled = SqlCoreFacade.AnalyzeScript(
-            script, SqlAgentToolType.Oracle, SqlCatalogState.KnownEmpty());
+        var modeled = SqlCoreFacade.AnalyzeScript(script, SqlAgentToolType.Oracle, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlTransactionEffectOrigin.PossibleImplicitCommit,
             modeled.Statements[2].TransactionProvenance.Origin);
         Assert.True(modeled.Statements[2].Effects.HasFlag(SqlEffectKind.ChangeTransaction));
@@ -160,9 +158,7 @@ public sealed class SqlCoreOracleLiveDdlParityTests
     [Fact]
     public void CheckConstraintThatOracleSupportsRemainsUnprovenWhenAnalyzerDoesNotModelIt()
     {
-        var report = SqlCoreFacade.AnalyzeScript(
-            "CREATE TABLE x_check(ID NUMBER, CHECK (ID > 0));",
-            SqlAgentToolType.Oracle, SqlCatalogState.KnownEmpty());
+        var report = SqlCoreFacade.AnalyzeScript("CREATE TABLE x_check(ID NUMBER, CHECK (ID > 0));", SqlAgentToolType.Oracle, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported,
             Assert.Single(report.Statements).Status);
         Assert.Equal(SqlEffectCoverage.Unknown, report.EffectCoverage);

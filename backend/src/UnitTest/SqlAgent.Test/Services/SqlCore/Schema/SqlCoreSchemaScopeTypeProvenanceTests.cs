@@ -112,10 +112,7 @@ public sealed class SqlCoreSchemaScopeTypeProvenanceTests
     public void AmbiguousJoinedNamesNeverAcquireOneSideTypeEvidence()
     {
         var ex = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                "SELECT id FROM users u JOIN shadow s ON TRUE WHERE id = 'text'",
-                SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                Snapshot(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery("SELECT id FROM users u JOIN shadow s ON TRUE WHERE id = 'text'", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, Snapshot(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.NotNull(ex.Diagnostic);
         Assert.NotEqual("SQL_SCHEMA_TYPE_MISMATCH", ex.Diagnostic!.Code);
     }
@@ -124,10 +121,7 @@ public sealed class SqlCoreSchemaScopeTypeProvenanceTests
     public void UnknownTypeStillRequiresANameBindingProof()
     {
         var ex = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                "SELECT unknown_field FROM shadow s",
-                SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                Snapshot(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery("SELECT unknown_field FROM shadow s", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, Snapshot(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.NotNull(ex.Diagnostic);
         Assert.NotEqual("SQL_SCHEMA_TYPE_MISMATCH", ex.Diagnostic!.Code);
     }

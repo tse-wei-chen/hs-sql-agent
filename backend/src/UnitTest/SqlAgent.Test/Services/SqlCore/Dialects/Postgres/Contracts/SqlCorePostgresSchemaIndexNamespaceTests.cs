@@ -160,8 +160,8 @@ public sealed class SqlCorePostgresSchemaIndexNamespaceTests
 
         Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed,
             result.Statements[2].Status);
-        Assert.Empty(result.Statements[2].Changes.Where(x =>
-            x.Certainty == SqlCatalogKnowledge.Known));
+        Assert.DoesNotContain(result.Statements[2].Changes, x =>
+            x.Certainty == SqlCatalogKnowledge.Known);
         Assert.Empty(result.FinalCatalog.Tables.SelectMany(t => t.Indexes));
     }
 
@@ -176,8 +176,8 @@ public sealed class SqlCorePostgresSchemaIndexNamespaceTests
 
         Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed,
             result.Statements[3].Status);
-        Assert.Empty(result.Statements[3].Changes.Where(x =>
-            x.Certainty == SqlCatalogKnowledge.Known));
+        Assert.DoesNotContain(result.Statements[3].Changes, x =>
+            x.Certainty == SqlCatalogKnowledge.Known);
     }
 
     [Fact]
@@ -193,8 +193,8 @@ public sealed class SqlCorePostgresSchemaIndexNamespaceTests
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, result.Statements[4].Status);
         Assert.Contains(result.Statements[4].Diagnostics,
             x => x.Code == "SQL_SCHEMA_DEPENDENCY_UNPROVEN");
-        Assert.Empty(result.Statements[4].Changes.Where(x =>
-            x.Certainty == SqlCatalogKnowledge.Known));
+        Assert.DoesNotContain(result.Statements[4].Changes, x =>
+            x.Certainty == SqlCatalogKnowledge.Known);
         Assert.False(result.FinalCatalog.IsClosedWorld);
     }
 

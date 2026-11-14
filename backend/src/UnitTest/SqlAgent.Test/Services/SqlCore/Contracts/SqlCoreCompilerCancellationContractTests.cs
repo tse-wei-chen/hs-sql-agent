@@ -99,12 +99,8 @@ public sealed class SqlCoreCompilerCancellationContractTests
                 SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
                 Validation(), source.Token);
 
-        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
-            "SELECT 2", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            Validation(), new SqlExecutionPlanPolicy()).Sql);
-        Assert.True(SqlCoreFacade.TryCompileQuery(
-            "SELECT 3", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            Validation(), new SqlExecutionPlanPolicy()).Success);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery("SELECT 2", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, Validation(), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
+        Assert.True(SqlCoreFacade.TryCompileQuery("SELECT 3", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, Validation(), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Success);
     }
 
     [Fact]
@@ -122,9 +118,7 @@ public sealed class SqlCoreCompilerCancellationContractTests
         Cancelled(Overload("CompileDml", DmlParsedSignature),
             dml, SqlAgentToolType.Postgres, Validation(), source.Token);
 
-        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
-            query, SqlAgentToolType.Postgres, Validation(),
-            new SqlExecutionPlanPolicy()).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(query, SqlAgentToolType.Postgres, Validation(), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
     }
 
     [Fact]
@@ -165,9 +159,7 @@ public sealed class SqlCoreCompilerCancellationContractTests
             lock (subscriptions)
                 foreach (var subscription in subscriptions) subscription.Dispose();
         }
-        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
-            "SELECT 2", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            Validation(), new SqlExecutionPlanPolicy()).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery("SELECT 2", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, Validation(), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
     }
 
     [Fact]
@@ -178,9 +170,7 @@ public sealed class SqlCoreCompilerCancellationContractTests
         var dml = Overload("CompileDml", DmlTextSignature);
         using var source = new CancellationTokenSource();
 
-        var standard = SqlCoreFacade.CompileQuery(
-            "SELECT 1", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            Validation(), new SqlExecutionPlanPolicy());
+        var standard = SqlCoreFacade.CompileQuery("SELECT 1", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, Validation(), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         var active = Invoke(query, "SELECT 1", SqlAgentToolType.Postgres,
             SqlAgentToolType.Postgres, Validation(),
             new SqlExecutionPlanPolicy(), source.Token);

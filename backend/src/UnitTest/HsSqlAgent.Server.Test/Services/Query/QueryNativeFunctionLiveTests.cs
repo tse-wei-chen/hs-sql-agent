@@ -649,10 +649,7 @@ public sealed class QueryNativeFunctionLiveTests
             // side-effect policy; this must not be an accidental loss of
             // generic SqlCore syntax/compiler support.
             var provider = new MySqlProvider();
-            var compiled = SqlCoreFacade.CompileQuery(
-                unsafeSql, SqlAgentToolType.MySQL, SqlAgentToolType.MySQL,
-                new SqlPlanValidationContext("native-mysql-grammar"),
-                new SqlExecutionPlanPolicy(Policy().QueryMaxRows));
+            var compiled = SqlCoreFacade.CompileQuery(unsafeSql, SqlAgentToolType.MySQL, SqlAgentToolType.MySQL, new SqlPlanValidationContext("native-mysql-grammar"), new SqlExecutionPlanPolicy(Policy().QueryMaxRows), TestContext.Current.CancellationToken);
             Assert.Equal(SqlStatementKind.Select, compiled.Kind);
             var tool = Tool(provider, SqlAgentToolType.MySQL, target, "");
             var blocked = await tool.ExecuteQuerySql(unsafeSql, ct);

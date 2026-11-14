@@ -178,12 +178,7 @@ public sealed class OracleGrammarMatrixTests
                 actual => string.Equals(actual, table, StringComparison.OrdinalIgnoreCase));
         }
 
-        var command = SqlCoreFacade.CompileQuery(
-            sql,
-            SqlAgentToolType.Oracle,
-            SqlAgentToolType.Oracle,
-            new SqlPlanValidationContext("oracle-combinatorial-grammar-matrix-v1"),
-            new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Oracle, SqlAgentToolType.Oracle, new SqlPlanValidationContext("oracle-combinatorial-grammar-matrix-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.False(string.IsNullOrWhiteSpace(command.Sql));
         Assert.Contains("WITH", command.Sql, StringComparison.OrdinalIgnoreCase);

@@ -92,8 +92,6 @@ public sealed class SqlCoreFunctionPrimitiveExpressionTests
     public void SourceDialectCannotBorrowPostgreSqlFunctionExpressions()
     {
         Assert.Throws<HsSqlAgent.SqlCore.SqlParsing.SqlParseException>(() =>
-            SqlCoreFacade.AnalyzeScript(
-                "CREATE FUNCTION app.f(n integer) RETURNS integer LANGUAGE SQL AS $b$ SELECT n + 1; $b$;",
-                SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty()));
+            SqlCoreFacade.AnalyzeScript("CREATE FUNCTION app.f(n integer) RETURNS integer LANGUAGE SQL AS $b$ SELECT n + 1; $b$;", SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken));
     }
 }

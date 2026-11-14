@@ -69,8 +69,7 @@ public sealed class SqlCoreCatalogBindingTests
     [Fact]
     public void DefaultOpenWorldNeverClaimsProvenNameOrTypeBinding()
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "SELECT id FROM users", SqlAgentToolType.Postgres);
+        var result = SqlCoreFacade.AnalyzeScript("SELECT id FROM users", SqlAgentToolType.Postgres, TestContext.Current.CancellationToken);
         var stmt = Assert.Single(result.Statements);
         Assert.Equal(SqlCatalogBindingStatus.Unverified, stmt.CatalogBinding);
         Assert.Equal(SqlStatementAnalysisStatus.PartiallyAnalyzed, stmt.Status);
@@ -97,10 +96,8 @@ public sealed class SqlCoreCatalogBindingTests
     [Fact]
     public void UnknownDDLConditionalCreateDoesNotInventProofs()
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "CREATE TABLE IF NOT EXISTS users(id INTEGER);" +
-            "SELECT id FROM users;",
-            SqlAgentToolType.Postgres);
+        var result = SqlCoreFacade.AnalyzeScript("CREATE TABLE IF NOT EXISTS users(id INTEGER);" +
+            "SELECT id FROM users;", SqlAgentToolType.Postgres, TestContext.Current.CancellationToken);
 
         Assert.Equal(SqlCatalogBindingStatus.Unverified, result.Statements[1].CatalogBinding);
         Assert.Equal(SqlCatalogKnowledge.Unknown, result.Statements[1].Certainty);
@@ -109,8 +106,7 @@ public sealed class SqlCoreCatalogBindingTests
     [Fact]
     public void MySqlTablelessSelectCanBeBoundWithoutCollationAssumptions()
     {
-        var result = SqlCoreFacade.AnalyzeScript(
-            "SELECT 1", SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty());
+        var result = SqlCoreFacade.AnalyzeScript("SELECT 1", SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         var stmt = Assert.Single(result.Statements);
         Assert.Equal(SqlCatalogBindingStatus.Verified, stmt.CatalogBinding);
         Assert.Equal(SqlCatalogBindingStatus.Verified, stmt.NameBinding);

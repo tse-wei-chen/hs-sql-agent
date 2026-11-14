@@ -1146,19 +1146,9 @@ public sealed class PostgresSyntaxBombardmentTests
     [Fact]
     public void IntegerLiteral_CompileParametersPreserveLegacyClrTypes()
     {
-        var small = SqlCoreFacade.CompileQuery(
-            "SELECT -1 FROM users",
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("postgres-integer-type-parity-v1"),
-            new SqlExecutionPlanPolicy());
+        var small = SqlCoreFacade.CompileQuery("SELECT -1 FROM users", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("postgres-integer-type-parity-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
-        var large = SqlCoreFacade.CompileQuery(
-            "SELECT 2147483648 FROM users",
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("postgres-integer-type-parity-v1"),
-            new SqlExecutionPlanPolicy());
+        var large = SqlCoreFacade.CompileQuery("SELECT 2147483648 FROM users", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("postgres-integer-type-parity-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.Contains(small.Parameters, parameter =>
             parameter.Value is int value && value == -1);
@@ -1218,12 +1208,7 @@ public sealed class PostgresSyntaxBombardmentTests
                 actual => string.Equals(actual, table, StringComparison.OrdinalIgnoreCase));
         }
 
-        var command = SqlCoreFacade.CompileQuery(
-            sql,
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("postgres-positive-syntax-bombardment-v1"),
-            new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("postgres-positive-syntax-bombardment-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.False(string.IsNullOrWhiteSpace(command.Sql));
         Assert.True(

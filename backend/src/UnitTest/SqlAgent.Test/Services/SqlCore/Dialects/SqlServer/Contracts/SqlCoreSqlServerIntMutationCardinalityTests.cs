@@ -138,9 +138,7 @@ public sealed class SqlCoreSqlServerIntMutationCardinalityTests
     [Fact]
     public void MissingProfileNeverInheritsIdentifierProof()
     {
-        var stmt = Assert.Single(SqlCoreFacade.AnalyzeScript(
-            "DELETE FROM dbo.dest FROM dbo.lookup s WHERE dbo.dest.id = s.id;",
-            SqlAgentToolType.MsSqlServer, Catalog()).Statements);
+        var stmt = Assert.Single(SqlCoreFacade.AnalyzeScript("DELETE FROM dbo.dest FROM dbo.lookup s WHERE dbo.dest.id = s.id;", SqlAgentToolType.MsSqlServer, Catalog(), TestContext.Current.CancellationToken).Statements);
         Assert.Equal(SqlCatalogBindingStatus.Unverified, stmt.CatalogBinding);
         Assert.Equal(SqlMutationSourceMatchCardinality.Unverified, stmt.SourceMatchCardinality);
     }
@@ -174,8 +172,7 @@ public sealed class SqlCoreSqlServerIntMutationCardinalityTests
     [InlineData(SqlAgentToolType.Firebird)]
     public void SixProviderUnrelatedSelectDoesNotInheritJoinedMutationProof(SqlAgentToolType provider)
     {
-        var stmt = Assert.Single(SqlCoreFacade.AnalyzeScript("SELECT 1;", provider,
-            SqlCatalogState.KnownEmpty()).Statements);
+        var stmt = Assert.Single(SqlCoreFacade.AnalyzeScript("SELECT 1;", provider, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken).Statements);
         Assert.Equal(SqlMutationSourceMatchCardinality.NotApplicable, stmt.SourceMatchCardinality);
     }
 }

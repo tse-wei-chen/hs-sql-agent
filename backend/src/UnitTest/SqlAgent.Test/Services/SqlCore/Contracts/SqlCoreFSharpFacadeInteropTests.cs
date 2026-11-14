@@ -18,12 +18,7 @@ public sealed class SqlCoreFSharpFacadeInteropTests
             "fsharp-query-boundary-v2",
             new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
 
-        var command = SqlCoreFacade.CompileQuery(
-            sql,
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
-            validation,
-            new SqlExecutionPlanPolicy(20));
+        var command = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, validation, new SqlExecutionPlanPolicy(20), TestContext.Current.CancellationToken);
 
         Assert.Contains("SELECT", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(" = 1", command.Sql, StringComparison.Ordinal);
@@ -40,12 +35,7 @@ public sealed class SqlCoreFSharpFacadeInteropTests
             "fsharp-comment-prefix-v2",
             new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
 
-        var command = SqlCoreFacade.CompileQuery(
-            sql,
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
-            validation,
-            new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, validation, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.Equal(SqlStatementKind.Query, command.Kind);
         Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, 1));
@@ -58,11 +48,7 @@ public sealed class SqlCoreFSharpFacadeInteropTests
             "fsharp-comment-prefix-dml-v2",
             new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
 
-        var command = SqlCoreFacade.CompileDml(
-            "/* audit comment */ UPDATE users SET name = 'Ada' WHERE id = 1",
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
-            validation);
+        var command = SqlCoreFacade.CompileDml("/* audit comment */ UPDATE users SET name = 'Ada' WHERE id = 1", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, validation, TestContext.Current.CancellationToken);
 
         Assert.Equal(SqlStatementKind.Update, command.Kind);
     }
@@ -75,11 +61,7 @@ public sealed class SqlCoreFSharpFacadeInteropTests
             "fsharp-dml-boundary-v2",
             new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
 
-        var command = SqlCoreFacade.CompileDml(
-            sql,
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
-            validation);
+        var command = SqlCoreFacade.CompileDml(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, validation, TestContext.Current.CancellationToken);
 
         Assert.Contains("UPDATE", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("'b'", command.Sql, StringComparison.Ordinal);
@@ -96,24 +78,14 @@ public sealed class SqlCoreFSharpFacadeInteropTests
             new HashSet<string>(new[] { "public.users" }, StringComparer.OrdinalIgnoreCase));
 
         Assert.Throws<UnauthorizedAccessException>(() =>
-            SqlCoreFacade.CompileQuery(
-                "SELECT id FROM public.secrets",
-                SqlAgentToolType.Postgres,
-                SqlAgentToolType.Postgres,
-                validation,
-                new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery("SELECT id FROM public.secrets", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, validation, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
     }
 
 
     [Fact]
     public void Facade_TryCompileQuery_SuccessUsesTypedCapturedStateWithoutLegacyErrorPayload()
     {
-        var result = SqlCoreFacade.TryCompileQuery(
-            "SELECT 1",
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("fsharp-try-result-success-v1"),
-            new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.TryCompileQuery("SELECT 1", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("fsharp-try-result-success-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.True(result.Success);
         Assert.NotNull(result.Value);
@@ -125,12 +97,7 @@ public sealed class SqlCoreFSharpFacadeInteropTests
     [Fact]
     public void Facade_TryCompileQuery_FailureKeepsLegacyDefaultValueContractAtClrBoundary()
     {
-        var result = SqlCoreFacade.TryCompileQuery(
-            "SELECT FROM",
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("fsharp-try-result-failure-v1"),
-            new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.TryCompileQuery("SELECT FROM", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("fsharp-try-result-failure-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.False(result.Success);
         Assert.Null(result.Value);
@@ -169,14 +136,9 @@ public sealed class SqlCoreFSharpFacadeInteropTests
     [Fact]
     public void Facade_TryCompileQuery_ReportsWhitelistDenialAsTypedPolicyDiagnostic()
     {
-        var result = SqlCoreFacade.TryCompileQuery(
-            "SELECT id FROM public.secrets",
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext(
+        var result = SqlCoreFacade.TryCompileQuery("SELECT id FROM public.secrets", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext(
                 "fsharp-whitelist-diagnostic-v1",
-                new HashSet<string>(new[] { "public.users" }, StringComparer.OrdinalIgnoreCase)),
-            new SqlExecutionPlanPolicy());
+                new HashSet<string>(new[] { "public.users" }, StringComparer.OrdinalIgnoreCase)), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.False(result.Success);
         Assert.Equal("SQL_POLICY_DENIED", result.ErrorCode);
@@ -192,12 +154,7 @@ public sealed class SqlCoreFSharpFacadeInteropTests
     [Fact]
     public void Facade_TryCompileQuery_ReportsGrammarFailuresAsParseErrors()
     {
-        var result = SqlCoreFacade.TryCompileQuery(
-            "SELECT FROM",
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("fsharp-parse-contract-v1"),
-            new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.TryCompileQuery("SELECT FROM", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("fsharp-parse-contract-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.False(result.Success);
         Assert.Equal("SQL_PARSE_ERROR", result.ErrorCode);
@@ -213,11 +170,7 @@ public sealed class SqlCoreFSharpFacadeInteropTests
     [Fact]
     public void Facade_TryCompileDml_ReportsPolicyDenialAsTypedPolicyDiagnostic()
     {
-        var result = SqlCoreFacade.TryCompileDml(
-            "UPDATE users SET name = 'Ada'",
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("fsharp-policy-diagnostic-v1"));
+        var result = SqlCoreFacade.TryCompileDml("UPDATE users SET name = 'Ada'", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("fsharp-policy-diagnostic-v1"), TestContext.Current.CancellationToken);
 
         Assert.False(result.Success);
         Assert.Equal("SQL_POLICY_DENIED", result.ErrorCode);
@@ -235,12 +188,7 @@ public sealed class SqlCoreFSharpFacadeInteropTests
     public void Facade_TryCompileQuery_ReportsBindingFailureAsTypedBindingDiagnostic()
     {
         const string sql = "SELECT missing.id FROM users";
-        var result = SqlCoreFacade.TryCompileQuery(
-            sql,
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("fsharp-binding-diagnostic-v1"),
-            new SqlExecutionPlanPolicy());
+        var result = SqlCoreFacade.TryCompileQuery(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("fsharp-binding-diagnostic-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
 
         Assert.False(result.Success);
         Assert.Equal("SQL_COMPILATION_ERROR", result.ErrorCode);

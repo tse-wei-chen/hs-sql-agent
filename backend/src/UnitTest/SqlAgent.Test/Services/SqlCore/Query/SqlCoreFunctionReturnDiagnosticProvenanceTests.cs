@@ -89,8 +89,7 @@ public sealed class SqlCoreFunctionReturnDiagnosticProvenanceTests
     {
         const string first = "CREATE FUNCTION app.one() RETURNS integer LANGUAGE SQL AS $fn$SELECT 1;$fn$;";
         const string second = "CREATE FUNCTION app.two() RETURNS integer LANGUAGE SQL AS $fn$SELECT FALSE;$fn$;";
-        var report = SqlCoreFacade.AnalyzeScript(first + second, SqlAgentToolType.Postgres,
-            SqlCatalogState.KnownEmpty());
+        var report = SqlCoreFacade.AnalyzeScript(first + second, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Equal(2, report.Statements.Count);
         Assert.Single(report.ProceduralDefinitions);
         var diagnostic = Assert.Single(report.Diagnostics);

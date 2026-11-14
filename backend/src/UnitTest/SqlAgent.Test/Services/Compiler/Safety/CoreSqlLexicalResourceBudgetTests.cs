@@ -19,10 +19,7 @@ public sealed class CoreSqlLexicalResourceBudgetTests
     {
         var text = "SELECT '" + new string('X', 4_194_304) + "'";
         var error = Assert.Throws<SqlParseException>(() =>
-            SqlCoreFacade.CompileQuery(
-                text, dialect, dialect,
-                new SqlPlanValidationContext("resource-guard-v1"),
-                new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(text, dialect, dialect, new SqlPlanValidationContext("resource-guard-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.NotNull(error.Diagnostic);
         Assert.Equal("SQL_LEXICAL_INPUT_LIMIT", error.Diagnostic.Code);
         Assert.Equal(SqlDiagnosticStage.Lexical, error.Diagnostic.Stage);
@@ -38,10 +35,7 @@ public sealed class CoreSqlLexicalResourceBudgetTests
         var text = "SELECT " + string.Concat(
             Enumerable.Repeat("1,", 70_000)) + "1";
         var error = Assert.Throws<SqlParseException>(() =>
-            SqlCoreFacade.CompileQuery(
-                text, dialect, dialect,
-                new SqlPlanValidationContext("resource-guard-v1"),
-                new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(text, dialect, dialect, new SqlPlanValidationContext("resource-guard-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.NotNull(error.Diagnostic);
         Assert.Equal("SQL_LEXICAL_TOKEN_LIMIT", error.Diagnostic.Code);
         Assert.Equal(SqlDiagnosticStage.Lexical, error.Diagnostic.Stage);
@@ -59,10 +53,7 @@ public sealed class CoreSqlLexicalResourceBudgetTests
         var sql = "SELECT " + new string('(', permittedDepth + 1)
             + "1" + new string(')', permittedDepth + 1);
         var error = Assert.Throws<SqlParseException>(() =>
-            SqlCoreFacade.CompileQuery(
-                sql, dialect, dialect,
-                new SqlPlanValidationContext("nesting-budget-v1"),
-                new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(sql, dialect, dialect, new SqlPlanValidationContext("nesting-budget-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
 
         Assert.Equal("SQL_LEXICAL_NESTING_LIMIT", error.Diagnostic?.Code);
         Assert.Equal(SqlDiagnosticStage.Lexical, error.Diagnostic?.Stage);
@@ -80,10 +71,7 @@ public sealed class CoreSqlLexicalResourceBudgetTests
         // The aggregate source text still contains >8,192 quoted '('.
         var sql = "SELECT '" + new string('(', 4_096)
             + "' AS first_part, '" + new string('(', 4_097) + "' AS second_part";
-        var compiled = SqlCoreFacade.CompileQuery(
-            sql, dialect, dialect,
-            new SqlPlanValidationContext("nesting-budget-v1"),
-            new SqlExecutionPlanPolicy());
+        var compiled = SqlCoreFacade.CompileQuery(sql, dialect, dialect, new SqlPlanValidationContext("nesting-budget-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.NotEmpty(compiled.Sql);
     }
 
@@ -94,10 +82,7 @@ public sealed class CoreSqlLexicalResourceBudgetTests
     {
         const int depth = 2_048;
         var sql = "SELECT " + new string('(', depth) + "1" + new string(')', depth);
-        var compiled = SqlCoreFacade.CompileQuery(
-            sql, dialect, dialect,
-            new SqlPlanValidationContext("nesting-budget-v1"),
-            new SqlExecutionPlanPolicy());
+        var compiled = SqlCoreFacade.CompileQuery(sql, dialect, dialect, new SqlPlanValidationContext("nesting-budget-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.NotEmpty(compiled.Sql);
     }
 
@@ -113,10 +98,7 @@ public sealed class CoreSqlLexicalResourceBudgetTests
         var sql = "SELECT id" + string.Concat(
             Enumerable.Repeat(" + id", 40_000)) + " FROM users";
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(
-                sql, dialect, dialect,
-                new SqlPlanValidationContext("ast-budget-v1"),
-                new SqlExecutionPlanPolicy()));
+            SqlCoreFacade.CompileQuery(sql, dialect, dialect, new SqlPlanValidationContext("ast-budget-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_COMPILER_AST_NODE_LIMIT", error.Diagnostic?.Code);
         Assert.Equal(SqlDiagnosticStage.Binding, error.Diagnostic?.Stage);
         Assert.Equal(SqlDiagnosticCategory.Resource, error.Diagnostic?.Category);
@@ -128,9 +110,7 @@ public sealed class CoreSqlLexicalResourceBudgetTests
         var sql = "UPDATE users SET id = id" +
             string.Concat(Enumerable.Repeat(" + id", 40_000));
         var error = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileDml(
-                sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                new SqlPlanValidationContext("ast-budget-v1")));
+            SqlCoreFacade.CompileDml(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("ast-budget-v1"), TestContext.Current.CancellationToken));
         Assert.Equal("SQL_COMPILER_AST_NODE_LIMIT", error.Diagnostic?.Code);
         Assert.Equal(SqlDiagnosticCategory.Resource, error.Diagnostic?.Category);
     }
@@ -152,11 +132,7 @@ public sealed class CoreSqlLexicalResourceBudgetTests
     [Fact]
     public void NormalSql_IsNotAffectedByResourceBudgets()
     {
-        var command = SqlCoreFacade.CompileQuery(
-            "SELECT 1 AS result",
-            SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("resource-guard-v1"),
-            new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery("SELECT 1 AS result", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("resource-guard-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.NotEmpty(command.Sql);
     }
 }

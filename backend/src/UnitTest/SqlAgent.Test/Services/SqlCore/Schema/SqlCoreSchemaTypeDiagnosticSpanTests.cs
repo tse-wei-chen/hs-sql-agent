@@ -102,9 +102,7 @@ public sealed class SqlCoreSchemaTypeDiagnosticSpanTests
                 {
                     provider is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird ? "DESCRIPTION" : "description"
                 }) }));
-        var compiled = SqlCoreFacade.CompileQuery(
-            "SELECT description FROM items WHERE description + 2 > 0",
-            provider, provider, unknown, new SqlExecutionPlanPolicy());
+        var compiled = SqlCoreFacade.CompileQuery("SELECT description FROM items WHERE description + 2 > 0", provider, provider, unknown, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.NotEmpty(compiled.Sql);
     }
 }

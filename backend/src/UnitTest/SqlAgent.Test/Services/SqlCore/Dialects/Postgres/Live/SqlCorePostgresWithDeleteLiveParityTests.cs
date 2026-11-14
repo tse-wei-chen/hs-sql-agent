@@ -43,12 +43,9 @@ public sealed class SqlCorePostgresWithDeleteLiveParityTests
             "RETURNING " + target + ".id";
 
         var native = await Read(conn, Sql("sqlcore_delete_native"), Array.Empty<SqlParameterValue>(), token);
-        var compiled = SqlCoreFacade.CompileDml(
-            Sql("sqlcore_delete_compiled"),
-            SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("postgres-with-delete-live-v1",
+        var compiled = SqlCoreFacade.CompileDml(Sql("sqlcore_delete_compiled"), SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("postgres-with-delete-live-v1",
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                { "sqlcore_delete_source", "sqlcore_delete_compiled" }));
+                { "sqlcore_delete_source", "sqlcore_delete_compiled" }), TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementKind.Delete, compiled.Kind);
         Assert.StartsWith("WITH ", compiled.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(compiled.Parameters, p => Equals(p.Value, 2));

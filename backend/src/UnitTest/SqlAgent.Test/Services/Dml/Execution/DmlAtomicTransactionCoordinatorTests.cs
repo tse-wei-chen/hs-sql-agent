@@ -163,7 +163,7 @@ public sealed class DmlAtomicTransactionCoordinatorTests
             transaction.AcknowledgeRollback();
             if (operation is not null)
             {
-                try { await operation.WaitAsync(TimeSpan.FromSeconds(5)); }
+                try { await operation.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken); }
                 catch (Exception) { }
             }
         }

@@ -109,9 +109,7 @@ public sealed class SqlCoreSqliteIntegerPkMatchEvidenceTests
         const string sql =
             "WITH picked AS (SELECT 2 AS id) " +
             "UPDATE dest SET label = s.payload FROM lookup s WHERE dest.id = s.id";
-        var attempt = SqlCoreFacade.TryCompileDml(sql,
-            SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite,
-            new SqlPlanValidationContext("sqlite-pk-analysis-not-execution"));
+        var attempt = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite, new SqlPlanValidationContext("sqlite-pk-analysis-not-execution"), TestContext.Current.CancellationToken);
         Assert.False(attempt.Success);
         Assert.NotEmpty(attempt.TypedDiagnostics);
     }

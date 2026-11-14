@@ -26,7 +26,7 @@ public sealed class SqlCoreScriptCancellationTests
             SqlCoreFacade.ParseScript("SELECT 1; SELECT 2", dialect, cancellation.Token));
 
         // A cancelled request must not poison later requests on the same context.
-        var fresh = SqlCoreFacade.ParseScript("SELECT 1", dialect);
+        var fresh = SqlCoreFacade.ParseScript("SELECT 1", dialect, TestContext.Current.CancellationToken);
         Assert.Single(fresh.Statements);
     }
 
@@ -46,8 +46,7 @@ public sealed class SqlCoreScriptCancellationTests
             SqlCoreFacade.AnalyzeScript("CREATE TABLE t (id INT); SELECT 1",
                 dialect, SqlCatalogState.KnownEmpty(), cancellation.Token));
 
-        var fresh = SqlCoreFacade.AnalyzeScript("SELECT 1", dialect,
-            SqlCatalogState.KnownEmpty());
+        var fresh = SqlCoreFacade.AnalyzeScript("SELECT 1", dialect, SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
         Assert.Single(fresh.Statements);
     }
 
@@ -79,7 +78,7 @@ public sealed class SqlCoreScriptCancellationTests
         Assert.IsAssignableFrom<OperationCanceledException>(scopeError.InnerException);
 
         // The ambient cancellation scope must be restored after exiting.
-        Assert.Single(SqlCoreFacade.ParseScript("SELECT 1", SqlAgentToolType.Postgres).Statements);
+        Assert.Single(SqlCoreFacade.ParseScript("SELECT 1", SqlAgentToolType.Postgres, TestContext.Current.CancellationToken).Statements);
     }
 
     private sealed class Callback(Func<object> callback) : FSharpFunc<Unit, object>

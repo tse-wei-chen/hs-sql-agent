@@ -101,8 +101,7 @@ public sealed class CoreCompilerStageQuotaTests
         };
         Assert.Equal("SQL_COMPILER_DEADLINE_EXCEEDED", diagnostic?.Code);
         Assert.Equal(SqlDiagnosticCategory.Resource, diagnostic?.Category);
-        Assert.NotEmpty(SqlCoreFacade.CompileQuery("SELECT id FROM users",
-            SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()).Sql);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery("SELECT id FROM users", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken).Sql);
     }
 
     [Fact]
@@ -204,11 +203,7 @@ public sealed class CoreCompilerStageQuotaTests
         Assert.Equal(SqlDiagnosticCategory.Resource, error.Diagnostic?.Category);
 
         // The failing request must release the compilation-local budget.
-        var command = SqlCoreFacade.CompileQuery(
-            "SELECT 1 AS value",
-            SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("quota-recovery-v1"),
-            new SqlExecutionPlanPolicy());
+        var command = SqlCoreFacade.CompileQuery("SELECT 1 AS value", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, new SqlPlanValidationContext("quota-recovery-v1"), new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.NotEmpty(command.Sql);
     }
 

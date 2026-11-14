@@ -102,9 +102,7 @@ public sealed class SqlCoreCrossProviderSessionTests
         // Do not mix in unrelated SQL Server DDL collation capability
         // requirements. NOCOUNT is provably orthogonal to a supplied Catalog.
         var initial = SqlCatalogState.KnownEmpty();
-        var analysis = SqlCoreFacade.AnalyzeScript(
-            "SET NOCOUNT ON; SET NOCOUNT OFF;",
-            SqlAgentToolType.MsSqlServer, initial);
+        var analysis = SqlCoreFacade.AnalyzeScript("SET NOCOUNT ON; SET NOCOUNT OFF;", SqlAgentToolType.MsSqlServer, initial, TestContext.Current.CancellationToken);
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, analysis.Statements[0].Status);
         Assert.Equal(true, analysis.Statements[0].SessionAfter.NoCount);
         Assert.Equal(false, analysis.Statements[1].SessionAfter.NoCount);

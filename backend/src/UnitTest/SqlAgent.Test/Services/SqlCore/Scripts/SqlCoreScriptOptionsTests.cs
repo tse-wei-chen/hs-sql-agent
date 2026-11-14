@@ -28,7 +28,7 @@ public sealed class SqlCoreScriptOptionsTests
     {
         const string sql = "SELECT 1; SELECT 2;";
         var options = new SqlScriptParseOptions(provider);
-        var legacy = SqlCoreFacade.ParseScript(sql, provider);
+        var legacy = SqlCoreFacade.ParseScript(sql, provider, TestContext.Current.CancellationToken);
         var actual = SqlCoreFacade.ParseScript(sql, options);
 
         Assert.Equal(provider, options.SourceDialect);
@@ -52,7 +52,7 @@ public sealed class SqlCoreScriptOptionsTests
     {
         const string sql = "SELECT 1";
         var options = new SqlScriptAnalysisOptions(provider);
-        var legacy = SqlCoreFacade.AnalyzeScript(sql, provider);
+        var legacy = SqlCoreFacade.AnalyzeScript(sql, provider, TestContext.Current.CancellationToken);
         var actual = SqlCoreFacade.AnalyzeScript(sql, options);
 
         Assert.Equal(provider, options.SourceDialect);
@@ -74,7 +74,7 @@ public sealed class SqlCoreScriptOptionsTests
         var catalog = SqlCatalogState.KnownEmpty();
         var options = new SqlScriptAnalysisOptions(SqlAgentToolType.Postgres, catalog);
         var result = SqlCoreFacade.AnalyzeScript(sql, options);
-        var legacy = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Postgres, catalog);
+        var legacy = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Postgres, catalog, TestContext.Current.CancellationToken);
 
         Assert.Same(catalog, options.InitialCatalog);
         Assert.Equal(legacy.Statements.Select(x => x.Status), result.Statements.Select(x => x.Status));
@@ -91,7 +91,7 @@ public sealed class SqlCoreScriptOptionsTests
         const string sql = "SELECT 1 EXCEPT SELECT 2";
         var options = new SqlScriptParseOptions(SqlAgentToolType.Oracle, profile);
         var result = SqlCoreFacade.ParseScript(sql, options);
-        var legacy = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Oracle, profile);
+        var legacy = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Oracle, profile, TestContext.Current.CancellationToken);
 
         Assert.Same(profile, options.SourceProfile);
         Assert.Equal(legacy.Statements.Select(x => x.Status), result.Statements.Select(x => x.Status));
@@ -100,8 +100,7 @@ public sealed class SqlCoreScriptOptionsTests
         var analysisOptions = new SqlScriptAnalysisOptions(
             SqlAgentToolType.Oracle, SqlCatalogState.Unknown(), profile);
         var analyzed = SqlCoreFacade.AnalyzeScript(sql, analysisOptions);
-        var oldAnalysis = SqlCoreFacade.AnalyzeScript(
-            sql, SqlAgentToolType.Oracle, analysisOptions.InitialCatalog, profile);
+        var oldAnalysis = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Oracle, analysisOptions.InitialCatalog, profile, TestContext.Current.CancellationToken);
         Assert.Equal(oldAnalysis.Statements.Select(x => x.Status),
             analyzed.Statements.Select(x => x.Status));
     }

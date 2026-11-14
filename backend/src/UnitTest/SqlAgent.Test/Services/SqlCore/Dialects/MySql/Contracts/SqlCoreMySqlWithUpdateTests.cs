@@ -167,9 +167,7 @@ public sealed class SqlCoreMySqlWithUpdateTests
     {
         const string sql = "WITH picked AS (SELECT 7 AS id) " +
                            "UPDATE users SET name = 'x' WHERE id IN (SELECT id FROM picked)";
-        var crossProvider = SqlCoreFacade.TryCompileDml(sql,
-            SqlAgentToolType.MySQL, SqlAgentToolType.Postgres,
-            new SqlPlanValidationContext("mysql-update-cross-provider"));
+        var crossProvider = SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.MySQL, SqlAgentToolType.Postgres, new SqlPlanValidationContext("mysql-update-cross-provider"), TestContext.Current.CancellationToken);
         Assert.False(crossProvider.Success);
         Assert.NotEmpty(crossProvider.TypedDiagnostics);
 
