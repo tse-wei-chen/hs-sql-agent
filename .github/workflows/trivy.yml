@@ -1,0 +1,58 @@
+name: Trivy Security Scan
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  repository-scan:
+    name: Dependencies, IaC and secrets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Scan repository with Trivy
+        # Pin the reviewed release by full commit SHA (not a mutable tag).
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig,secret
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH,MEDIUM
+          limit-severities-for-sarif: true
+          # Report existing findings before introducing a new blocking baseline.
+          # Scanner/setup errors still fail this job.
+          exit-code: '0'
+
+      - name: Upload findings to GitHub code scanning
+        # Fork PR tokens cannot write security events; the SARIF artifact below
+        # remains available for reviewing those PRs.
+        if: ${{ !cancelled() && hashFiles('trivy-results.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-repository
+
+      - name: Retain SARIF scan evidence
+        if: ${{ !cancelled() && hashFiles('trivy-results.sarif') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-repository-sarif
+          path: trivy-results.sarif
+          if-no-files-found: error
+          retention-days: 14
