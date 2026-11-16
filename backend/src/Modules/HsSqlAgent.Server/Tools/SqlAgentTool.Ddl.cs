@@ -60,12 +60,40 @@ public partial class SqlAgentTool
         FirebirdDdlRuntimeResult? firebirdOutcome = null;
         MySqlDdlRuntimeResult? mySqlOutcome = null;
         OracleDdlRuntimeResult? oracleOutcome = null;
+        // This admission token is canceled by either the caller or the
+        // distributed lease. Do not equate a canceled in-flight native DDL
+        // with proof that the database did nothing.
+        var admissionToken = cancellationToken;
+        var executionDelegated = false;
+        string? providerName = null;
+
+        McpDdlToolResult UnconfirmedHostOutcome()
+        {
+            const string message = "DDL outcome is unconfirmed. Do not retry; reconcile physical schema and approval request.";
+            // Make the audit attempt reflect the same uncertainty as MCP.
+            outcome = new DdlRuntimeResult(DdlRuntimeStatus.OutcomeUnknown,
+                null, message, "ddl.outcome_unknown");
+            return new McpDdlToolResult("outcome_unknown", false, providerName,
+                null, null, null, null, null, message,
+                new McpToolError("ddl.outcome_unknown", message, "DdlExecution"));
+        }
+
+        McpDdlToolResult Publish(McpDdlToolResult result)
+        {
+            // A revoked preview is stale, but once a native COMMIT is
+            // confirmed the lease's later revocation cannot undo that fact.
+            if (previewOnly)
+                admissionToken.ThrowIfCancellationRequested();
+            return result;
+        }
+
         try
         {
             var actor = RequireDdlGrant();
             var config = await ResolveSqlConfigAsync();
             if (!CheckProviderAndConnectionString(config, out var providerType))
                 throw new UnauthorizedAccessException("DDL provider or connection is unverified.");
+            providerName = providerType.ToString();
             var configured = providerType switch
             {
                 SqlAgentToolType.Postgres => _postgresDdlRuntime is { Enabled: true },
@@ -96,51 +124,64 @@ public partial class SqlAgentTool
             await using var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken);
             if (lease is null)
                 throw new InvalidOperationException("DDL concurrency limit exceeded.");
+            using var leaseCancellation = new SqlExecutionLeaseCancellation(lease, cancellationToken);
+            admissionToken = leaseCancellation.Token;
+            admissionToken.ThrowIfCancellationRequested();
+            executionDelegated = !previewOnly;
             if (providerType == SqlAgentToolType.Sqlite)
             {
                 sqliteOutcome = await _sqliteDdlRuntime!.RunAsync(
                     provider, config.ConnectionString, sql, actor,
-                    previewOnly, _ddlApprovalProvider, cancellationToken);
-                return McpDdlToolResult.FromSqliteRuntime(sqliteOutcome);
+                    previewOnly, _ddlApprovalProvider, admissionToken);
+                return Publish(McpDdlToolResult.FromSqliteRuntime(sqliteOutcome));
             }
             if (providerType == SqlAgentToolType.MsSqlServer)
             {
                 sqlServerOutcome = await _sqlServerDdlRuntime!.RunAsync(
                     provider, config.ConnectionString, sql, actor,
-                    previewOnly, _ddlApprovalProvider, cancellationToken);
-                return McpDdlToolResult.FromSqlServerRuntime(sqlServerOutcome);
+                    previewOnly, _ddlApprovalProvider, admissionToken);
+                return Publish(McpDdlToolResult.FromSqlServerRuntime(sqlServerOutcome));
             }
             if (providerType == SqlAgentToolType.Firebird)
             {
                 firebirdOutcome = await _firebirdDdlRuntime!.RunAsync(
                     provider, config.ConnectionString, sql, actor,
-                    previewOnly, _ddlApprovalProvider, cancellationToken);
-                return McpDdlToolResult.FromFirebirdRuntime(firebirdOutcome);
+                    previewOnly, _ddlApprovalProvider, admissionToken);
+                return Publish(McpDdlToolResult.FromFirebirdRuntime(firebirdOutcome));
             }
             if (providerType == SqlAgentToolType.MySQL)
             {
                 mySqlOutcome = await _mySqlDdlRuntime!.RunAsync(
                     provider, config.ConnectionString, sql, actor,
-                    previewOnly, _ddlApprovalProvider, cancellationToken);
-                return McpDdlToolResult.FromMySqlRuntime(mySqlOutcome);
+                    previewOnly, _ddlApprovalProvider, admissionToken);
+                return Publish(McpDdlToolResult.FromMySqlRuntime(mySqlOutcome));
             }
             if (providerType == SqlAgentToolType.Oracle)
             {
                 oracleOutcome = await _oracleDdlRuntime!.RunAsync(
                     provider, config.ConnectionString, sql, actor,
-                    previewOnly, _ddlApprovalProvider, cancellationToken);
-                return McpDdlToolResult.FromOracleRuntime(oracleOutcome);
+                    previewOnly, _ddlApprovalProvider, admissionToken);
+                return Publish(McpDdlToolResult.FromOracleRuntime(oracleOutcome));
             }
             outcome = await _postgresDdlRuntime!.RunAsync(
                 provider, config.ConnectionString, sql, actor,
-                previewOnly, _ddlApprovalProvider, cancellationToken);
-            return McpDdlToolResult.FromRuntime(outcome);
+                previewOnly, _ddlApprovalProvider, admissionToken);
+            return Publish(McpDdlToolResult.FromRuntime(outcome));
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (admissionToken.IsCancellationRequested)
         {
+            // A provider that unexpectedly leaks cancellation after its
+            // execution stage began cannot prove the native outcome here.
+            if (executionDelegated)
+                return UnconfirmedHostOutcome();
+            if (cancellationToken.IsCancellationRequested)
+                return new McpDdlToolResult("rejected", false, null, null, null, null,
+                    null, null, "DDL request cancelled before execution.",
+                    new McpToolError("ddl.cancelled", "DDL request cancelled.", "Approval"));
             return new McpDdlToolResult("rejected", false, null, null, null, null,
-                null, null, "DDL request cancelled; no execution was authorized.",
-                new McpToolError("ddl.cancelled", "DDL request cancelled.", "Approval"));
+                null, null, "DDL lease was revoked before execution.",
+                new McpToolError("ddl.lease_revoked_before_execute",
+                    "DDL admission expired before execution.", "Admission"));
         }
         catch (UnauthorizedAccessException)
         {
@@ -150,6 +191,8 @@ public partial class SqlAgentTool
         }
         catch (Exception)
         {
+            if (executionDelegated)
+                return UnconfirmedHostOutcome();
             return new McpDdlToolResult("failed", false, null, null, null, null,
                 null, null, "DDL Host failed before starting execution.",
                 new McpToolError("ddl.host_failed", "DDL Host failed before starting execution.", "Host"));
