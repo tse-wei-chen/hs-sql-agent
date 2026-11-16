@@ -47,7 +47,7 @@ public sealed class SqlCoreBoundDependencyGraphTests
         Assert.All(report.Dependencies,
             item => Assert.Equal(SqlCatalogKnowledge.Unknown, item.Certainty));
         var list = Assert.IsAssignableFrom<IList<SqlScriptStaticDependencyEdge>>(edges);
-        Assert.Throws<NotSupportedException>(() => list[0] = list[0]);
+        Assert.Throws<NotSupportedException>(() => { list[0] = list[0]; });
     }
 
     [Fact]
