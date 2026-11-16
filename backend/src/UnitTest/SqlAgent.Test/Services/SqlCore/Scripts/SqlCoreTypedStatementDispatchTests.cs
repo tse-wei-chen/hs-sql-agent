@@ -242,4 +242,23 @@ public sealed class SqlCoreTypedStatementDispatchTests
         Assert.Equal(SqlScriptParseStatus.Unsupported, statement.Status);
     }
 
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void QueryFacts_RejectsMutationBeforeDmlPolicyWithoutReclassifyingAsParseError(
+        SqlAgentToolType provider)
+    {
+        var error = Assert.Throws<ArgumentException>(() =>
+            SqlCoreFacade.CompileQueryWithFacts(
+                "UPDATE users SET name = 'Ada'", provider, provider,
+                new SqlPlanValidationContext("u1-query-facts-kind"),
+                new SqlExecutionPlanPolicy(10)));
+        Assert.Contains("CompileQuery", error.Message, StringComparison.Ordinal);
+    }
+
 }

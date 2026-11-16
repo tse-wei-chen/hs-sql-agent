@@ -806,6 +806,8 @@ module internal RewriteFacadeAdapter =
         | :? UnauthorizedAccessException -> reraise()
         | :? SqlCompilationException -> reraise()
         | :? SqlParseException -> reraise()
+        | :? ArgumentException as ex
+            when ex.Data.Contains("HsSqlAgent.SqlCore.FamilyMismatch") -> reraise()
         | :? ArgumentException as ex when String.Equals(ex.ParamName, "sql", StringComparison.Ordinal) ->
             raise (SqlParseException(ex.Message, ex))
         | :? InvalidOperationException as ex when compilationErrorMessage ex.Message ->
