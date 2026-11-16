@@ -171,8 +171,7 @@ module internal RewriteScriptParser =
                                 // determines the public DQL/DML statement kind.
                                 if captureTyped then typed <- Some parsed
                                 let parsedFamily =
-                                    RewriteStatementDispatch.proveParsed parsed
-                                    |> RewriteStatementDispatch.provenFamily
+                                    RewriteStatementDispatch.parsedFamily parsed
                                 parsedFamily, SqlScriptParseStatus.Parsed, None
                             with
                             | :? SqlParseException as ex

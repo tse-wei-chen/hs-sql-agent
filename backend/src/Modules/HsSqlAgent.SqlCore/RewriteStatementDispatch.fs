@@ -102,22 +102,33 @@ module internal RewriteStatementDispatch =
         | Procedural -> SqlScriptStatementKind.Procedural
         | Unknown -> SqlScriptStatementKind.Unknown
 
-    let proveParsed (parsed: ParsedSql) =
+    /// Exactly the two grammars that can produce a compiled AST.
+    /// Internal exhaustive matching remains owned by this module.
+    type CompilableFamily = QueryGrammar | MutationGrammar
+
+    let private grammarOfParsed (parsed: ParsedSql) =
         match (Parsed.value parsed).Statement with
-        | QueryStatement _ -> ProvenQuerySyntax parsed
+        | QueryStatement _ -> QueryGrammar
         | InsertStatement _ | UpdateStatement _ | DeleteStatement _ | MergeStatement _ ->
-            ProvenMutationSyntax parsed
+            MutationGrammar
+
+    /// ParseScript needs the family but not an extra allocated proof token.
+    /// It still derives the decision solely from the fully parsed closed AST.
+    let parsedFamily parsed =
+        match grammarOfParsed parsed with
+        | QueryGrammar -> Query
+        | MutationGrammar -> Mutation
+
+    let proveParsed parsed =
+        match grammarOfParsed parsed with
+        | QueryGrammar -> ProvenQuerySyntax parsed
+        | MutationGrammar -> ProvenMutationSyntax parsed
 
     let proveBound (bound: BoundSql) =
         match (Bound.value bound).Statement with
         | QueryStatement _ -> ProvenQueryBinding bound
         | InsertStatement _ | UpdateStatement _ | DeleteStatement _ | MergeStatement _ ->
             ProvenMutationBinding bound
-
-    /// Only the Query and Mutation grammars are currently compile-capable.
-    /// The closed two-case result lets callers exhaustively match without
-    /// exposing private proof constructors or admitting analyze-only families.
-    type CompilableFamily = QueryGrammar | MutationGrammar
 
     let compiledFamily = function
         | ProvenQuerySyntax _ -> QueryGrammar
@@ -133,6 +144,3 @@ module internal RewriteStatementDispatch =
     let boundValue = function
         | ProvenQueryBinding bound | ProvenMutationBinding bound -> bound
 
-    let provenFamily = function
-        | ProvenQuerySyntax _ -> Query
-        | ProvenMutationSyntax _ -> Mutation
