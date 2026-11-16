@@ -12,6 +12,7 @@ using HsSqlAgent.SqlCore.Models;
 using Microsoft.FSharp.Core;
 using System.Reflection;
 
+if (SqlCoreV3Baseline.TryRun(args)) return;
 if (SqlCoreCapabilityStackProbe.TryRun(args)) return;
 if (SqlCoreDepthProbe.TryRun(args)) return;
 
