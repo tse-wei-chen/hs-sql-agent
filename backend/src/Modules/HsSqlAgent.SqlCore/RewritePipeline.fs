@@ -243,7 +243,7 @@ module internal RewritePipeline =
 
     /// Reject a family mismatch before binding or invoking the other
     /// domain's policy/renderer. No script analysis or second lex is needed.
-    let private ensureIntent intent (parameter: string) (proof: RewriteStatementDispatch.ParsedFamily) =
+    let private ensureIntent intent (parameter: string) (proof: RewriteStatementDispatch.VerifiedFamily) =
         match intent, RewriteStatementDispatch.compiledFamily proof with
         | QueryOnly, RewriteStatementDispatch.QueryGrammar
         | MutationOnly, RewriteStatementDispatch.MutationGrammar -> ()
