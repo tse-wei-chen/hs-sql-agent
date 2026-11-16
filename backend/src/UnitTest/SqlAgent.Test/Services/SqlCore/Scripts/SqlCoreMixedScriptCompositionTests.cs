@@ -35,6 +35,15 @@ public sealed class SqlCoreMixedScriptCompositionTests
         Assert.Equal(1, report.BoundCrossDomainDependencyCount);
         Assert.False(report.IsCompositionExecutionProof);
         Assert.Equal(SqlCatalogBindingStatus.Verified, report.Statements[1].NameBinding);
+
+        // A Schema + Query mix is still a cross-family script even without
+        // DML; a generic family classifier must not label it single-domain.
+        var schemaQuery = Analyze(
+            "CREATE TABLE other(id INTEGER); SELECT id FROM other;");
+        Assert.Equal(SqlScriptCompositionStatus.MixedAnalyzeOnly,
+            schemaQuery.CompositionStatus);
+        Assert.Contains(schemaQuery.CompositionFindings,
+            item => item.Kind == SqlScriptCompositionConcern.CrossDomainComposition);
     }
 
     [Fact]
@@ -88,6 +97,10 @@ public sealed class SqlCoreMixedScriptCompositionTests
         Assert.Contains(unbound.CompositionFindings,
             item => item.Kind == SqlScriptCompositionConcern.UnverifiedVirtualBinding);
         Assert.Empty(unbound.StaticDependencyEdges);
+
+        var singleUnbound = Analyze("SELECT id FROM missing",
+            catalog: SqlCatalogState.Unknown());
+        Assert.Equal(SqlScriptCompositionStatus.Unknown, singleUnbound.CompositionStatus);
     }
 
     [Fact]

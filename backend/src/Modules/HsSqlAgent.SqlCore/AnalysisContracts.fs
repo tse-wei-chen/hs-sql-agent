@@ -151,6 +151,7 @@ type SqlScriptCompositionConcern =
     | BatchBoundary = 7
     | PossibleImplicitCommit = 8
     | UnreconciledDml = 9
+    | CrossDomainComposition = 10
 
 [<Sealed>]
 type SqlScriptCompositionFinding internal (
@@ -951,6 +952,12 @@ type SqlScriptAnalysisResult internal (
             |> Seq.distinct
             |> Seq.truncate 2
             |> Seq.length > 1
+        if mixed then
+            // Every distinct-family pair must be identifiable even when it
+            // has no specific DML/TCL/privileged-domain risk.
+            add SqlScriptCompositionConcern.CrossDomainComposition
+                (statements |> Seq.findIndex (fun statement ->
+                    statement.Kind <> statements[0].Kind))
         if query && mutation then
             add SqlScriptCompositionConcern.ReadWriteComposition
                 (statements |> Seq.findIndex (fun statement ->
@@ -972,9 +979,8 @@ type SqlScriptAnalysisResult internal (
                 add SqlScriptCompositionConcern.PrivilegedOrProcedural index
             if mixed && statement.Kind = SqlScriptStatementKind.Session then
                 add SqlScriptCompositionConcern.SessionScope index
-            if mixed
-               && (statement.Kind = SqlScriptStatementKind.Query
-                   || statement.Kind = SqlScriptStatementKind.Mutation)
+            if (statement.Kind = SqlScriptStatementKind.Query
+                || statement.Kind = SqlScriptStatementKind.Mutation)
                && statement.NameBinding <> SqlCatalogBindingStatus.Verified then
                 add SqlScriptCompositionConcern.UnverifiedVirtualBinding index
             if statement.Status = SqlStatementAnalysisStatus.Invalid
