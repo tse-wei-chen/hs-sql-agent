@@ -75,4 +75,36 @@ public sealed class SqlCoreBoundDependencyGraphTests
         Assert.Empty(report.StaticDependencyEdges);
         Assert.NotEqual(SqlCatalogBindingStatus.Verified, report.Statements[2].NameBinding);
     }
+    [Fact]
+    public void ProvenCteShadowing_DependsOnBoundPhysicalSourceNotSameNamedTable()
+    {
+        const string sql =
+            "CREATE TABLE users(id INTEGER);" +
+            "CREATE TABLE other(id INTEGER);" +
+            "WITH users AS (SELECT id FROM other) SELECT id FROM users";
+        var report = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Postgres,
+            SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(SqlCatalogBindingStatus.Verified, report.Statements[2].NameBinding);
+        var edge = Assert.Single(report.StaticDependencyEdges);
+        Assert.Equal(1, edge.PredecessorStatementIndex);
+        Assert.Equal(2, edge.SuccessorStatementIndex);
+        Assert.Equal("other", edge.ObjectIdentity.DisplayName);
+    }
+
+    [Fact]
+    public void SqlServerGoBoundary_DoesNotMintCrossBatchEdges()
+    {
+        const string sql = "CREATE TABLE users(id INT)\nGO\nALTER TABLE users ADD nickname VARCHAR(20)";
+        var report = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.MsSqlServer,
+            SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, report.Statements.Count);
+        Assert.Equal(new[] { 0, 1 },
+            report.Statements.Select(s => s.Syntax.BatchIndex));
+        Assert.All(report.Statements, statement =>
+            Assert.Equal(SqlStatementAnalysisStatus.Analyzed, statement.Status));
+        Assert.Empty(report.StaticDependencyEdges);
+    }
+
 }
