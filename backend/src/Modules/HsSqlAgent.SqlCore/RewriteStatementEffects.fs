@@ -88,20 +88,23 @@ module internal RewriteStatementEffects =
             | DeleteStatement delete -> not delete.Ctes.IsEmpty
             | _ -> false
         let document =
-            if mutationHasCtes then
-                match boundEvidence with
-                | Some bound -> Typestate.Bound.value bound
-                | None ->
-                    try
-                        RewriteBinder.bind sourceDialect parsed
-                        |> Typestate.Bound.value
-                    with
-                    | :? SqlCompilationException as ex
-                        when not (isNull ex.Diagnostic)
-                             && (nonNull ex.Diagnostic).Category = SqlDiagnosticCategory.Resource ->
-                        reraise()
-                    | :? InvalidOperationException -> original
-            else original
+            match boundEvidence with
+            | Some bound ->
+                // The same verified binding used for Catalog/name checks
+                // resolves CTE and scoped table references. Never replace it
+                // with raw diagnostic names when producing typed dependencies.
+                Typestate.Bound.value bound
+            | None when mutationHasCtes ->
+                try
+                    RewriteBinder.bind sourceDialect parsed
+                    |> Typestate.Bound.value
+                with
+                | :? SqlCompilationException as ex
+                    when not (isNull ex.Diagnostic)
+                         && (nonNull ex.Diagnostic).Category = SqlDiagnosticCategory.Resource ->
+                    reraise()
+                | :? InvalidOperationException -> original
+            | None -> original
         let references = physicalReferences document
         let potential kind operation (name: string | null) dependencies =
             effect kind operation name null SqlCatalogKnowledge.Unknown
