@@ -1,10 +1,13 @@
 namespace HsSqlAgent.SqlCore.Rewrite
 
 open HsSqlAgent.SqlCore.Enums
+open HsSqlAgent.SqlCore.Core.Compilation
+open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.Script
 open HsSqlAgent.SqlCore.Rewrite.RewriteLexer
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.Typestate
+open HsSqlAgent.SqlCore.Rewrite.RewriteSchemaAnalyzer
 
 /// Single owner of lexical family candidates and typed AST family decisions.
 /// Candidates and unsupported script classifications are never execution proof.
@@ -17,17 +20,34 @@ module internal RewriteStatementDispatch =
     // the per-statement ScriptDispatch hot path. Keep parsed/bound proof DUs
     // reference-backed with private constructors to preserve typestate safety.
     [<Struct>]
-    type LexicalCandidate =
+    type CandidateFamily =
         | Parseable of StatementFamily
         | WithCandidate
         | Recognized of StatementFamily
         | Unrecognized
 
     /// Constructors are private: these tokens come only from parsed F# AST.
-    type ParsedFamily =
+    type VerifiedFamily =
         private
         | ProvenQuerySyntax of ParsedSql
         | ProvenMutationSyntax of ParsedSql
+
+    /// A Query/Mutation parser proof is never interchangeable with the
+    /// Schema parser proof, and neither includes an authorization decision.
+    type VerifiedSchema = private VerifiedSchema of DdlOperation
+
+    type SchemaVerification =
+        | ProvenSchema of VerifiedSchema
+        | UnsupportedSchema
+        | InvalidSchema of string
+
+    /// Script parsing deliberately preserves Unsupported for analyze-only
+    /// domains, even where a separate domain grammar can analyze them.
+    type ScriptDecision =
+        | Verified of VerifiedFamily
+        | InvalidCandidate of StatementFamily * SqlDiagnostic
+        | UnsupportedCandidate of StatementFamily * SqlDiagnostic
+        | UnknownCandidate of SqlDiagnostic
 
     type BoundFamily =
         private
@@ -87,6 +107,16 @@ module internal RewriteStatementDispatch =
         | "CALL" | "EXEC" | "EXECUTE" | "DO" | "DECLARE" -> Recognized Procedural
         | _ -> Unrecognized
 
+    /// Only the existing closed Schema grammar may mint a schema proof.
+    /// The compiler supplies already validated tokens, avoiding any second lex.
+    let verifySchema dialect profile tokens =
+        match RewriteSchemaAnalyzer.parseForWith dialect profile tokens with
+        | DdlSyntax.Recognized operation -> ProvenSchema(VerifiedSchema operation)
+        | DdlSyntax.Unsupported -> UnsupportedSchema
+        | DdlSyntax.Invalid message -> InvalidSchema message
+
+    let schemaOperation (VerifiedSchema operation) = operation
+
     let candidateFamily = function
         | Parseable family | Recognized family -> family
         | WithCandidate | Unrecognized -> Unknown
@@ -119,10 +149,24 @@ module internal RewriteStatementDispatch =
         | QueryGrammar -> Query
         | MutationGrammar -> Mutation
 
-    let proveParsed parsed =
+    let proveParsed parsed : VerifiedFamily =
         match grammarOfParsed parsed with
         | QueryGrammar -> ProvenQuerySyntax parsed
         | MutationGrammar -> ProvenMutationSyntax parsed
+
+    let projectScriptDecision = function
+        | Verified proof ->
+            let kind =
+                match proof with
+                | ProvenQuerySyntax _ -> Query
+                | ProvenMutationSyntax _ -> Mutation
+            publicKind kind, SqlScriptParseStatus.Parsed, None
+        | InvalidCandidate(family, diagnostic) ->
+            publicKind family, SqlScriptParseStatus.Invalid, Some diagnostic
+        | UnsupportedCandidate(family, diagnostic) ->
+            publicKind family, SqlScriptParseStatus.Unsupported, Some diagnostic
+        | UnknownCandidate diagnostic ->
+            SqlScriptStatementKind.Unknown, SqlScriptParseStatus.Unsupported, Some diagnostic
 
     let proveBound (bound: BoundSql) =
         match (Bound.value bound).Statement with

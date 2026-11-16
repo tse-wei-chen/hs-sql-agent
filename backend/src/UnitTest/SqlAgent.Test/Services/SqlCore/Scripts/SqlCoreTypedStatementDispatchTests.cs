@@ -1,4 +1,5 @@
 using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.Catalog;
 using HsSqlAgent.SqlCore.Core.Compilation;
 using HsSqlAgent.SqlCore.Core.Pipeline;
 using HsSqlAgent.SqlCore.Enums;
@@ -259,6 +260,67 @@ public sealed class SqlCoreTypedStatementDispatchTests
                 new SqlPlanValidationContext("u1-query-facts-kind"),
                 new SqlExecutionPlanPolicy(10)));
         Assert.Contains("CompileQuery", error.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("WITH ids AS (SELECT id FROM users) UPDATE users SET name =")]
+    [InlineData("WITH ids AS (SELECT id FROM users) DELETE FROM users WHERE")]
+    public void FailedWithMutation_DoesNotBorrowQueryProof(string sql)
+    {
+        var statement = Assert.Single(SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres,
+            TestContext.Current.CancellationToken).Statements);
+        Assert.Equal(SqlScriptStatementKind.Unknown, statement.Kind);
+        Assert.Equal(SqlScriptParseStatus.Invalid, statement.Status);
+        Assert.NotNull(statement.Diagnostic);
+        Assert.Equal(SqlDiagnosticStage.Parse, statement.Diagnostic.Stage);
+        Assert.InRange(statement.Diagnostic.Span.Start, 0, sql.Length);
+    }
+
+    [Fact]
+    public void DdlScriptRecognition_DoesNotChangeAnalysisOrCompileContract()
+    {
+        const string sql = "CREATE TABLE dispatch_example (id INTEGER)";
+        var syntax = Assert.Single(SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres,
+            TestContext.Current.CancellationToken).Statements);
+        Assert.Equal(SqlScriptStatementKind.Schema, syntax.Kind);
+        Assert.Equal(SqlScriptParseStatus.Unsupported, syntax.Status);
+
+        var analysis = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Postgres,
+            SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, Assert.Single(analysis.Statements).Status);
+        Assert.Empty(analysis.Diagnostics);
+
+        var compiled = SqlCoreFacade.CompileDdl(sql,
+            new DdlCompilationOptions(SqlAgentToolType.Postgres, SqlAgentToolType.Postgres));
+        Assert.Equal(DdlSchemaOperation.CreateTable, Assert.Single(compiled.Changes).Operation);
+        Assert.False(compiled.AuthorizesExecution);
+    }
+
+    [Fact]
+    public void InvalidUnknownAndUnsupported_PreserveDistinctStatusAndSourceSpan()
+    {
+        const string sql = "SELECT FROM users; ZORP 1; GRANT SELECT ON users TO reader";
+        var result = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres,
+            TestContext.Current.CancellationToken);
+        Assert.Equal(3, result.Statements.Count);
+        Assert.Equal(new[]
+        {
+            SqlScriptStatementKind.Query,
+            SqlScriptStatementKind.Unknown,
+            SqlScriptStatementKind.Security
+        }, result.Statements.Select(x => x.Kind));
+        Assert.Equal(new[]
+        {
+            SqlScriptParseStatus.Invalid,
+            SqlScriptParseStatus.Unsupported,
+            SqlScriptParseStatus.Unsupported
+        }, result.Statements.Select(x => x.Status));
+        foreach (var statement in result.Statements)
+        {
+            Assert.NotNull(statement.Diagnostic);
+            Assert.Equal(statement.Text, sql.Substring(statement.Span.Start, statement.Span.Length));
+            Assert.Equal(statement.Span.Start, statement.Diagnostic.Span.Start);
+        }
     }
 
 }

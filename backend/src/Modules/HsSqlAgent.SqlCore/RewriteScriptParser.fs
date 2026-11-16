@@ -158,7 +158,7 @@ module internal RewriteScriptParser =
                     let candidate = RewriteStatementDispatch.candidate tokens start sourceDialect
                     let family = RewriteStatementDispatch.candidateFamily candidate
                     let mutable typed: ParsedSql option = None
-                    let actualFamily, status, diagnostic =
+                    let decision =
                         match candidate with
                         | RewriteStatementDispatch.Parseable _
                         | RewriteStatementDispatch.WithCandidate ->
@@ -166,37 +166,41 @@ module internal RewriteScriptParser =
                                 let parsed =
                                     RewriteResourceBudget.withStage "ScriptStatementParse" SqlDiagnosticStage.Parse (fun () ->
                                         RewriteFacadeAdapter.parseSourceValidated text sourceDialect sourceProfile)
-                                // WITH is a lexical prefix, not reliable Query
-                                // evidence. Only the closed, parsed F# AST
-                                // determines the public DQL/DML statement kind.
+                                // WITH cannot establish Query/Mutation from tokens.
+                                // A successful closed AST parse alone mints this proof.
                                 if captureTyped then typed <- Some parsed
-                                let parsedFamily =
-                                    RewriteStatementDispatch.parsedFamily parsed
-                                parsedFamily, SqlScriptParseStatus.Parsed, None
+                                RewriteStatementDispatch.Verified
+                                    (RewriteStatementDispatch.proveParsed parsed)
                             with
                             | :? SqlParseException as ex
                                 when not (Object.ReferenceEquals(ex.Diagnostic, null))
                                      && (nonNull ex.Diagnostic).Category = SqlDiagnosticCategory.Resource ->
                                 reraise()
                             | :? SqlParseException as ex ->
-                                family, SqlScriptParseStatus.Invalid,
-                                Some(invalidDiagnostic ex absoluteStart length)
+                                RewriteStatementDispatch.InvalidCandidate(
+                                    family, invalidDiagnostic ex absoluteStart length)
                         | _ ->
-                            // Preserve the original diagnostic ABI; Kind=Unknown
-                            // distinguishes unrecognized SQL from a recognized
-                            // analyze-only family without changing CLR contracts.
-                            family, SqlScriptParseStatus.Unsupported,
-                            Some(
+                            // Preserve the public diagnostic ABI, but never
+                            // conflate an unknown token with a recognized
+                            // analyze-only family or a successfully parsed AST.
+                            let diagnostic =
                                 SqlDiagnostic(
                                     "SQL_SCRIPT_UNSUPPORTED_STATEMENT",
                                     SqlDiagnosticStage.Parse,
                                     SqlDiagnosticCategory.Capability,
                                     "Statement family recognized, but semantic analysis is not implemented.",
-                                    SqlDiagnosticSpan(absoluteStart, length)))
+                                    SqlDiagnosticSpan(absoluteStart, length))
+                            match candidate with
+                            | RewriteStatementDispatch.Unrecognized ->
+                                RewriteStatementDispatch.UnknownCandidate diagnostic
+                            | _ ->
+                                RewriteStatementDispatch.UnsupportedCandidate(family, diagnostic)
+                    let actualKind, status, diagnostic =
+                        RewriteStatementDispatch.projectScriptDecision decision
                     diagnostic |> Option.iter diagnostics.Add
                     result.Add(
                         SqlScriptStatementSyntax(
-                            RewriteStatementDispatch.publicKind actualFamily,
+                            actualKind,
                             status,
                             batch,
                             SqlDiagnosticSpan(absoluteStart, length),
