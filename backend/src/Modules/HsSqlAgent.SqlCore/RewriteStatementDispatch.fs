@@ -13,6 +13,10 @@ module internal RewriteStatementDispatch =
         | Query | Mutation | Schema | Security | Transaction
         | Session | Utility | Procedural | Unknown
 
+    // A lexical classification is not authority and should not allocate on
+    // the per-statement ScriptDispatch hot path. Keep parsed/bound proof DUs
+    // reference-backed with private constructors to preserve typestate safety.
+    [<Struct>]
     type LexicalCandidate =
         | Parseable of StatementFamily
         | WithCandidate
