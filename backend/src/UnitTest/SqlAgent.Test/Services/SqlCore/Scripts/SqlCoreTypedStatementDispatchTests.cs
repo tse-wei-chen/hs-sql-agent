@@ -152,4 +152,71 @@ public sealed class SqlCoreTypedStatementDispatchTests
         foreach (var statement in parsed.Statements)
             Assert.Equal(statement.Text, sql.Substring(statement.Span.Start, statement.Span.Length));
     }
+
+    public static TheoryData<SqlAgentToolType, string, SqlScriptStatementKind, SqlScriptParseStatus> NegativeMatrix()
+    {
+        var matrix = new TheoryData<SqlAgentToolType, string, SqlScriptStatementKind, SqlScriptParseStatus>();
+        foreach (var provider in new[]
+        {
+            SqlAgentToolType.Postgres, SqlAgentToolType.MySQL, SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.Sqlite, SqlAgentToolType.Oracle, SqlAgentToolType.Firebird
+        })
+        {
+            matrix.Add(provider, "SELECT FROM users", SqlScriptStatementKind.Query, SqlScriptParseStatus.Invalid);
+            matrix.Add(provider, "UPDATE users SET name =", SqlScriptStatementKind.Mutation, SqlScriptParseStatus.Invalid);
+            // These six domains have analyzers but no executable proof in
+            // ParseScript: incomplete lexical candidates remain Unsupported.
+            matrix.Add(provider, "CREATE TABLE", SqlScriptStatementKind.Schema, SqlScriptParseStatus.Unsupported);
+            matrix.Add(provider, "GRANT", SqlScriptStatementKind.Security, SqlScriptParseStatus.Unsupported);
+            matrix.Add(provider, "COMMIT nonsense", SqlScriptStatementKind.Transaction, SqlScriptParseStatus.Unsupported);
+            matrix.Add(provider, "SET", SqlScriptStatementKind.Session, SqlScriptParseStatus.Unsupported);
+            matrix.Add(provider, "EXPLAIN", SqlScriptStatementKind.Utility, SqlScriptParseStatus.Unsupported);
+            matrix.Add(provider, "CALL", SqlScriptStatementKind.Procedural, SqlScriptParseStatus.Unsupported);
+        }
+        return matrix;
+    }
+
+    [Theory]
+    [MemberData(nameof(NegativeMatrix))]
+    public void NegativeFamilyMatrix_NeverPromotesInvalidOrOpaqueSQLToParseProof(
+        SqlAgentToolType provider, string sql, SqlScriptStatementKind expected, SqlScriptParseStatus status)
+    {
+        var statement = Assert.Single(SqlCoreFacade.ParseScript(sql, provider,
+            TestContext.Current.CancellationToken).Statements);
+        Assert.Equal(expected, statement.Kind);
+        Assert.Equal(status, statement.Status);
+        Assert.NotNull(statement.Diagnostic);
+        Assert.Equal(SqlDiagnosticStage.Parse, statement.Diagnostic.Stage);
+        Assert.Equal(sql, statement.Text);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres, SqlScriptStatementKind.Transaction)]
+    [InlineData(SqlAgentToolType.MySQL, SqlScriptStatementKind.Transaction)]
+    [InlineData(SqlAgentToolType.Sqlite, SqlScriptStatementKind.Transaction)]
+    [InlineData(SqlAgentToolType.MsSqlServer, SqlScriptStatementKind.Procedural)]
+    [InlineData(SqlAgentToolType.Oracle, SqlScriptStatementKind.Procedural)]
+    [InlineData(SqlAgentToolType.Firebird, SqlScriptStatementKind.Procedural)]
+    public void BareBegin_UsesSourceDialectContext(
+        SqlAgentToolType provider, SqlScriptStatementKind family)
+    {
+        var statement = Assert.Single(SqlCoreFacade.ParseScript("BEGIN", provider,
+            TestContext.Current.CancellationToken).Statements);
+        Assert.Equal(family, statement.Kind);
+        Assert.Equal(SqlScriptParseStatus.Unsupported, statement.Status);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void DdlFacade_DoesNotAcceptAQueryOrRawFallback(SqlAgentToolType provider)
+    {
+        Assert.ThrowsAny<Exception>(() => SqlCoreFacade.CompileDdl(
+            "SELECT 1", new DdlCompilationOptions(provider, provider)));
+    }
+
 }
