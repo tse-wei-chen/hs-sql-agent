@@ -151,6 +151,39 @@ public sealed class SqliteDdlLiveTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task LeaseRevokedWhileIndependentApprovalReturns_CannotStartNativeDdl()
+    {
+        using var revoked = new CancellationTokenSource();
+        using var linked = new SqlExecutionLeaseCancellation(
+            new RevocableLease(revoked.Token),
+            TestContext.Current.CancellationToken);
+        var approval = new Approval((request, _) =>
+        {
+            revoked.Cancel();
+            return ValueTask.FromResult(new DdlApprovalDecision(
+                DdlApprovalState.Approved, request.RequestId,
+                request.ApprovalFingerprint, "reviewer:separate-person"));
+        });
+
+        var result = await new SqliteDdlRuntime(Enabled()).RunAsync(
+            _provider.Object, _connectionString,
+            "CREATE TABLE main.widgets (id INTEGER NOT NULL)",
+            Actor(), false, approval, linked.Token);
+
+        Assert.False(result.CommitConfirmed);
+        Assert.NotEqual(DdlRuntimeStatus.Committed, result.Status);
+        Assert.False(await HasTableAsync("widgets"));
+        Assert.True(revoked.IsCancellationRequested);
+    }
+
+    private sealed class RevocableLease(CancellationToken token)
+        : IRevocableSqlExecutionLease
+    {
+        public CancellationToken RevocationToken => token;
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    [Fact]
     public async Task ApprovedCreateAddIndex_CommitAndPhysicalSchemaParity()
     {
         var runtime = new SqliteDdlRuntime(Enabled());
