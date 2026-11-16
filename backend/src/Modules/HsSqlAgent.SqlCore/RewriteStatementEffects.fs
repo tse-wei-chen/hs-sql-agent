@@ -148,6 +148,81 @@ module internal RewriteStatementEffects =
             potential SqlEffectKind.WriteData SqlStatementEffectOperation.Merge
                 target sources :: reads sources
 
+    /// Statement-local virtual identities for U2 graph. Only the already
+    /// successful name binder may authorize this *static* association. Raw
+    /// ObjectName/Dependencies diagnostic strings are never parsed as keys.
+    let boundObjectAccesses (syntax: SqlScriptStatementSyntax)
+                            (nameBinding: SqlCatalogBindingStatus)
+                            (before: SqlCatalogState)
+                            (sessionBefore: SqlSessionAnalysisState)
+                            (boundEvidence: BoundSql option) =
+        if nameBinding <> SqlCatalogBindingStatus.Verified
+           || not before.IsClosedWorld then []
+        else
+            match boundEvidence with
+            | None -> []
+            | Some bound ->
+                let document = Typestate.Bound.value bound
+                let mutationTarget =
+                    match document.Statement with
+                    | Statement.InsertStatement insert ->
+                        Some(insert.Target, SqlStatementEffectOperation.Insert)
+                    | Statement.UpdateStatement update ->
+                        Some(update.Target, SqlStatementEffectOperation.Update)
+                    | Statement.DeleteStatement delete ->
+                        Some(delete.Target, SqlStatementEffectOperation.Delete)
+                    | Statement.MergeStatement merge ->
+                        Some(merge.Target, SqlStatementEffectOperation.Merge)
+                    | Statement.QueryStatement _ -> None
+                let identity (identifier: Identifier) =
+                    // Exact one-part quoted dotted names remain distinct from
+                    // two-part qualified identifiers. No String.Split or
+                    // display-name roundtrip is allowed.
+                    let parts =
+                        Identifier.parts identifier
+                        |> List.map (fun part -> part.Value)
+                        |> List.toArray
+                    let requested = SqlCatalogQualifiedName(Array.AsReadOnly parts)
+                    let scopedIdentity =
+                        if parts.Length <> 1 then None
+                        elif sessionBefore.IsSearchPathProven
+                             && not (isNull sessionBefore.SearchPath) then
+                            Some(SqlCatalogQualifiedName(
+                                Array.AsReadOnly [|nonNull sessionBefore.SearchPath; parts[0]|]))
+                        elif sessionBefore.IsDatabaseScopeProven
+                             && not (isNull sessionBefore.CurrentDatabase) then
+                            Some(SqlCatalogQualifiedName(
+                                Array.AsReadOnly [|nonNull sessionBefore.CurrentDatabase; parts[0]|]))
+                        else None
+                    let matches candidate =
+                        candidate.QualifiedName.Key = requested.Key
+                        || (match scopedIdentity with
+                            | Some scoped -> candidate.QualifiedName.Key = scoped.Key
+                            | None -> false)
+                    let existing =
+                        before.Tables
+                        |> Seq.filter (fun table ->
+                            table.Knowledge = SqlCatalogKnowledge.Known && matches table)
+                        |> Seq.truncate 2
+                        |> Seq.toList
+                    match existing with
+                    | [table] -> Some table.QualifiedName
+                    | _ -> None
+                RewriteInspection.physicalIdentifiers bound
+                |> List.mapi (fun index identifier ->
+                    RewriteResourceBudget.checkpoint ()
+                    let operation, kind =
+                        match mutationTarget with
+                        | Some(target, operation)
+                            when index = 0 && Identifier.equivalent target identifier ->
+                            operation, SqlEffectKind.WriteData
+                        | _ -> SqlStatementEffectOperation.ReadTable, SqlEffectKind.ReadData
+                    identity identifier
+                    |> Option.map (fun resolved ->
+                        { Identity = resolved; Operation = operation; Kind = kind }))
+                |> List.choose id
+                |> List.distinctBy (fun item -> item.Identity.Key, item.Operation)
+
     let describe sourceDialect (sourceProfile: SqlProviderCapabilityProfile | null)
                  (syntax: SqlScriptStatementSyntax)
                  (status: SqlStatementAnalysisStatus) (certainty: SqlCatalogKnowledge)
