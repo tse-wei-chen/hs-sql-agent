@@ -2688,6 +2688,7 @@ module internal RewriteScriptAnalyzer =
                     let mutable proceduralDefinitions : SqlProceduralDefinition list = []
                     let mutable sessionOperation = SqlStatementEffectOperation.Unknown
                     let mutable controlOperation = SqlTransactionControlOperation.None
+                    let mutable controlSavepointName : string | null = null
                     let mutable sourceMatchCardinality =
                         if syntax.Kind = SqlScriptStatementKind.Mutation then
                             SqlMutationSourceMatchCardinality.Unverified
@@ -2700,10 +2701,11 @@ module internal RewriteScriptAnalyzer =
                             (if Object.ReferenceEquals(syntax.Diagnostic, null) then []
                              else [nonNull syntax.Diagnostic])
                         elif syntax.Kind = SqlScriptStatementKind.Transaction then
-                            let status, certainty, next, nextSession, newTransaction, changes, diagnostics, parsedControl =
+                            let status, certainty, next, nextSession, newTransaction, changes, diagnostics, parsedControl, parsedSavepoint =
                                 RewriteTransactionAnalyzer.analyze
                                     sourceDialect sourceProfile current session transaction syntax
                             controlOperation <- parsedControl
+                            controlSavepointName <- parsedSavepoint
                             // A transaction boundary or savepoint rollback is
                             // responsible for BOTH catalog and session state.
                             // No separate coordinator-side rollback heuristic.
@@ -2959,7 +2961,8 @@ module internal RewriteScriptAnalyzer =
                             RewriteTransactionProvenance.describe
                                 sourceDialect syntax status runtimeCertainty effects
                                 transactionBefore (RewriteTransactionAnalyzer.status transaction)
-                                controlOperation (readOnly allDiagnostics))
+                                controlOperation controlSavepointName
+                                (readOnly allDiagnostics))
                     current <- after
                     for item in allDiagnostics do errors.Add item
                     let detailedEffects, effectCoverage =
