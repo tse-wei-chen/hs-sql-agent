@@ -214,18 +214,22 @@ module internal RewritePipeline =
     /// Only the closed AST establishes a Query/Mutation family. Domain
     /// typestates independently guard every subsequent stage.
     let private finishBound options bound =
-        match RewriteStatementDispatch.proveBound bound with
-        | RewriteStatementDispatch.BoundQuery value ->
+        let proof = RewriteStatementDispatch.proveBound bound
+        let value = RewriteStatementDispatch.boundValue proof
+        match RewriteStatementDispatch.boundFamily proof with
+        | RewriteStatementDispatch.QueryGrammar ->
             RewriteQueryPipeline.fromBound value |> finishQueryBound options
-        | RewriteStatementDispatch.BoundMutation value ->
+        | RewriteStatementDispatch.MutationGrammar ->
             RewriteMutationPipeline.fromBound value |> finishMutationBound options
 
-    let private finishProven options = function
-        | RewriteStatementDispatch.ParsedQuery parsed ->
+    let private finishProven options proof =
+        let parsed = RewriteStatementDispatch.parsedValue proof
+        match RewriteStatementDispatch.compiledFamily proof with
+        | RewriteStatementDispatch.QueryGrammar ->
             RewriteQueryPipeline.fromParsed parsed
             |> RewriteQueryPipeline.bind (bind options)
             |> finishQueryBound options
-        | RewriteStatementDispatch.ParsedMutation parsed ->
+        | RewriteStatementDispatch.MutationGrammar ->
             RewriteMutationPipeline.fromParsed parsed
             |> RewriteMutationPipeline.bind (bind options)
             |> finishMutationBound options
@@ -239,10 +243,10 @@ module internal RewritePipeline =
 
     /// Reject a family mismatch before binding or invoking the other
     /// domain's policy/renderer. No script analysis or second lex is needed.
-    let private ensureIntent intent parameter (proof: RewriteStatementDispatch.ParsedFamily) =
-        match intent, proof with
-        | QueryOnly, RewriteStatementDispatch.ParsedQuery _
-        | MutationOnly, RewriteStatementDispatch.ParsedMutation _ -> ()
+    let private ensureIntent intent (parameter: string) (proof: RewriteStatementDispatch.ParsedFamily) =
+        match intent, RewriteStatementDispatch.compiledFamily proof with
+        | QueryOnly, RewriteStatementDispatch.QueryGrammar
+        | MutationOnly, RewriteStatementDispatch.MutationGrammar -> ()
         | _ ->
             let ex : exn =
                 match intent with

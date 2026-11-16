@@ -109,6 +109,25 @@ module internal RewriteStatementDispatch =
         | InsertStatement _ | UpdateStatement _ | DeleteStatement _ | MergeStatement _ ->
             BoundMutation bound
 
+    /// Only the Query and Mutation grammars are currently compile-capable.
+    /// The closed two-case result lets callers exhaustively match without
+    /// exposing private proof constructors or admitting analyze-only families.
+    type CompilableFamily = QueryGrammar | MutationGrammar
+
+    let compiledFamily = function
+        | ParsedQuery _ -> QueryGrammar
+        | ParsedMutation _ -> MutationGrammar
+
+    let boundFamily = function
+        | BoundQuery _ -> QueryGrammar
+        | BoundMutation _ -> MutationGrammar
+
+    let parsedValue = function
+        | ParsedQuery parsed | ParsedMutation parsed -> parsed
+
+    let boundValue = function
+        | BoundQuery bound | BoundMutation bound -> bound
+
     let provenFamily = function
         | ParsedQuery _ -> Query
         | ParsedMutation _ -> Mutation
