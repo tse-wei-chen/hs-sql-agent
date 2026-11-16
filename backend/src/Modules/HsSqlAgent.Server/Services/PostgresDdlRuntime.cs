@@ -273,6 +273,7 @@ public sealed partial class PostgresDdlRuntime(
                     return Rejected("ddl.precondition_changed", error, preview);
                 }
 
+                cancellationToken.ThrowIfCancellationRequested();
                 nativeCommandStarted = true;
                 await ExecuteHostSqlAsync(connection, transaction, plan.Command.Sql, cancellationToken);
                 var after = await ReadSnapshotAsync(connection, transaction, schema, table, cancellationToken);

@@ -223,6 +223,7 @@ public sealed class SqlServerDdlRuntime(
                 return await RollbackAsync(transaction, preview,
                     "ddl.schema_drift", "Target, approval, policy or schema changed.", false);
 
+            token.ThrowIfCancellationRequested();
             startedNative = true;
             phase = "native_execution";
             await ExecuteAsync(connection, transaction, plan.Command.Sql, token);
