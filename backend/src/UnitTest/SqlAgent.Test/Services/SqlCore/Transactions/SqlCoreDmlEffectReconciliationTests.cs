@@ -114,5 +114,17 @@ public sealed class SqlCoreDmlEffectReconciliationTests
         Assert.False(item.IsExecutionAttemptProven);
         Assert.False(item.IsExternalSideEffectRollbackProven);
         Assert.Equal(SqlTransactionState.Outside, report.FinalTransaction);
+
+        // A verified table NAME must not make a rejected assignment appear
+        // to be a modeled, potentially successful row mutation.
+        var rejected = Analyze("CREATE TABLE users(id INTEGER);" +
+            "UPDATE users SET id = 'not an integer' WHERE id = 1;",
+            SqlAgentToolType.Postgres);
+        Assert.Equal(SqlCatalogBindingStatus.Verified,
+            rejected.Statements[1].NameBinding);
+        Assert.Equal(SqlStatementAnalysisStatus.Invalid,
+            rejected.Statements[1].Status);
+        Assert.Equal(SqlDmlEffectDisposition.Unproven,
+            Assert.Single(rejected.DmlEffectReconciliations).Disposition);
     }
 }

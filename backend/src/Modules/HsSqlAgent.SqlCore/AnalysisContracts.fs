@@ -700,13 +700,21 @@ type SqlScriptAnalysisResult internal (
                        && after = SqlTransactionState.Outside then invalidate()
             elif statement.Kind = SqlScriptStatementKind.Mutation
                  && statement.Syntax.Status = SqlScriptParseStatus.Parsed then
-                if statement.NameBinding = SqlCatalogBindingStatus.Verified
+                // A bound NAME alone does not rescue an INVALID type or
+                // unsupported DML. SQLite's proven names and unproven type
+                // affinity may still describe conditional row effects.
+                let modeled =
+                    (statement.Status = SqlStatementAnalysisStatus.Analyzed
+                     || statement.Status = SqlStatementAnalysisStatus.PartiallyAnalyzed)
+                    && statement.NameBinding = SqlCatalogBindingStatus.Verified
+                    && (statement.Effects &&& SqlEffectKind.UnknownEffects) = SqlEffectKind.None
+                if modeled
                    && before = SqlTransactionState.Active
                    && after = SqlTransactionState.Active
                    && not uncertain then
                     dispositions[index] <- SqlDmlEffectDisposition.Pending
                     pending.Add(index)
-                elif statement.NameBinding = SqlCatalogBindingStatus.Verified
+                elif modeled
                      && before = SqlTransactionState.Outside
                      && after = SqlTransactionState.Outside then
                     dispositions[index] <- SqlDmlEffectDisposition.Unscoped
