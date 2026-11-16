@@ -64,16 +64,22 @@ public sealed class SqlCoreMixedScriptCompositionTests
     }
 
     [Theory]
-    [InlineData("GRANT SELECT ON users TO reader; SELECT id FROM users;")]
-    [InlineData("EXPLAIN SELECT id FROM users; SELECT id FROM users;")]
-    [InlineData("CALL do_work(); SELECT id FROM users;")]
-    public void PrivilegedUtilityOrProceduralMix_AlwaysExposesSeparateProofBarrier(string sql)
+    [InlineData("GRANT SELECT ON users TO reader; SELECT id FROM users;",
+        SqlScriptCompositionConcern.PrivilegedOrProcedural)]
+    [InlineData("EXPLAIN SELECT id FROM users; SELECT id FROM users;",
+        SqlScriptCompositionConcern.PrivilegedOrProcedural)]
+    [InlineData("CALL do_work(); SELECT id FROM users;",
+        SqlScriptCompositionConcern.PrivilegedOrProcedural)]
+    [InlineData("SET search_path TO app; SELECT 1;",
+        SqlScriptCompositionConcern.SessionScope)]
+    public void AnalyzeOnlyDomains_AlwaysExposeSeparateProofBarrier(
+        string sql, SqlScriptCompositionConcern concern)
     {
         var catalog = Analyze("CREATE TABLE users(id INTEGER)").FinalCatalog;
         var report = Analyze(sql, catalog: catalog);
 
         Assert.Contains(report.CompositionFindings,
-            item => item.Kind == SqlScriptCompositionConcern.PrivilegedOrProcedural);
+            item => item.Kind == concern);
         Assert.NotEqual(SqlScriptCompositionStatus.MixedAnalyzeOnly, report.CompositionStatus);
         Assert.False(report.IsCompositionExecutionProof);
     }
