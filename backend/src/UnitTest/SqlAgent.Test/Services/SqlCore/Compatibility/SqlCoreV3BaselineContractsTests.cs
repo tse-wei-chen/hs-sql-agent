@@ -121,8 +121,10 @@ public sealed class SqlCoreV3BaselineContractsTests
         Assert.True(mutation.Success);
         Assert.NotNull(mutation.Value);
 
+        var ddlSql = dialect == SqlAgentToolType.MsSqlServer
+            ? "CREATE TABLE users(id INT)" : "CREATE TABLE users(id INTEGER)";
         var ddl = SqlCoreFacade.TryCompileDdl(
-            "CREATE TABLE users(id INTEGER)", new DdlCompilationOptions(dialect, dialect));
+            ddlSql, new DdlCompilationOptions(dialect, dialect));
         Assert.True(ddl.Success);
         Assert.NotNull(ddl.Value);
 

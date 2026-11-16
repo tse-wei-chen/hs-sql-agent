@@ -122,6 +122,11 @@ internal static class SqlCoreV3Baseline
         return name + "<" + string.Join(",", type.GetGenericArguments().Select(TypeName)) + ">";
     }
 
+    // SQL Server uses native INT in the proven DDL compiler fixture.
+    private static string DdlFixture(SqlAgentToolType provider) =>
+        provider == SqlAgentToolType.MsSqlServer
+            ? "CREATE TABLE users(id INT)" : "CREATE TABLE users(id INTEGER)";
+
     private static object CaptureInventory()
     {
         var rows = new List<object>();
@@ -158,7 +163,7 @@ internal static class SqlCoreV3Baseline
                 ("dml-valid", () => SqlCoreFacade.TryCompileDml("DELETE FROM users WHERE id=1", provider, provider, context)),
                 ("dml-invalid", () => SqlCoreFacade.TryCompileDml("UPDATE users SET WHERE id=1", provider, provider, context)),
                 ("dml-wrong-family", () => SqlCoreFacade.TryCompileDml("SELECT 1", provider, provider, context)),
-                ("ddl-valid", () => SqlCoreFacade.TryCompileDdl("CREATE TABLE users(id INTEGER)", new DdlCompilationOptions(provider, provider))),
+                ("ddl-valid", () => SqlCoreFacade.TryCompileDdl(DdlFixture(provider), new DdlCompilationOptions(provider, provider))),
                 ("ddl-invalid", () => SqlCoreFacade.TryCompileDdl("CREATE TABLE users(", new DdlCompilationOptions(provider, provider))),
                 ("ddl-wrong-family", () => SqlCoreFacade.TryCompileDdl("GRANT SELECT ON users TO analyst", new DdlCompilationOptions(provider, provider)))
             };
@@ -207,7 +212,7 @@ internal static class SqlCoreV3Baseline
             workload.Add(("compile-dml", 30, () =>
                 SqlCoreFacade.TryCompileDml("DELETE FROM users WHERE id=1", provider, provider, context)));
             workload.Add(("compile-ddl", 30, () =>
-                SqlCoreFacade.TryCompileDdl("CREATE TABLE users(id INTEGER)", new DdlCompilationOptions(provider, provider))));
+                SqlCoreFacade.TryCompileDdl(DdlFixture(provider), new DdlCompilationOptions(provider, provider))));
 
             foreach (var (name, sourceLength, run) in workload)
             {

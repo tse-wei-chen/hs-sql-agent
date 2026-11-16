@@ -38,6 +38,7 @@ finding: correct the baseline evidence, **not** the SQL compiler.
   `TryCompileQuery`, `TryCompileDml` and `TryCompileDdl`.
   `ParseScript` being Unsupported for DDL does **not** mean `CompileDdl`
   is unavailable. C# tests pin a minimal proven example for each domain.
+  The SQL Server positive DDL compile fixture uses native `INT` (not `INTEGER`); ParseScript retains its unchanged unsupported snapshot.
 - SQL Server `GO` is a physical client-side batch boundary only when
   standalone on its line; comments are trivia. It is never a T-SQL execution grant.
   Other providers may not reinterpret `GO` as a separator.
