@@ -90,6 +90,23 @@ public sealed class SqlCoreBoundDependencyGraphTests
         Assert.Equal(1, edge.PredecessorStatementIndex);
         Assert.Equal(2, edge.SuccessorStatementIndex);
         Assert.Equal("other", edge.ObjectIdentity.DisplayName);
+
+        // Identical display strings must not merge one quoted dotted
+        // identifier with a two-part qualified physical identity.
+        const string dotted =
+            "CREATE TABLE \"app.orders\"(id INTEGER);" +
+            "CREATE TABLE app.orders(id INTEGER);" +
+            "SELECT id FROM \"app.orders\";" +
+            "SELECT id FROM app.orders";
+        var structured = SqlCoreFacade.AnalyzeScript(dotted, SqlAgentToolType.Postgres,
+            SqlCatalogState.KnownEmpty(), TestContext.Current.CancellationToken);
+        Assert.All(structured.Statements.Skip(2),
+            statement => Assert.Equal(SqlCatalogBindingStatus.Verified, statement.NameBinding));
+        Assert.Equal(new[] { (0, 2), (1, 3) },
+            structured.StaticDependencyEdges.Select(e =>
+                (e.PredecessorStatementIndex, e.SuccessorStatementIndex)));
+        Assert.Equal(2, structured.StaticDependencyEdges
+            .Select(e => e.ObjectIdentity.Key).Distinct().Count());
     }
 
     [Fact]
