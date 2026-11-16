@@ -58,7 +58,9 @@ public sealed class SqlCoreDmlEffectReconciliationTests
             "ROLLBACK TO mark; RELEASE mark; RELEASE root;",
             SqlAgentToolType.Sqlite);
 
-        Assert.Empty(result.Diagnostics);
+        // SQLite's name proof does not imply static type-affinity proof.
+        Assert.All(result.DmlEffectReconciliations,
+            item => Assert.True(item.PotentialEffects.HasFlag(SqlEffectKind.WriteData)));
         Assert.Equal(SqlTransactionState.Outside, result.FinalTransaction);
         Assert.Equal(new[] { 2, 4, 6 },
             result.DmlEffectReconciliations.Select(x => x.StatementIndex));
@@ -68,7 +70,7 @@ public sealed class SqlCoreDmlEffectReconciliationTests
             SqlDmlEffectDisposition.StaticRollbackExpected,
             SqlDmlEffectDisposition.StaticRollbackExpected
         }, result.DmlEffectReconciliations.Select(x => x.Disposition));
-        Assert.Equal(new[] { 11, 9, 7 },
+        Assert.Equal(new int?[] { 11, 9, 7 },
             result.DmlEffectReconciliations.Select(x => x.BoundaryStatementIndex));
     }
 
