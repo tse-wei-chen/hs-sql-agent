@@ -636,8 +636,16 @@ type SqlScriptAnalysisResult internal (
     // never consumed here. This is static ordering, not execution proof.
     let staticDependencyEdges : IReadOnlyList<SqlScriptStaticDependencyEdge> =
         let edges = ResizeArray<SqlScriptStaticDependencyEdge>()
-        let latest = Dictionary<string, int * SqlStatementEffectOperation * SqlEffectKind>(
+        // Keep a producer and the last reader separately: two independent
+        // reads can both depend on one earlier mutation without depending
+        // upon one another.
+        let producers = Dictionary<string, int * SqlStatementEffectOperation>(
             StringComparer.Ordinal)
+        let readers = Dictionary<string, int * SqlStatementEffectOperation>(
+            StringComparer.Ordinal)
+        let clear () =
+            producers.Clear()
+            readers.Clear()
 
         let mutationOrSchema effects =
             (effects &&& (SqlEffectKind.WriteData ||| SqlEffectKind.ChangeSchema))
@@ -697,7 +705,7 @@ type SqlScriptAnalysisResult internal (
             // Security, Utility and Procedural composition belongs to U3/U4:
             // never assert an object dependency across those unproven barriers.
             if statement.Syntax.BatchIndex <> currentBatch then
-                latest.Clear()
+                clear ()
                 currentBatch <- statement.Syntax.BatchIndex
             if (statement.Kind <> SqlScriptStatementKind.Query
                 && statement.Kind <> SqlScriptStatementKind.Mutation
@@ -708,7 +716,7 @@ type SqlScriptAnalysisResult internal (
                || statement.TransactionAfter = SqlTransactionState.Unknown
                || (statement.Effects &&& SqlEffectKind.UnknownEffects)
                       <> SqlEffectKind.None then
-                latest.Clear()
+                clear ()
             else
                 // Only one access per object and statement; mutation/schema
                 // dominates a read. Do not invent a dependency from self.
@@ -724,17 +732,28 @@ type SqlScriptAnalysisResult internal (
                         |> Seq.maxBy (fun (_, _, kind) ->
                             if mutationOrSchema kind then 1 else 0))
                 for identity, operation, effects in accesses do
-                    match latest.TryGetValue(identity.Key) with
-                    | true, (previousIndex, previousOperation, previousEffects)
-                        when previousIndex <> index
-                             && (mutationOrSchema previousEffects
-                                 || mutationOrSchema effects) ->
-                        edges.Add(SqlScriptStaticDependencyEdge(
-                            previousIndex, index, identity,
-                            previousOperation, operation,
-                            statement.Syntax.Span))
+                    let key = identity.Key
+                    let add (previousIndex, previousOperation) =
+                        if previousIndex <> index then
+                            edges.Add(SqlScriptStaticDependencyEdge(
+                                previousIndex, index, identity,
+                                previousOperation, operation,
+                                statement.Syntax.Span))
+                    // Reads and writes depend on the latest prior schema/data
+                    // mutation. Two reads do not depend on each other.
+                    match producers.TryGetValue(key) with
+                    | true, predecessor -> add predecessor
                     | _ -> ()
-                    latest[identity.Key] <- (index, operation, effects))
+                    if mutationOrSchema effects then
+                        // A write additionally depends on any read since
+                        // the last producer (write-after-read ordering).
+                        match readers.TryGetValue(key) with
+                        | true, reader -> add reader
+                        | _ -> ()
+                        producers[key] <- (index, operation)
+                        readers.Remove(key) |> ignore
+                    else
+                        readers[key] <- (index, operation))
         (edges.ToArray() |> Array.AsReadOnly)
             :> IReadOnlyList<SqlScriptStaticDependencyEdge>
 
