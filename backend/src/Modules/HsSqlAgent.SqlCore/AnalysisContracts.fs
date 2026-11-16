@@ -691,10 +691,18 @@ type SqlScriptAnalysisResult internal (
                 Some(nonNull item.ObjectIdentity)
             | _ -> None
 
+        let mutable currentBatch = -1
         statements |> Seq.iteri (fun index statement ->
-            // A statement with unmodeled effects or lost transaction context
-            // ends the current certainty chain; no edge crosses the barrier.
-            if statement.Status = SqlStatementAnalysisStatus.Invalid
+            // SQL Server GO creates a distinct physical batch. TCL, Session,
+            // Security, Utility and Procedural composition belongs to U3/U4:
+            // never assert an object dependency across those unproven barriers.
+            if statement.Syntax.BatchIndex <> currentBatch then
+                latest.Clear()
+                currentBatch <- statement.Syntax.BatchIndex
+            if (statement.Kind <> SqlScriptStatementKind.Query
+                && statement.Kind <> SqlScriptStatementKind.Mutation
+                && statement.Kind <> SqlScriptStatementKind.Schema)
+               || statement.Status = SqlStatementAnalysisStatus.Invalid
                || statement.Status = SqlStatementAnalysisStatus.Unsupported
                || statement.TransactionBefore = SqlTransactionState.Unknown
                || statement.TransactionAfter = SqlTransactionState.Unknown
