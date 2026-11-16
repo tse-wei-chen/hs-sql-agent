@@ -2677,6 +2677,7 @@ module internal RewriteScriptAnalyzer =
                     let syntax = parsed.Statements.[statementIndex]
                     let typed = parsedDocuments.[statementIndex]
                     let mutable boundForEffects : Typestate.BoundSql option = None
+                    let mutable boundPhysicalIdentifiers : CoreModel.Identifier list = []
                     let before = current
                     let transactionBefore = RewriteTransactionAnalyzer.status transaction
                     let sessionBefore = RewriteSessionAnalyzer.snapshot session
@@ -2855,7 +2856,9 @@ module internal RewriteScriptAnalyzer =
                                     let binding, names, types, state, certainty, diagnostics, matchProof =
                                         RewriteCatalogBinding.verify sourceDialect sourceProfile
                                             (RewriteSessionAnalyzer.scope session) current syntax document
-                                            (fun bound -> boundForEffects <- Some bound)
+                                            (fun bound identifiers ->
+                                                boundForEffects <- Some bound
+                                                boundPhysicalIdentifiers <- identifiers)
                                     sourceMatchCardinality <- matchProof
                                     binding, names, types, state, certainty, diagnostics
                                 else
@@ -2967,6 +2970,12 @@ module internal RewriteScriptAnalyzer =
                                 (readOnly utilityIntents) (readOnly proceduralIntents)
                                 (readOnly proceduralDefinitions) sessionOperation provenance
                                 typed boundForEffects)
+                    let boundObjectAccesses =
+                        RewriteResourceBudget.withStage "ScriptDependencyBinding"
+                            SqlDiagnosticStage.Binding (fun () ->
+                                RewriteStatementEffects.boundObjectAccesses
+                                    syntax nameStatus before sessionBefore
+                                    boundForEffects boundPhysicalIdentifiers)
                     results.Add(
                         SqlStatementAnalysis(
                             syntax, status, effects,
@@ -2978,7 +2987,8 @@ module internal RewriteScriptAnalyzer =
                             readOnly securityIntents, readOnly securityDependencies,
                             readOnly utilityIntents, readOnly proceduralIntents,
                             readOnly proceduralDefinitions,
-                            provenance, sourceMatchCardinality, readOnly allDiagnostics)))
+                            provenance, sourceMatchCardinality,
+                            readOnly boundObjectAccesses, readOnly allDiagnostics)))
             SqlScriptAnalysisResult(
                 readOnly results, readOnly errors, current,
                 RewriteTransactionAnalyzer.status transaction,

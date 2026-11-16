@@ -110,6 +110,33 @@ type SqlScriptDependencyReference internal (
     /// Syntactic dependencies never prove the server object exists.
     member _.Certainty = SqlCatalogKnowledge.Unknown
 
+/// An ordered dependency between two *static* statements on the same
+/// bound Virtual Catalog identity. Neither statement is known to have run.
+/// In particular, this edge is not a server-object, permission, row-set,
+/// transaction or approval proof.
+[<Sealed>]
+type SqlScriptStaticDependencyEdge internal (
+    predecessorStatementIndex: int,
+    successorStatementIndex: int,
+    objectIdentity: SqlCatalogQualifiedName,
+    predecessorOperation: SqlStatementEffectOperation,
+    successorOperation: SqlStatementEffectOperation,
+    span: SqlDiagnosticSpan) =
+    member _.PredecessorStatementIndex = predecessorStatementIndex
+    member _.SuccessorStatementIndex = successorStatementIndex
+    member _.ObjectIdentity = objectIdentity
+    member _.PredecessorOperation = predecessorOperation
+    member _.SuccessorOperation = successorOperation
+    member _.Span = span
+    member _.IsExecutionProof = false
+
+/// A statement-local identity from an existing verified virtual name binding.
+/// Only the Script analyzer can construct the list, never a public DTO caller.
+type internal SqlScriptBoundObjectAccess =
+    { Identity: SqlCatalogQualifiedName
+      Operation: SqlStatementEffectOperation
+      Kind: SqlEffectKind }
+
 /// Only final, statically proven declarations in the Virtual Catalog are
 /// represented as Symbols; SQL aliases and lexical references are not inferred.
 type SqlScriptSymbolKind =
@@ -498,6 +525,7 @@ type SqlStatementAnalysis internal (
     proceduralDefinitions: IReadOnlyList<SqlProceduralDefinition>,
     transactionProvenance: SqlTransactionEffectProvenance,
     sourceMatchCardinality: SqlMutationSourceMatchCardinality,
+    boundObjectAccesses: IReadOnlyList<SqlScriptBoundObjectAccess>,
     diagnostics: IReadOnlyList<SqlDiagnostic>) =
     member _.Syntax = syntax
     member _.Kind = syntax.Kind
@@ -529,6 +557,7 @@ type SqlStatementAnalysis internal (
     member _.ProceduralIntents = proceduralIntents
     member _.ProceduralDefinitions = proceduralDefinitions
     member _.TransactionProvenance = transactionProvenance
+    member internal _.BoundObjectAccesses = boundObjectAccesses
     member _.Diagnostics = diagnostics
 
 [<Sealed>]
@@ -610,6 +639,93 @@ type SqlScriptAnalysisResult internal (
          |> Seq.toArray
          |> Array.AsReadOnly) :> IReadOnlyList<SqlScriptDependencyReference>
 
+    // U2: project an ordered graph ONLY from typed Catalog identities and
+    // statement-local AST identifiers proved by the existing name binder.
+    // Legacy diagnostic-name Dependencies are not consumed or parsed as IDs.
+    // This is static ordering, never physical execution proof.
+    let staticDependencyEdges : IReadOnlyList<SqlScriptStaticDependencyEdge> =
+        let edges = ResizeArray<SqlScriptStaticDependencyEdge>()
+        // Keep a producer and the last reader separately: two independent
+        // reads can both depend on one earlier mutation without depending
+        // upon one another.
+        let producers = Dictionary<string, int * SqlStatementEffectOperation>(
+            StringComparer.Ordinal)
+        let readers = Dictionary<string, int * SqlStatementEffectOperation>(
+            StringComparer.Ordinal)
+        let clear () =
+            producers.Clear()
+            readers.Clear()
+
+        let mutationOrSchema effects =
+            (effects &&& (SqlEffectKind.WriteData ||| SqlEffectKind.ChangeSchema))
+                <> SqlEffectKind.None
+
+        let mutable currentBatch = -1
+        statements |> Seq.iteri (fun index statement ->
+            // SQL Server GO creates a distinct physical batch. TCL, Session,
+            // Security, Utility and Procedural composition belongs to U3/U4:
+            // never assert an object dependency across those unproven barriers.
+            if statement.Syntax.BatchIndex <> currentBatch then
+                clear ()
+                currentBatch <- statement.Syntax.BatchIndex
+            if (statement.Kind <> SqlScriptStatementKind.Query
+                && statement.Kind <> SqlScriptStatementKind.Mutation
+                && statement.Kind <> SqlScriptStatementKind.Schema)
+               || statement.Status = SqlStatementAnalysisStatus.Invalid
+               || statement.Status = SqlStatementAnalysisStatus.Unsupported
+               || statement.TransactionBefore = SqlTransactionState.Unknown
+               || statement.TransactionAfter = SqlTransactionState.Unknown
+               || (statement.Effects &&& SqlEffectKind.UnknownEffects)
+                      <> SqlEffectKind.None then
+                clear ()
+            else
+                // Only one access per object and statement; mutation/schema
+                // dominates a read. Do not invent a dependency from self.
+                let accesses =
+                    seq {
+                        // Query/DML references are formed from exact AST
+                        // Identifier.parts only after the existing verifier.
+                        for item in statement.BoundObjectAccesses do
+                            yield item.Identity, item.Operation, item.Kind
+                        // DDL Catalog deltas already carry their structured
+                        // identity. Never infer it from ObjectName.
+                        if statement.Kind = SqlScriptStatementKind.Schema then
+                            for item in statement.DetailedEffects do
+                                if item.Certainty = SqlCatalogKnowledge.Known
+                                   && not (isNull item.ObjectIdentity) then
+                                    yield nonNull item.ObjectIdentity, item.Operation, item.Kind
+                    }
+                    |> Seq.groupBy (fun (identity, _, _) -> identity.Key)
+                    |> Seq.map (fun (_, group) ->
+                        group
+                        |> Seq.maxBy (fun (_, _, kind) ->
+                            if mutationOrSchema kind then 1 else 0))
+                for identity, operation, effects in accesses do
+                    let key = identity.Key
+                    let add (previousIndex, previousOperation) =
+                        if previousIndex <> index then
+                            edges.Add(SqlScriptStaticDependencyEdge(
+                                previousIndex, index, identity,
+                                previousOperation, operation,
+                                statement.Syntax.Span))
+                    // Reads and writes depend on the latest prior schema/data
+                    // mutation. Two reads do not depend on each other.
+                    match producers.TryGetValue(key) with
+                    | true, predecessor -> add predecessor
+                    | _ -> ()
+                    if mutationOrSchema effects then
+                        // A write additionally depends on any read since
+                        // the last producer (write-after-read ordering).
+                        match readers.TryGetValue(key) with
+                        | true, reader -> add reader
+                        | _ -> ()
+                        producers[key] <- (index, operation)
+                        readers.Remove(key) |> ignore
+                    else
+                        readers[key] <- (index, operation))
+        (edges.ToArray() |> Array.AsReadOnly)
+            :> IReadOnlyList<SqlScriptStaticDependencyEdge>
+
     // The Symbol projection describes FINAL virtual Catalog declarations only.
     // Never reconstruct identities from lossy display names or claim unknown
     // table shapes were verified. DDL rolled back/dropped mid-script disappears.
@@ -673,6 +789,9 @@ type SqlScriptAnalysisResult internal (
     /// Unverified object references from typed effects, never effective permissions
     /// or physical-object identity proofs. Does not include DDL declarations.
     member _.Dependencies = dependencies
+    /// Ordered Virtual Catalog dependencies with an existing static binding
+    /// proof. Never physical execution or Host authorization evidence.
+    member _.StaticDependencyEdges = staticDependencyEdges
     /// Proven declarations of the final Virtual Catalog only: Table and Column.
     /// Never a full SQL lexical symbol table or proof of live server existence.
     member _.Symbols = symbols
