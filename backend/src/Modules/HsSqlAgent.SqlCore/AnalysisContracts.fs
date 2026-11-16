@@ -130,6 +130,13 @@ type SqlScriptStaticDependencyEdge internal (
     member _.Span = span
     member _.IsExecutionProof = false
 
+/// A statement-local identity from an existing verified virtual name binding.
+/// Only the Script analyzer can construct the list, never a public DTO caller.
+type internal SqlScriptBoundObjectAccess =
+    { Identity: SqlCatalogQualifiedName
+      Operation: SqlStatementEffectOperation
+      Kind: SqlEffectKind }
+
 /// Only final, statically proven declarations in the Virtual Catalog are
 /// represented as Symbols; SQL aliases and lexical references are not inferred.
 type SqlScriptSymbolKind =
@@ -518,6 +525,7 @@ type SqlStatementAnalysis internal (
     proceduralDefinitions: IReadOnlyList<SqlProceduralDefinition>,
     transactionProvenance: SqlTransactionEffectProvenance,
     sourceMatchCardinality: SqlMutationSourceMatchCardinality,
+    boundObjectAccesses: IReadOnlyList<SqlScriptBoundObjectAccess>,
     diagnostics: IReadOnlyList<SqlDiagnostic>) =
     member _.Syntax = syntax
     member _.Kind = syntax.Kind
@@ -549,6 +557,7 @@ type SqlStatementAnalysis internal (
     member _.ProceduralIntents = proceduralIntents
     member _.ProceduralDefinitions = proceduralDefinitions
     member _.TransactionProvenance = transactionProvenance
+    member internal _.BoundObjectAccesses = boundObjectAccesses
     member _.Diagnostics = diagnostics
 
 [<Sealed>]
@@ -630,10 +639,10 @@ type SqlScriptAnalysisResult internal (
          |> Seq.toArray
          |> Array.AsReadOnly) :> IReadOnlyList<SqlScriptDependencyReference>
 
-    // U2: project an ordered graph ONLY after the existing Domain analysis
-    // has produced a typed Catalog identity, or full virtual name binding
-    // has been verified. The legacy Dependencies display-name list above is
-    // never consumed here. This is static ordering, not execution proof.
+    // U2: project an ordered graph ONLY from typed Catalog identities and
+    // statement-local AST identifiers proved by the existing name binder.
+    // Legacy diagnostic-name Dependencies are not consumed or parsed as IDs.
+    // This is static ordering, never physical execution proof.
     let staticDependencyEdges : IReadOnlyList<SqlScriptStaticDependencyEdge> =
         let edges = ResizeArray<SqlScriptStaticDependencyEdge>()
         // Keep a producer and the last reader separately: two independent
@@ -650,54 +659,6 @@ type SqlScriptAnalysisResult internal (
         let mutationOrSchema effects =
             (effects &&& (SqlEffectKind.WriteData ||| SqlEffectKind.ChangeSchema))
                 <> SqlEffectKind.None
-
-        let referencedIdentity (statement: SqlStatementAnalysis)
-                               (item: SqlStatementEffect) =
-            if statement.NameBinding <> SqlCatalogBindingStatus.Verified
-               || not statement.CatalogBefore.IsClosedWorld
-               || isNull item.ObjectName then None
-            else
-                // These names originate from the already-bound AST and are
-                // admitted ONLY after the existing Catalog verifier reports
-                // Verified; unverified diagnostic names cannot mint an edge.
-                // Never split a dotted display name into a fabricated ID.
-                let name = nonNull item.ObjectName
-                let scoped =
-                    statement.SessionBefore.IsSearchPathProven
-                    && not (isNull statement.SessionBefore.SearchPath)
-                let matching =
-                    statement.CatalogBefore.Tables
-                    |> Seq.filter (fun table ->
-                        table.Knowledge = SqlCatalogKnowledge.Known
-                        && (String.Equals(table.QualifiedName.DisplayName, name,
-                                          StringComparison.Ordinal)
-                            || (scoped
-                                && table.QualifiedName.Parts.Count = 2
-                                && String.Equals(
-                                    table.QualifiedName.Parts[0],
-                                    nonNull statement.SessionBefore.SearchPath,
-                                    StringComparison.Ordinal)
-                                && String.Equals(
-                                    table.QualifiedName.Parts[1], name,
-                                    StringComparison.Ordinal))))
-                    |> Seq.truncate 2
-                    |> Seq.toList
-                match matching with
-                | [table] -> Some table.QualifiedName
-                | _ -> None
-
-        let identityOf statement (item: SqlStatementEffect) =
-            match item.Operation with
-            | SqlStatementEffectOperation.ReadTable
-            | SqlStatementEffectOperation.Insert
-            | SqlStatementEffectOperation.Update
-            | SqlStatementEffectOperation.Delete
-            | SqlStatementEffectOperation.Merge ->
-                referencedIdentity statement item
-            | _ when item.Certainty = SqlCatalogKnowledge.Known
-                     && not (isNull item.ObjectIdentity) ->
-                Some(nonNull item.ObjectIdentity)
-            | _ -> None
 
         let mutable currentBatch = -1
         statements |> Seq.iteri (fun index statement ->
@@ -721,11 +682,19 @@ type SqlScriptAnalysisResult internal (
                 // Only one access per object and statement; mutation/schema
                 // dominates a read. Do not invent a dependency from self.
                 let accesses =
-                    statement.DetailedEffects
-                    |> Seq.choose (fun effect ->
-                        identityOf statement effect
-                        |> Option.map (fun identity ->
-                            identity, effect.Operation, effect.Kind))
+                    seq {
+                        // Query/DML references are formed from exact AST
+                        // Identifier.parts only after the existing verifier.
+                        for item in statement.BoundObjectAccesses do
+                            yield item.Identity, item.Operation, item.Kind
+                        // DDL Catalog deltas already carry their structured
+                        // identity. Never infer it from ObjectName.
+                        if statement.Kind = SqlScriptStatementKind.Schema then
+                            for item in statement.DetailedEffects do
+                                if item.Certainty = SqlCatalogKnowledge.Known
+                                   && not (isNull item.ObjectIdentity) then
+                                    yield nonNull item.ObjectIdentity, item.Operation, item.Kind
+                    }
                     |> Seq.groupBy (fun (identity, _, _) -> identity.Key)
                     |> Seq.map (fun (_, group) ->
                         group
