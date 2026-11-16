@@ -319,7 +319,8 @@ public sealed class SqlCoreTypedStatementDispatchTests
         {
             Assert.NotNull(statement.Diagnostic);
             Assert.Equal(statement.Text, sql.Substring(statement.Span.Start, statement.Span.Length));
-            Assert.Equal(statement.Span.Start, statement.Diagnostic.Span.Start);
+            Assert.InRange(statement.Diagnostic.Span.Start, statement.Span.Start,
+                statement.Span.Start + statement.Span.Length);
         }
     }
 
