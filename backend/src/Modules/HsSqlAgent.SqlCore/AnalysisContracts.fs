@@ -468,16 +468,48 @@ type SqlTransactionEffectProvenance internal (
     effects: SqlEffectKind,
     transactionBefore: SqlTransactionState,
     transactionAfter: SqlTransactionState,
-    span: SqlDiagnosticSpan) =
+    span: SqlDiagnosticSpan,
+    savepointName: string | null) =
     member _.Origin = origin
     member _.RollbackScope = rollbackScope
     member _.ControlOperation = controlOperation
+    /// Normalized by the existing TCL grammar. Null for non-savepoint
+    /// controls or unsupported commands; no new textual parsing is performed.
+    member _.SavepointName = savepointName
     member _.PotentialEffects = effects
     member _.TransactionBefore = transactionBefore
     member _.TransactionAfter = transactionAfter
     member _.Span = span
     member _.RuntimeCertainty = SqlCatalogKnowledge.Unknown
     member _.IsServerRollbackProven = false
+
+/// The fate of a potential DML row effect under a modeled script transaction.
+/// These are hypotheses conditional on execution, not a COMMIT/ROLLBACK audit.
+type SqlDmlEffectDisposition =
+    | Unscoped = 0
+    | Pending = 1
+    | StaticRollbackExpected = 2
+    | StaticCommitBoundary = 3
+    | Unproven = 4
+
+/// Script-ordered static reconciliation for one syntactically parsed DML
+/// statement. Runtime triggers, external functions and nontransactional
+/// storage are deliberately outside this model.
+[<Sealed>]
+type SqlDmlEffectReconciliation internal (
+    statementIndex: int,
+    disposition: SqlDmlEffectDisposition,
+    boundaryStatementIndex: Nullable<int>,
+    potentialEffects: SqlEffectKind,
+    span: SqlDiagnosticSpan) =
+    member _.StatementIndex = statementIndex
+    member _.Disposition = disposition
+    member _.BoundaryStatementIndex = boundaryStatementIndex
+    member _.PotentialEffects = potentialEffects
+    member _.Span = span
+    member _.IsExecutionAttemptProven = false
+    member _.IsServerRollbackProven = false
+    member _.IsExternalSideEffectRollbackProven = false
 
 /// Immutable static session scope. A known SearchPath is a caller/script
 /// premise, never evidence from a live server or a compilation permission.
@@ -567,6 +599,140 @@ type SqlScriptAnalysisResult internal (
     finalCatalog: SqlCatalogState,
     finalTransaction: SqlTransactionState,
     finalSession: SqlSessionAnalysisState) =
+    // U3 is a reconciliation projection over the SAME proven TCL controls
+    // and transaction snapshots, not another parser, effect source or runtime
+    // transaction machine. The final result is a conditional SQL hypothesis.
+    let dmlEffectReconciliations : IReadOnlyList<SqlDmlEffectReconciliation> =
+        let dispositions =
+            Array.create statements.Count SqlDmlEffectDisposition.Unproven
+        let boundaries = Array.create statements.Count -1
+        let pending = ResizeArray<int>()
+        // Newest savepoint last; matches the existing TCL analyzer semantics.
+        let marks = ResizeArray<string * int>()
+        let mutable uncertain = false
+
+        let invalidate () =
+            for id in pending do
+                dispositions[id] <- SqlDmlEffectDisposition.Unproven
+                boundaries[id] <- -1
+            pending.Clear()
+            marks.Clear()
+            uncertain <- true
+
+        let finalizePending fate boundary =
+            for id in pending do
+                dispositions[id] <- fate
+                boundaries[id] <- boundary
+            pending.Clear()
+            marks.Clear()
+            uncertain <- false
+
+        let markIndex (name: string | null) =
+            let mutable index = -1
+            if not (isNull name) then
+                for i = 0 to marks.Count - 1 do
+                    let savedName, _ = marks[i]
+                    if String.Equals(savedName, name, StringComparison.Ordinal) then
+                        index <- i
+            index
+
+        for index = 0 to statements.Count - 1 do
+            let statement = statements[index]
+            let before = statement.TransactionBefore
+            let after = statement.TransactionAfter
+            let control = statement.TransactionProvenance.ControlOperation
+            let name = statement.TransactionProvenance.SavepointName
+            if before = SqlTransactionState.Unknown
+               || after = SqlTransactionState.Unknown
+               || (before = SqlTransactionState.Active
+                   && (statement.Status = SqlStatementAnalysisStatus.Invalid
+                       || statement.Status = SqlStatementAnalysisStatus.Unsupported
+                       || (statement.Effects &&& SqlEffectKind.UnknownEffects)
+                          <> SqlEffectKind.None)) then
+                invalidate()
+            elif statement.Kind = SqlScriptStatementKind.Transaction
+                 && statement.Status = SqlStatementAnalysisStatus.Analyzed then
+                match control with
+                | SqlTransactionControlOperation.Begin
+                    when before = SqlTransactionState.Outside
+                         && after = SqlTransactionState.Active ->
+                    pending.Clear()
+                    marks.Clear()
+                    uncertain <- false
+                | SqlTransactionControlOperation.Savepoint
+                    when after = SqlTransactionState.Active && not uncertain ->
+                    if isNull name then invalidate()
+                    else marks.Add((nonNull name, pending.Count))
+                | SqlTransactionControlOperation.RollbackToSavepoint
+                    when after = SqlTransactionState.Active && not uncertain ->
+                    let target = markIndex name
+                    if target < 0 then invalidate()
+                    else
+                        let _, start = marks[target]
+                        for i = start to pending.Count - 1 do
+                            let id = pending[i]
+                            dispositions[id] <- SqlDmlEffectDisposition.StaticRollbackExpected
+                            boundaries[id] <- index
+                        pending.RemoveRange(start, pending.Count - start)
+                        marks.RemoveRange(target + 1, marks.Count - target - 1)
+                | SqlTransactionControlOperation.ReleaseSavepoint
+                    when before = SqlTransactionState.Active && not uncertain ->
+                    let target = markIndex name
+                    if target < 0 then invalidate()
+                    elif after = SqlTransactionState.Outside then
+                        // SQLite's outer SAVEPOINT is also a transaction.
+                        finalizePending SqlDmlEffectDisposition.StaticCommitBoundary index
+                    else
+                        marks.RemoveRange(target, marks.Count - target)
+                | SqlTransactionControlOperation.Rollback
+                    when before = SqlTransactionState.Active
+                         && after = SqlTransactionState.Outside
+                         && not uncertain ->
+                    finalizePending SqlDmlEffectDisposition.StaticRollbackExpected index
+                | SqlTransactionControlOperation.Commit
+                    when before = SqlTransactionState.Active
+                         && after = SqlTransactionState.Outside
+                         && not uncertain ->
+                    finalizePending SqlDmlEffectDisposition.StaticCommitBoundary index
+                | _ ->
+                    // No successful tracked boundary may revive a lost proof.
+                    if before = SqlTransactionState.Active
+                       && after = SqlTransactionState.Outside then invalidate()
+            elif statement.Kind = SqlScriptStatementKind.Mutation
+                 && statement.Syntax.Status = SqlScriptParseStatus.Parsed then
+                if statement.NameBinding = SqlCatalogBindingStatus.Verified
+                   && before = SqlTransactionState.Active
+                   && after = SqlTransactionState.Active
+                   && not uncertain then
+                    dispositions[index] <- SqlDmlEffectDisposition.Pending
+                    pending.Add(index)
+                elif statement.NameBinding = SqlCatalogBindingStatus.Verified
+                     && before = SqlTransactionState.Outside
+                     && after = SqlTransactionState.Outside then
+                    dispositions[index] <- SqlDmlEffectDisposition.Unscoped
+                elif before = SqlTransactionState.Active then
+                    // A potential unbound write invalidates the entire
+                    // transaction's pending row-effect reconciliation.
+                    invalidate()
+            elif before = SqlTransactionState.Active
+                 && after = SqlTransactionState.Outside then
+                invalidate()
+
+        (statements
+         |> Seq.mapi (fun index statement ->
+             if statement.Kind = SqlScriptStatementKind.Mutation
+                && statement.Syntax.Status = SqlScriptParseStatus.Parsed then
+                 let boundary =
+                     if boundaries[index] < 0 then Nullable<int>()
+                     else Nullable<int>(boundaries[index])
+                 Some(SqlDmlEffectReconciliation(
+                     index, dispositions[index], boundary,
+                     statement.Effects, statement.Syntax.Span))
+             else None)
+         |> Seq.choose id
+         |> Seq.toArray
+         |> Array.AsReadOnly) :> IReadOnlyList<SqlDmlEffectReconciliation>
+
     let detailedEffects : IReadOnlyList<SqlStatementEffect> =
         (statements
          |> Seq.collect (fun item -> item.DetailedEffects)
@@ -801,6 +967,9 @@ type SqlScriptAnalysisResult internal (
     member _.ProceduralDefinitions = proceduralDefinitions
     member _.ProceduralIntents = proceduralIntents
     member _.TransactionProvenance = transactionProvenance
+    /// Potential DML life cycles in the script's static transaction model,
+    /// never evidence that any SQL was attempted, committed or rolled back.
+    member _.DmlEffectReconciliations = dmlEffectReconciliations
     member _.UtilityIntents = utilityIntents
     member _.SecurityIntents = securityIntents
     member _.SecurityDependencies = securityDependencies

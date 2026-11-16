@@ -112,6 +112,10 @@ module internal RewriteTransactionAnalyzer =
         | Release _ -> SqlTransactionControlOperation.ReleaseSavepoint
         | Unsupported -> SqlTransactionControlOperation.Unknown
 
+    let private savepointName = function
+        | Savepoint name | RollbackTo name | Release name -> name
+        | _ -> null
+
     let private identical (left: SqlCatalogState) (right: SqlCatalogState) =
         let sameColumn (a: SqlCatalogColumn) (b: SqlCatalogColumn) =
             String.Equals(a.Name, b.Name, StringComparison.Ordinal)
@@ -275,7 +279,10 @@ module internal RewriteTransactionAnalyzer =
 
         let status, certainty, catalog, session, nextContext, changes, diagnostics = result
         status, certainty, catalog, session, nextContext, changes, diagnostics,
-        controlOperation operation
+        controlOperation operation,
+        (if status = SqlStatementAnalysisStatus.Analyzed then
+             savepointName operation
+         else null)
     /// SQL Server's DML may promote an explicit transaction; MySQL's storage
     /// engine might be nontransactional. A modeled virtual-Catalog ROLLBACK
     /// cannot prove the server data effects of either.
