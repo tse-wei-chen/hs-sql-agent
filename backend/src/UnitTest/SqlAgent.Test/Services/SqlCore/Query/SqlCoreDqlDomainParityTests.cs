@@ -44,6 +44,12 @@ public sealed class SqlCoreDqlDomainParityTests
         var statement = Assert.Single(script.Statements);
         Assert.Equal(SqlScriptStatementKind.Query, statement.Kind);
         Assert.Equal(SqlScriptParseStatus.Parsed, statement.Status);
+
+        var analysis = SqlCoreFacade.AnalyzeScript(sql + ";", provider);
+        var effect = Assert.Single(analysis.Statements);
+        Assert.Equal(SqlScriptStatementKind.Query, effect.Kind);
+        Assert.True(effect.Effects.HasFlag(SqlEffectKind.ReadData));
+        Assert.False(effect.Effects.HasFlag(SqlEffectKind.WriteData));
     }
 
     [Theory]
@@ -198,10 +204,10 @@ public sealed class SqlCoreDqlDomainParityTests
         var native = await Execute(sql);
         var compiled = SqlCoreFacade.CompileQueryWithFacts(
             sql, SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite,
-            AllowOrders(), new SqlExecutionPlanPolicy(10));
+            AllowOrders(), new SqlExecutionPlanPolicy(2));
         var actual = await Execute(compiled.Command.Sql, compiled.Command.Parameters);
-        Assert.Equal(native, actual);
-        Assert.Equal(new[] { (1L, 1L), (2L, 2L), (3L, 3L) }, actual);
+        Assert.Equal(native.Take(2), actual);
+        Assert.Equal(new[] { (1L, 1L), (2L, 2L) }, actual);
         Assert.Equal(new[] { "orders" }, compiled.Facts.ReferencedTables.OrderBy(x => x));
     }
 

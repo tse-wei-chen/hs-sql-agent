@@ -22,23 +22,15 @@ module internal RewriteQueryAnalyzer =
 
     let private physicalTables (query: Query) =
         let reads = System.Collections.Generic.HashSet<string>(StringComparer.Ordinal)
-        let addSource = function
-            | NamedTable(identifier, _) ->
-                reads.Add(Identifier.text identifier) |> ignore
-            | CteTable _ | DerivedTable _ | LateralDerivedTable _ -> ()
-        let visitQuery (current: Query) =
-            let select = current.Head
-            select.From |> Option.iter addSource
-            for join in select.Joins do
-                match join with
-                | OnJoin(_, source, _) | CrossJoin source | ApplyJoin(_, source)
-                | NaturalJoin(_, source) | UsingJoin(_, source, _) -> addSource source
-
-        // Never recursively walk a query/expression graph: large or hostile
-        // CTE/Window/Derived trees must honor the same resource budget as
-        // the compiler's other graph traversals.
-        RewriteAstTraversal.mapQueryGraphPostOrder ignore id visitQuery id query
-        |> ignore
+        // This existing bounded walk includes CTE definitions, derived/lateral
+        // tables, set branches, scalar/correlated subqueries and window specs.
+        // Do not rebuild the AST solely to collect its physical read-set.
+        RewriteAstTraversal.iterIncludingQueries
+            (function
+             | RewriteAstTraversal.SourceNode(NamedTable(identifier, _)) ->
+                 reads.Add(Identifier.text identifier) |> ignore
+             | _ -> ())
+            (RewriteAstTraversal.QueryNode query)
         reads |> Set.ofSeq
 
     let internal proveBoundReadSet (bound: BoundSql) =
