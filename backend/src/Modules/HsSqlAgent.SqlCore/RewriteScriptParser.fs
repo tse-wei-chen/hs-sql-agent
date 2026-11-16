@@ -183,19 +183,16 @@ module internal RewriteScriptParser =
                                 family, SqlScriptParseStatus.Invalid,
                                 Some(invalidDiagnostic ex absoluteStart length)
                         | _ ->
-                            let code, message =
-                                if family = RewriteStatementDispatch.Unknown then
-                                    "SQL_SCRIPT_UNKNOWN_STATEMENT", "Statement family could not be established."
-                                else
-                                    "SQL_SCRIPT_UNSUPPORTED_STATEMENT",
-                                    "Statement family recognized, but semantic analysis is not implemented."
+                            // Preserve the original diagnostic ABI; Kind=Unknown
+                            // distinguishes unrecognized SQL from a recognized
+                            // analyze-only family without changing CLR contracts.
                             family, SqlScriptParseStatus.Unsupported,
                             Some(
                                 SqlDiagnostic(
-                                    code,
+                                    "SQL_SCRIPT_UNSUPPORTED_STATEMENT",
                                     SqlDiagnosticStage.Parse,
                                     SqlDiagnosticCategory.Capability,
-                                    message,
+                                    "Statement family recognized, but semantic analysis is not implemented.",
                                     SqlDiagnosticSpan(absoluteStart, length)))
                     diagnostic |> Option.iter diagnostics.Add
                     result.Add(

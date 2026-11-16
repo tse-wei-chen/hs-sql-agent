@@ -1,0 +1,110 @@
+name: SqlCore v3 U0 compatibility baseline
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - 'backend/src/Modules/HsSqlAgent.SqlCore/**'
+      - 'backend/src/UnitTest/SqlAgent.Test/Services/SqlCore/**'
+      - 'backend/tools/HsSqlAgent.SqlCore.Benchmarks/**'
+      - '.github/workflows/sqlcore-v3-baseline.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sqlcore-v3-u0-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  v3-contract-and-abi:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout exact candidate SHA
+        uses: actions/checkout@v4
+        with:
+          path: candidate
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          submodules: recursive
+      - name: Checkout exact develop base SHA
+        uses: actions/checkout@v4
+        with:
+          path: baseline
+          ref: ${{ github.event.pull_request.base.sha || 'develop' }}
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - name: Record commit identities and pin the SAME baseline harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          git -C candidate rev-parse HEAD | tee artifacts/v3-candidate-sha.txt
+          git -C baseline rev-parse HEAD | tee artifacts/v3-base-sha.txt
+          cp candidate/backend/tools/HsSqlAgent.SqlCore.Benchmarks/Program.cs baseline/backend/tools/HsSqlAgent.SqlCore.Benchmarks/Program.cs
+          cp candidate/backend/tools/HsSqlAgent.SqlCore.Benchmarks/SqlCoreV3Baseline.cs baseline/backend/tools/HsSqlAgent.SqlCore.Benchmarks/SqlCoreV3Baseline.cs
+      - name: Capture baseline and candidate .NET 10 public ABI + parse/compile inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          for side in baseline candidate; do
+            (cd "$side" && dotnet run --framework net10.0 -c Release --project backend/tools/HsSqlAgent.SqlCore.Benchmarks --               --v3-abi --output "$GITHUB_WORKSPACE/artifacts/v3-$side-abi-net10.json")
+            (cd "$side" && dotnet run --framework net10.0 -c Release --no-build --project backend/tools/HsSqlAgent.SqlCore.Benchmarks --               --v3-inventory --output "$GITHUB_WORKSPACE/artifacts/v3-$side-inventory.json")
+          done
+      - name: ABI removal and classification/diagnostic regression guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -r '.signatures[]' artifacts/v3-baseline-abi-net10.json | LC_ALL=C sort -u > artifacts/v3-base-public-signatures.txt
+          jq -r '.signatures[]' artifacts/v3-candidate-abi-net10.json | LC_ALL=C sort -u > artifacts/v3-head-public-signatures.txt
+          comm -23 artifacts/v3-base-public-signatures.txt artifacts/v3-head-public-signatures.txt > artifacts/v3-removed-public-signatures.txt
+          if [ -s artifacts/v3-removed-public-signatures.txt ]; then
+            echo "::error::A public CLR signature was removed or changed; inspect v3-removed-public-signatures.txt"
+            cat artifacts/v3-removed-public-signatures.txt
+            exit 1
+          fi
+          jq -S . artifacts/v3-baseline-inventory.json > artifacts/v3-base-inventory-normalized.json
+          jq -S . artifacts/v3-candidate-inventory.json > artifacts/v3-head-inventory-normalized.json
+          if ! diff -u artifacts/v3-base-inventory-normalized.json artifacts/v3-head-inventory-normalized.json > artifacts/v3-inventory-diff.txt; then
+            echo "::error::ParseScript / Compile* baseline changed: classification, diagnostics, or compiled evidence"
+            sed -n '1,160p' artifacts/v3-inventory-diff.txt
+            exit 1
+          fi
+      - name: Verify C# public contract tests on both supported target frameworks
+        shell: bash
+        run: |
+          set -euo pipefail
+          for framework in net8.0 net10.0; do
+            (cd candidate && dotnet test backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj               --framework "$framework" --filter 'FullyQualifiedName~SqlCoreV3BaselineContractsTests')
+          done
+      - name: Build NuGet packages from exact source revisions
+        shell: bash
+        run: |
+          set -euo pipefail
+          for side in baseline candidate; do
+            (cd "$side" && dotnet pack -c Release backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.fsproj               --output "$GITHUB_WORKSPACE/artifacts/v3-$side-packages")
+          done
+      - name: Measure both compilers using fixed identical corpus on one runner
+        shell: bash
+        env:
+          DOTNET_TieredCompilation: '0'
+        run: |
+          set -euo pipefail
+          for side in baseline candidate; do
+            (cd "$side" && dotnet run --framework net10.0 -c Release --no-build --project backend/tools/HsSqlAgent.SqlCore.Benchmarks --               --v3-perf --warmup 10 --iterations 40 --output "$GITHUB_WORKSPACE/artifacts/v3-$side-perf.json")
+          done
+          jq -r '.results[] | "\(.provider)|\(.case)|\(.outputDigest)"' artifacts/v3-baseline-perf.json | LC_ALL=C sort > artifacts/v3-base-perf-digests.txt
+          jq -r '.results[] | "\(.provider)|\(.case)|\(.outputDigest)"' artifacts/v3-candidate-perf.json | LC_ALL=C sort > artifacts/v3-head-perf-digests.txt
+          diff -u artifacts/v3-base-perf-digests.txt artifacts/v3-head-perf-digests.txt
+      - name: Upload U0 evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sqlcore-v3-u0-contracts
+          path: artifacts/
+          if-no-files-found: warn

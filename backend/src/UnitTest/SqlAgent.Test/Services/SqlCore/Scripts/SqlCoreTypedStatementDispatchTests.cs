@@ -134,7 +134,7 @@ public sealed class SqlCoreTypedStatementDispatchTests
             TestContext.Current.CancellationToken).Statements);
         Assert.Equal(SqlScriptStatementKind.Unknown, statement.Kind);
         Assert.Equal(SqlScriptParseStatus.Unsupported, statement.Status);
-        Assert.Equal("SQL_SCRIPT_UNKNOWN_STATEMENT", statement.Diagnostic?.Code);
+        Assert.Equal("SQL_SCRIPT_UNSUPPORTED_STATEMENT", statement.Diagnostic?.Code);
     }
 
     [Fact]
