@@ -2967,6 +2967,11 @@ module internal RewriteScriptAnalyzer =
                                 (readOnly utilityIntents) (readOnly proceduralIntents)
                                 (readOnly proceduralDefinitions) sessionOperation provenance
                                 typed boundForEffects)
+                    let boundObjectAccesses =
+                        RewriteResourceBudget.withStage "ScriptDependencyBinding"
+                            SqlDiagnosticStage.Binding (fun () ->
+                                RewriteStatementEffects.boundObjectAccesses
+                                    syntax nameStatus before sessionBefore boundForEffects)
                     results.Add(
                         SqlStatementAnalysis(
                             syntax, status, effects,
@@ -2978,7 +2983,8 @@ module internal RewriteScriptAnalyzer =
                             readOnly securityIntents, readOnly securityDependencies,
                             readOnly utilityIntents, readOnly proceduralIntents,
                             readOnly proceduralDefinitions,
-                            provenance, sourceMatchCardinality, readOnly allDiagnostics)))
+                            provenance, sourceMatchCardinality,
+                            readOnly boundObjectAccesses, readOnly allDiagnostics)))
             SqlScriptAnalysisResult(
                 readOnly results, readOnly errors, current,
                 RewriteTransactionAnalyzer.status transaction,
