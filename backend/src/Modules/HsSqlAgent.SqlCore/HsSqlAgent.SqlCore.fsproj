@@ -64,6 +64,7 @@
     <Compile Include="RewriteLexer.fs" />
     <Compile Include="RewriteCastTypes.fs" />
     <Compile Include="RewriteParser.fs" />
+    <Compile Include="RewriteStatementDispatch.fs" />
     <Compile Include="RewriteSourceValidation.fs" />
     <Compile Include="RewriteCapabilityValidation.fs" />
     <Compile Include="RewritePlanCapabilityValidation.fs" />

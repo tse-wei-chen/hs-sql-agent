@@ -1,0 +1,114 @@
+namespace HsSqlAgent.SqlCore.Rewrite
+
+open HsSqlAgent.SqlCore.Enums
+open HsSqlAgent.SqlCore.Script
+open HsSqlAgent.SqlCore.Rewrite.RewriteLexer
+open HsSqlAgent.SqlCore.Rewrite.CoreModel
+open HsSqlAgent.SqlCore.Rewrite.Typestate
+
+/// Single owner of lexical family candidates and typed AST family decisions.
+/// Candidates and unsupported script classifications are never execution proof.
+module internal RewriteStatementDispatch =
+    type StatementFamily =
+        | Query | Mutation | Schema | Security | Transaction
+        | Session | Utility | Procedural | Unknown
+
+    type LexicalCandidate =
+        | Parseable of StatementFamily
+        | WithCandidate
+        | Recognized of StatementFamily
+        | Unrecognized
+
+    /// Constructors are private: these tokens come only from parsed F# AST.
+    type ParsedFamily =
+        private
+        | ParsedQuery of ParsedSql
+        | ParsedMutation of ParsedSql
+
+    type BoundFamily =
+        private
+        | BoundQuery of BoundSql
+        | BoundMutation of BoundSql
+
+    let word (tokens: Token[]) index =
+        if index >= tokens.Length then ""
+        else
+            match tokens.[index].Kind with
+            | Keyword value
+            | TokenKind.Identifier(value, false) -> value.ToUpperInvariant()
+            | _ -> ""
+
+    let candidate (tokens: Token[]) index sourceDialect =
+        let first = word tokens index
+        let second = word tokens (index + 1)
+        match first with
+        | "SELECT" -> Parseable Query
+        | "WITH" -> WithCandidate
+        | "INSERT" | "UPDATE" | "DELETE" | "MERGE" -> Parseable Mutation
+        | "CREATE" ->
+            let keywordPosition =
+                if second = "OR"
+                   && (word tokens (index + 2) = "REPLACE"
+                       || (sourceDialect = SqlAgentToolType.MsSqlServer
+                           && word tokens (index + 2) = "ALTER")) then index + 3
+                else index + 1
+            match word tokens keywordPosition with
+            | "PROCEDURE" | "PROC" | "FUNCTION" | "TRIGGER" -> Recognized Procedural
+            | _ -> Recognized Schema
+        | "ALTER" when second = "PROCEDURE" || second = "PROC"
+                         || second = "FUNCTION" || second = "TRIGGER" ->
+            Recognized Procedural
+        | "RECREATE" when sourceDialect = SqlAgentToolType.Firebird ->
+            match second with
+            | "TABLE" -> Recognized Schema
+            | "PROCEDURE" | "FUNCTION" | "TRIGGER" -> Recognized Procedural
+            | _ -> Unrecognized
+        | "ALTER" | "DROP" | "TRUNCATE" | "RENAME" -> Recognized Schema
+        | "GRANT" | "REVOKE" | "DENY" -> Recognized Security
+        | "BEGIN" when sourceDialect = SqlAgentToolType.MsSqlServer
+                       && second <> "TRAN" && second <> "TRANSACTION"
+                       && second <> "DISTRIBUTED" -> Recognized Procedural
+        | "BEGIN" when sourceDialect = SqlAgentToolType.Oracle
+                       || sourceDialect = SqlAgentToolType.Firebird -> Recognized Procedural
+        | "BEGIN" | "START" | "COMMIT" | "ROLLBACK" | "SAVEPOINT" | "RELEASE" ->
+            Recognized Transaction
+        | "SAVE" when sourceDialect = SqlAgentToolType.MsSqlServer
+                      && (second = "TRAN" || second = "TRANSACTION") ->
+            Recognized Transaction
+        | "SET" when second = "TRANSACTION" -> Recognized Transaction
+        | "SET" | "RESET" | "USE" | "SHOW" -> Recognized Session
+        | "EXPLAIN" | "VACUUM" | "ANALYZE" | "DESCRIBE" | "DESC" | "PRAGMA" ->
+            Recognized Utility
+        | "CALL" | "EXEC" | "EXECUTE" | "DO" | "DECLARE" -> Recognized Procedural
+        | _ -> Unrecognized
+
+    let candidateFamily = function
+        | Parseable family | Recognized family -> family
+        | WithCandidate | Unrecognized -> Unknown
+
+    let publicKind = function
+        | Query -> SqlScriptStatementKind.Query
+        | Mutation -> SqlScriptStatementKind.Mutation
+        | Schema -> SqlScriptStatementKind.Schema
+        | Security -> SqlScriptStatementKind.Security
+        | Transaction -> SqlScriptStatementKind.Transaction
+        | Session -> SqlScriptStatementKind.Session
+        | Utility -> SqlScriptStatementKind.Utility
+        | Procedural -> SqlScriptStatementKind.Procedural
+        | Unknown -> SqlScriptStatementKind.Unknown
+
+    let proveParsed (parsed: ParsedSql) =
+        match (Parsed.value parsed).Statement with
+        | QueryStatement _ -> ParsedQuery parsed
+        | InsertStatement _ | UpdateStatement _ | DeleteStatement _ | MergeStatement _ ->
+            ParsedMutation parsed
+
+    let proveBound (bound: BoundSql) =
+        match (Bound.value bound).Statement with
+        | QueryStatement _ -> BoundQuery bound
+        | InsertStatement _ | UpdateStatement _ | DeleteStatement _ | MergeStatement _ ->
+            BoundMutation bound
+
+    let provenFamily = function
+        | ParsedQuery _ -> Query
+        | ParsedMutation _ -> Mutation
