@@ -110,6 +110,26 @@ type SqlScriptDependencyReference internal (
     /// Syntactic dependencies never prove the server object exists.
     member _.Certainty = SqlCatalogKnowledge.Unknown
 
+/// An ordered dependency between two *static* statements on the same
+/// bound Virtual Catalog identity. Neither statement is known to have run.
+/// In particular, this edge is not a server-object, permission, row-set,
+/// transaction or approval proof.
+[<Sealed>]
+type SqlScriptStaticDependencyEdge internal (
+    predecessorStatementIndex: int,
+    successorStatementIndex: int,
+    objectIdentity: SqlCatalogQualifiedName,
+    predecessorOperation: SqlStatementEffectOperation,
+    successorOperation: SqlStatementEffectOperation,
+    span: SqlDiagnosticSpan) =
+    member _.PredecessorStatementIndex = predecessorStatementIndex
+    member _.SuccessorStatementIndex = successorStatementIndex
+    member _.ObjectIdentity = objectIdentity
+    member _.PredecessorOperation = predecessorOperation
+    member _.SuccessorOperation = successorOperation
+    member _.Span = span
+    member _.IsExecutionProof = false
+
 /// Only final, statically proven declarations in the Virtual Catalog are
 /// represented as Symbols; SQL aliases and lexical references are not inferred.
 type SqlScriptSymbolKind =
@@ -610,6 +630,106 @@ type SqlScriptAnalysisResult internal (
          |> Seq.toArray
          |> Array.AsReadOnly) :> IReadOnlyList<SqlScriptDependencyReference>
 
+    // U2: project an ordered graph ONLY after the existing Domain analysis
+    // has produced a typed Catalog identity, or full virtual name binding
+    // has been verified. The legacy Dependencies display-name list above is
+    // never consumed here. This is static ordering, not execution proof.
+    let staticDependencyEdges : IReadOnlyList<SqlScriptStaticDependencyEdge> =
+        let edges = ResizeArray<SqlScriptStaticDependencyEdge>()
+        let latest = Dictionary<string, int * SqlStatementEffectOperation * SqlEffectKind>(
+            StringComparer.Ordinal)
+
+        let mutationOrSchema effects =
+            (effects &&& (SqlEffectKind.WriteData ||| SqlEffectKind.ChangeSchema))
+                <> SqlEffectKind.None
+
+        let referencedIdentity (statement: SqlStatementAnalysis)
+                               (item: SqlStatementEffect) =
+            if statement.NameBinding <> SqlCatalogBindingStatus.Verified
+               || not statement.CatalogBefore.IsClosedWorld
+               || isNull item.ObjectName then None
+            else
+                // These names originate from the already-bound AST and are
+                // admitted ONLY after the existing Catalog verifier reports
+                // Verified; unverified diagnostic names cannot mint an edge.
+                // Never split a dotted display name into a fabricated ID.
+                let name = nonNull item.ObjectName
+                let scoped =
+                    statement.SessionBefore.IsSearchPathProven
+                    && not (isNull statement.SessionBefore.SearchPath)
+                let matching =
+                    statement.CatalogBefore.Tables
+                    |> Seq.filter (fun table ->
+                        table.Knowledge = SqlCatalogKnowledge.Known
+                        && (String.Equals(table.QualifiedName.DisplayName, name,
+                                          StringComparison.Ordinal)
+                            || (scoped
+                                && table.QualifiedName.Parts.Count = 2
+                                && String.Equals(
+                                    table.QualifiedName.Parts[0],
+                                    nonNull statement.SessionBefore.SearchPath,
+                                    StringComparison.Ordinal)
+                                && String.Equals(
+                                    table.QualifiedName.Parts[1], name,
+                                    StringComparison.Ordinal))))
+                    |> Seq.truncate 2
+                    |> Seq.toList
+                match matching with
+                | [table] -> Some table.QualifiedName
+                | _ -> None
+
+        let identityOf statement (item: SqlStatementEffect) =
+            match item.Operation with
+            | SqlStatementEffectOperation.ReadTable
+            | SqlStatementEffectOperation.Insert
+            | SqlStatementEffectOperation.Update
+            | SqlStatementEffectOperation.Delete
+            | SqlStatementEffectOperation.Merge ->
+                referencedIdentity statement item
+            | _ when item.Certainty = SqlCatalogKnowledge.Known
+                     && not (isNull item.ObjectIdentity) ->
+                Some(nonNull item.ObjectIdentity)
+            | _ -> None
+
+        statements |> Seq.iteri (fun index statement ->
+            // A statement with unmodeled effects or lost transaction context
+            // ends the current certainty chain; no edge crosses the barrier.
+            if statement.Status = SqlStatementAnalysisStatus.Invalid
+               || statement.Status = SqlStatementAnalysisStatus.Unsupported
+               || statement.TransactionBefore = SqlTransactionState.Unknown
+               || statement.TransactionAfter = SqlTransactionState.Unknown
+               || (statement.Effects &&& SqlEffectKind.UnknownEffects)
+                      <> SqlEffectKind.None then
+                latest.Clear()
+            else
+                // Only one access per object and statement; mutation/schema
+                // dominates a read. Do not invent a dependency from self.
+                let accesses =
+                    statement.DetailedEffects
+                    |> Seq.choose (fun effect ->
+                        identityOf statement effect
+                        |> Option.map (fun identity ->
+                            identity, effect.Operation, effect.Kind))
+                    |> Seq.groupBy (fun (identity, _, _) -> identity.Key)
+                    |> Seq.map (fun (_, group) ->
+                        group
+                        |> Seq.maxBy (fun (_, _, kind) ->
+                            if mutationOrSchema kind then 1 else 0))
+                for identity, operation, effects in accesses do
+                    match latest.TryGetValue(identity.Key) with
+                    | true, (previousIndex, previousOperation, previousEffects)
+                        when previousIndex <> index
+                             && (mutationOrSchema previousEffects
+                                 || mutationOrSchema effects) ->
+                        edges.Add(SqlScriptStaticDependencyEdge(
+                            previousIndex, index, identity,
+                            previousOperation, operation,
+                            statement.Syntax.Span))
+                    | _ -> ()
+                    latest[identity.Key] <- (index, operation, effects))
+        (edges.ToArray() |> Array.AsReadOnly)
+            :> IReadOnlyList<SqlScriptStaticDependencyEdge>
+
     // The Symbol projection describes FINAL virtual Catalog declarations only.
     // Never reconstruct identities from lossy display names or claim unknown
     // table shapes were verified. DDL rolled back/dropped mid-script disappears.
@@ -673,6 +793,9 @@ type SqlScriptAnalysisResult internal (
     /// Unverified object references from typed effects, never effective permissions
     /// or physical-object identity proofs. Does not include DDL declarations.
     member _.Dependencies = dependencies
+    /// Ordered Virtual Catalog dependencies with an existing static binding
+    /// proof. Never physical execution or Host authorization evidence.
+    member _.StaticDependencyEdges = staticDependencyEdges
     /// Proven declarations of the final Virtual Catalog only: Table and Column.
     /// Never a full SQL lexical symbol table or proof of live server existence.
     member _.Symbols = symbols
