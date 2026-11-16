@@ -22,13 +22,13 @@ module internal RewriteStatementDispatch =
     /// Constructors are private: these tokens come only from parsed F# AST.
     type ParsedFamily =
         private
-        | ParsedQuery of ParsedSql
-        | ParsedMutation of ParsedSql
+        | ProvenQuerySyntax of ParsedSql
+        | ProvenMutationSyntax of ParsedSql
 
     type BoundFamily =
         private
-        | BoundQuery of BoundSql
-        | BoundMutation of BoundSql
+        | ProvenQueryBinding of BoundSql
+        | ProvenMutationBinding of BoundSql
 
     let word (tokens: Token[]) index =
         if index >= tokens.Length then ""
@@ -100,15 +100,15 @@ module internal RewriteStatementDispatch =
 
     let proveParsed (parsed: ParsedSql) =
         match (Parsed.value parsed).Statement with
-        | QueryStatement _ -> ParsedQuery parsed
+        | QueryStatement _ -> ProvenQuerySyntax parsed
         | InsertStatement _ | UpdateStatement _ | DeleteStatement _ | MergeStatement _ ->
-            ParsedMutation parsed
+            ProvenMutationSyntax parsed
 
     let proveBound (bound: BoundSql) =
         match (Bound.value bound).Statement with
-        | QueryStatement _ -> BoundQuery bound
+        | QueryStatement _ -> ProvenQueryBinding bound
         | InsertStatement _ | UpdateStatement _ | DeleteStatement _ | MergeStatement _ ->
-            BoundMutation bound
+            ProvenMutationBinding bound
 
     /// Only the Query and Mutation grammars are currently compile-capable.
     /// The closed two-case result lets callers exhaustively match without
@@ -116,19 +116,19 @@ module internal RewriteStatementDispatch =
     type CompilableFamily = QueryGrammar | MutationGrammar
 
     let compiledFamily = function
-        | ParsedQuery _ -> QueryGrammar
-        | ParsedMutation _ -> MutationGrammar
+        | ProvenQuerySyntax _ -> QueryGrammar
+        | ProvenMutationSyntax _ -> MutationGrammar
 
     let boundFamily = function
-        | BoundQuery _ -> QueryGrammar
-        | BoundMutation _ -> MutationGrammar
+        | ProvenQueryBinding _ -> QueryGrammar
+        | ProvenMutationBinding _ -> MutationGrammar
 
     let parsedValue = function
-        | ParsedQuery parsed | ParsedMutation parsed -> parsed
+        | ProvenQuerySyntax parsed | ProvenMutationSyntax parsed -> parsed
 
     let boundValue = function
-        | BoundQuery bound | BoundMutation bound -> bound
+        | ProvenQueryBinding bound | ProvenMutationBinding bound -> bound
 
     let provenFamily = function
-        | ParsedQuery _ -> Query
-        | ParsedMutation _ -> Mutation
+        | ProvenQuerySyntax _ -> Query
+        | ProvenMutationSyntax _ -> Mutation
