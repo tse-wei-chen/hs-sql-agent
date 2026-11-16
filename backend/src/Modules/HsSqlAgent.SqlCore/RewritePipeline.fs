@@ -11,6 +11,7 @@ open HsSqlAgent.SqlCore.Rewrite.RewriteParser
 open HsSqlAgent.SqlCore.Rewrite.RewritePolicy
 open HsSqlAgent.SqlCore.Rewrite.RewriteRenderer
 open HsSqlAgent.SqlCore.Rewrite.Typestate
+open HsSqlAgent.SqlCore.Rewrite.RewriteStatementDispatch
 
 /// Single rewrite compiler entry point. Stage order is fixed by typestate signatures.
 module internal RewritePipeline =
@@ -210,25 +211,47 @@ module internal RewritePipeline =
 
     /// Compatibility entry for the Query Inspection path, which has already
     /// bound the AST to collect facts before running normalization/validation.
+    /// Only the closed AST establishes a Query/Mutation family. Domain
+    /// typestates independently guard every subsequent stage.
     let private finishBound options bound =
-        match (Bound.value bound).Statement with
-        | QueryStatement _ ->
-            RewriteQueryPipeline.fromBound bound
-            |> finishQueryBound options
-        | InsertStatement _ | UpdateStatement _ | DeleteStatement _ | MergeStatement _ ->
-            RewriteMutationPipeline.fromBound bound
-            |> finishMutationBound options
+        match RewriteStatementDispatch.proveBound bound with
+        | RewriteStatementDispatch.BoundQuery value ->
+            RewriteQueryPipeline.fromBound value |> finishQueryBound options
+        | RewriteStatementDispatch.BoundMutation value ->
+            RewriteMutationPipeline.fromBound value |> finishMutationBound options
 
-    let private finish options parsed =
-        match (Parsed.value parsed).Statement with
-        | QueryStatement _ ->
+    let private finishProven options = function
+        | RewriteStatementDispatch.ParsedQuery parsed ->
             RewriteQueryPipeline.fromParsed parsed
             |> RewriteQueryPipeline.bind (bind options)
             |> finishQueryBound options
-        | InsertStatement _ | UpdateStatement _ | DeleteStatement _ | MergeStatement _ ->
+        | RewriteStatementDispatch.ParsedMutation parsed ->
             RewriteMutationPipeline.fromParsed parsed
             |> RewriteMutationPipeline.bind (bind options)
             |> finishMutationBound options
+
+    let private finish options parsed =
+        RewriteStatementDispatch.proveParsed parsed |> finishProven options
+
+    type CompileIntent =
+        | QueryOnly
+        | MutationOnly
+
+    /// Reject a family mismatch before binding or invoking the other
+    /// domain's policy/renderer. No script analysis or second lex is needed.
+    let private ensureIntent intent parameter (proof: RewriteStatementDispatch.ParsedFamily) =
+        match intent, proof with
+        | QueryOnly, RewriteStatementDispatch.ParsedQuery _
+        | MutationOnly, RewriteStatementDispatch.ParsedMutation _ -> ()
+        | _ ->
+            let ex : exn =
+                match intent with
+                | QueryOnly -> ArgumentException("CompileQuery requires a SELECT statement.", parameter)
+                | MutationOnly ->
+                    SqlCompilationException(
+                        "Unsupported DML statement: CompileDml requires INSERT, UPDATE, DELETE, or MERGE.")
+            ex.Data["HsSqlAgent.SqlCore.FamilyMismatch"] <- true
+            raise ex
 
     let private parse options sql =
         let source = options.Source
@@ -241,6 +264,19 @@ module internal RewritePipeline =
     let compileParsed options parsed =
         RewriteResourceBudget.withCompilation (fun () -> finish options parsed)
 
+    let compileParsedFor intent options parsed =
+        RewriteResourceBudget.withCompilation (fun () ->
+            let proof = RewriteStatementDispatch.proveParsed parsed
+            ensureIntent intent "parsed" proof
+            finishProven options proof)
+
+    let compileWithParsedFor intent options sql =
+        RewriteResourceBudget.withCompilation (fun () ->
+            let parsed = parse options sql
+            let proof = RewriteStatementDispatch.proveParsed parsed
+            ensureIntent intent "sql" proof
+            parsed, finishProven options proof)
+
     let compileWithParsed options sql =
         RewriteResourceBudget.withCompilation (fun () ->
             let parsed = parse options sql
@@ -249,6 +285,8 @@ module internal RewritePipeline =
     let compileWithQueryFacts options sql =
         RewriteResourceBudget.withCompilation (fun () ->
             let parsed = parse options sql
+            let proof = RewriteStatementDispatch.proveParsed parsed
+            ensureIntent QueryOnly "sql" proof
             let bound = bind options parsed
             let facts =
                 RewriteResourceBudget.withStage "Inspection" SqlDiagnosticStage.Binding (fun () ->

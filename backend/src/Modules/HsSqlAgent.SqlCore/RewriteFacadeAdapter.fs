@@ -681,12 +681,18 @@ module internal RewriteFacadeAdapter =
     let private attachRejectedEvidence context (ex: exn) =
         let existing = SqlCompileEvidence.TryGetFromException(ex)
         if isNull existing then
+            let familyMismatch =
+                match ex.Data["HsSqlAgent.SqlCore.FamilyMismatch"] with
+                | :? bool as value -> value
+                | _ -> false
             let evidence =
                 CompileEvidenceBuilder.build
                     context
                     SqlCompileVerdict.Rejected
-                    (exceptionDecisionBoundary ex)
-                    (exceptionDecisionCode ex)
+                    (if familyMismatch then SqlCompileDecisionBoundary.InputValidation
+                     else exceptionDecisionBoundary ex)
+                    (if familyMismatch then "SQL_API_STATEMENT_KIND_MISMATCH"
+                     else exceptionDecisionCode ex)
                     null
             ex.Data[SqlCompileEvidence.DataKey] <- evidence
 
@@ -779,13 +785,15 @@ module internal RewriteFacadeAdapter =
             allowed
             (schemaDigest schemaSnapshot)
 
-    let private run (options: RewritePipeline.CompileOptions) (sql: string) =
+    let private run intent (options: RewritePipeline.CompileOptions) (sql: string) =
         try
-            RewritePipeline.compileWithParsed options sql
+            RewritePipeline.compileWithParsedFor intent options sql
         with
         | :? UnauthorizedAccessException -> reraise()
         | :? SqlCompilationException -> reraise()
         | :? SqlParseException -> reraise()
+        | :? ArgumentException as ex
+            when ex.Data.Contains("HsSqlAgent.SqlCore.FamilyMismatch") -> reraise()
         | :? ArgumentException as ex when String.Equals(ex.ParamName, "sql", StringComparison.Ordinal) ->
             raise (SqlParseException(ex.Message, ex))
         | :? InvalidOperationException as ex when compilationErrorMessage ex.Message ->
@@ -818,7 +826,7 @@ module internal RewriteFacadeAdapter =
                 fingerprint
         CompiledSqlCommand.Create(rendered.Sql, parameterValues, kind, fingerprint, target, rendered.ReturnsRows, evidence)
 
-    let private compile source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) (resultRowAssurance: DmlResultRowAssurance | null) policyVersion policy allowed schemaSnapshot liveKeyAssurance sqlServerLiveProof sql =
+    let private compile intent source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) (resultRowAssurance: DmlResultRowAssurance | null) policyVersion policy allowed schemaSnapshot liveKeyAssurance sqlServerLiveProof sql =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
         let evidenceContext =
             compileEvidenceContext
@@ -834,7 +842,7 @@ module internal RewriteFacadeAdapter =
                 schemaSnapshot
         try
             let parsed, rendered =
-                run
+                run intent
                     (compileOptions
                         source
                         (sourceSemantics source sourceProfile)
@@ -858,7 +866,7 @@ module internal RewriteFacadeAdapter =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentNullException.ThrowIfNull(executionPolicy)
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
-        let command = compile source target sourceProfile targetProfile null null validationContext.PolicyVersion (queryPolicy executionPolicy) (allowedTables validationContext.AllowedTables) validationContext.SchemaSnapshot null null sql
+        let command = compile RewritePipeline.QueryOnly source target sourceProfile targetProfile null null validationContext.PolicyVersion (queryPolicy executionPolicy) (allowedTables validationContext.AllowedTables) validationContext.SchemaSnapshot null null sql
         if command.Kind <> SqlStatementKind.Query then
             let error = ArgumentException("CompileQuery requires a SELECT statement.", "sql")
             attachReclassifiedEvidence
@@ -911,7 +919,7 @@ module internal RewriteFacadeAdapter =
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
         let command =
             try
-                compile source target sourceProfile targetProfile conflictTargetAssurance validationContext.DmlResultRowAssurance (liveKeyPolicyVersion validationContext) (dmlPolicy policy) (allowedTables validationContext.AllowedTables) validationContext.SchemaSnapshot validationContext.SqliteUpdateFromKeyAssurance validationContext.SqlServerCteUniqueKeyAssurance sql
+                compile RewritePipeline.MutationOnly source target sourceProfile targetProfile conflictTargetAssurance validationContext.DmlResultRowAssurance (liveKeyPolicyVersion validationContext) (dmlPolicy policy) (allowedTables validationContext.AllowedTables) validationContext.SchemaSnapshot validationContext.SqliteUpdateFromKeyAssurance validationContext.SqlServerCteUniqueKeyAssurance sql
             with
             | :? InvalidOperationException as ex when unknownQualifierError ex.Message ->
                 raise (compilationExceptionFrom ex)
@@ -944,15 +952,15 @@ module internal RewriteFacadeAdapter =
         else
             RewriteParser.SourceSemantics.defaultValue
 
-    let private runParsed options parsed =
-        try RewritePipeline.compileParsed options parsed
+    let private runParsed intent options parsed =
+        try RewritePipeline.compileParsedFor intent options parsed
         with
         | :? UnauthorizedAccessException -> reraise()
         | :? SqlCompilationException -> reraise()
         | :? InvalidOperationException as ex when compilationErrorMessage ex.Message ->
             raise (compilationExceptionFrom ex)
 
-    let private compileParsed (parsed: ParsedStatement) target (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) (resultRowAssurance: DmlResultRowAssurance | null) policyVersion policy allowed schemaSnapshot liveKeyAssurance sqlServerLiveProof =
+    let private compileParsed intent (parsed: ParsedStatement) target (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) (resultRowAssurance: DmlResultRowAssurance | null) policyVersion policy allowed schemaSnapshot liveKeyAssurance sqlServerLiveProof =
         let source = parsed.SourceDialect
         let evidenceContext =
             compileEvidenceContext
@@ -982,7 +990,7 @@ module internal RewriteFacadeAdapter =
                     RewriteResourceBudget.withStage "LegacyConversion" SqlDiagnosticStage.Binding (fun () ->
                         RewriteLegacyAstAdapter.toParsed parsed.Statement)
                 let rendered =
-                    runParsed
+                    runParsed intent
                         (compileOptions
                             source
                             (parsedSourceSemantics parsed)
@@ -1034,6 +1042,7 @@ module internal RewriteFacadeAdapter =
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
         let command =
             compileParsed
+                RewritePipeline.QueryOnly
                 parsed
                 target
                 targetProfile
@@ -1062,6 +1071,7 @@ module internal RewriteFacadeAdapter =
         let command =
             try
                 compileParsed
+                    RewritePipeline.MutationOnly
                     parsed
                     target
                     targetProfile
