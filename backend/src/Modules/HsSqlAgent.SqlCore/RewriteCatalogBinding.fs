@@ -85,9 +85,9 @@ module internal RewriteCatalogBinding =
                 let bound =
                     RewriteResourceBudget.withStage "CatalogBinding" SqlDiagnosticStage.Binding (fun () ->
                         RewriteBinder.bind sourceDialect parsed)
-                onBound bound
-                // The Source inspection AST visitor is iterative, does not
-                // recurse through CTEs/subqueries and includes Mutation targets.
+                // The existing iterative inspection can provide both the
+                // QueryFacts used by the binder and exact Identifier.parts
+                // for later static effects, without traversing the AST twice.
                 let schemaScopeProven =
                     match scoped with
                     | RewriteCatalogSchemaResolution.SingleSchema _
@@ -97,7 +97,9 @@ module internal RewriteCatalogBinding =
                     if schemaScopeProven && RewriteCatalogSchemaResolution.canProject scoped state then
                         RewriteCatalogSchemaResolution.projectForBinding scoped state
                     else state
-                let inspected = RewriteInspection.inspectBound bound
+                let inspected, physicalIdentifiers =
+                    RewriteInspection.inspectBoundWithPhysicalIdentifiers bound
+                onBound bound physicalIdentifiers
                 let physicalTableCount = inspected.ReferencedTables.Count
                 let defaultSchemaAmbiguity =
                     inspected.ReferencedTables

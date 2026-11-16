@@ -252,7 +252,7 @@ module internal RewriteInspection =
     /// Reuse the same iterative AST inspection, but retain each exact typed
     /// identifier part. A quoted "a.b" is one part; a.b has two. Never
     /// reconstruct a physical identity from a lossy display string.
-    let physicalIdentifiers bound =
+    let inspectBoundWithPhysicalIdentifiers bound =
         let identifiers = ResizeArray<Identifier>()
-        inspectDocumentWith identifiers.Add (Bound.value bound) |> ignore
-        identifiers |> Seq.toList
+        let facts = inspectDocumentWith identifiers.Add (Bound.value bound)
+        facts, identifiers |> Seq.toList

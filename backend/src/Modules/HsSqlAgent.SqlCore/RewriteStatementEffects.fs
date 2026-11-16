@@ -155,7 +155,8 @@ module internal RewriteStatementEffects =
                             (nameBinding: SqlCatalogBindingStatus)
                             (before: SqlCatalogState)
                             (sessionBefore: SqlSessionAnalysisState)
-                            (boundEvidence: BoundSql option) =
+                            (boundEvidence: BoundSql option)
+                            (physicalIdentifiers: Identifier list) =
         if nameBinding <> SqlCatalogBindingStatus.Verified
            || not before.IsClosedWorld then []
         else
@@ -208,7 +209,7 @@ module internal RewriteStatementEffects =
                     match existing with
                     | [table] -> Some table.QualifiedName
                     | _ -> None
-                RewriteInspection.physicalIdentifiers bound
+                physicalIdentifiers
                 |> List.mapi (fun index identifier ->
                     RewriteResourceBudget.checkpoint ()
                     let operation, kind =
