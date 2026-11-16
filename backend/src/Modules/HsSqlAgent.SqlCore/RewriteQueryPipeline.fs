@@ -11,8 +11,8 @@ module internal RewriteQueryPipeline =
     /// constructors prevent the opposing family from entering later stages
     /// through an arbitrary generic ParsedSql/BoundSql/CanonicalSql value.
     type ParsedQuery = private ParsedQuery of Typestate.ParsedSql
-    type BoundQuery = private BoundQuery of Typestate.BoundSql
-    type CanonicalQuery = private CanonicalQuery of Typestate.CanonicalSql
+    type BoundQuery = private BoundQuery of Typestate.BoundSql * RewriteQueryAnalyzer.ReadSetProof
+    type CanonicalQuery = private CanonicalQuery of Typestate.CanonicalSql * RewriteQueryAnalyzer.ReadSetProof
 
     let internal fromParsed (parsed: Typestate.ParsedSql) =
         match (Typestate.Parsed.value parsed).Statement with
@@ -22,30 +22,35 @@ module internal RewriteQueryPipeline =
 
     let internal fromBound (bound: Typestate.BoundSql) =
         match (Typestate.Bound.value bound).Statement with
-        | QueryStatement _ -> BoundQuery bound
+        | QueryStatement _ -> BoundQuery(bound, RewriteQueryAnalyzer.proveBoundReadSet bound)
         | InsertStatement _ | UpdateStatement _ | DeleteStatement _ | MergeStatement _ ->
             invalidOp "Mutation statement cannot enter the query binding stage."
 
     let internal bind bindSource (ParsedQuery parsed) =
         bindSource parsed |> fromBound
 
-    let internal normalize normalizeBound (BoundQuery bound) =
+    let internal normalize normalizeBound (BoundQuery(bound, readSet)) =
         let canonical = normalizeBound bound
         match (Typestate.Canonical.value canonical).Statement with
-        | QueryStatement _ -> CanonicalQuery canonical
+        | QueryStatement _ -> CanonicalQuery(canonical, readSet)
         | InsertStatement _ | UpdateStatement _ | DeleteStatement _ | MergeStatement _ ->
             invalidOp "Mutation statement cannot enter the query canonical stage."
 
     type ValidatedQuery = private ValidatedQuery of RewriteStages.ValidatedSql
     type AuthorizedQuery = private AuthorizedQuery of RewritePolicy.ExecutableSql
 
-    let internal fromValidated (validated: RewriteStages.ValidatedSql) =
-        match (RewriteStages.Validated.value validated).Statement with
-        | QueryStatement _ -> ValidatedQuery validated
+    let private fromValidated readSet (validated: RewriteStages.ValidatedSql) =
+        let document = RewriteStages.Validated.value validated
+        match document.Statement with
+        | QueryStatement _ ->
+            // No domain or provider lowering may silently add new physical
+            // relations after the bound Query source proof was established.
+            RewriteQueryAnalyzer.verifyNoNewPhysicalReads readSet document
+            ValidatedQuery validated
         | _ -> invalidOp "Mutation statement cannot enter the query compiler policy."
 
-    let internal validate validateCanonical (CanonicalQuery canonical) =
-        validateCanonical canonical |> fromValidated
+    let internal validate validateCanonical (CanonicalQuery(canonical, readSet)) =
+        validateCanonical canonical |> fromValidated readSet
 
     let internal authorize (rowCap: RowCap) (functionSafety: RewriteQueryPolicy.QueryFunctionSafety) (ValidatedQuery validated) =
         AuthorizedQuery(RewriteQueryPolicy.apply rowCap functionSafety validated)
