@@ -130,6 +130,37 @@ type SqlScriptStaticDependencyEdge internal (
     member _.Span = span
     member _.IsExecutionProof = false
 
+/// Script-wide *static* composition only. Every state is Analyze-only:
+/// none can authorize Query/DML/DDL execution or replace Host policy.
+type SqlScriptCompositionStatus =
+    | SingleDomainAnalysis = 0
+    | MixedAnalyzeOnly = 1
+    | RejectedForComposition = 2
+    | Unknown = 3
+
+/// Structured reasons for refusing to treat multiple analyzed statements as
+/// one executable SQL script. These never imply actual database behavior.
+type SqlScriptCompositionConcern =
+    | ReadWriteComposition = 0
+    | SchemaMutationComposition = 1
+    | TransactionEnvelope = 2
+    | PrivilegedOrProcedural = 3
+    | SessionScope = 4
+    | UnverifiedVirtualBinding = 5
+    | UnknownEffects = 6
+    | BatchBoundary = 7
+    | PossibleImplicitCommit = 8
+    | UnreconciledDml = 9
+
+[<Sealed>]
+type SqlScriptCompositionFinding internal (
+    kind: SqlScriptCompositionConcern,
+    statementIndex: int,
+    span: SqlDiagnosticSpan) =
+    member _.Kind = kind
+    member _.StatementIndex = statementIndex
+    member _.Span = span
+
 /// A statement-local identity from an existing verified virtual name binding.
 /// Only the Script analyzer can construct the list, never a public DTO caller.
 type internal SqlScriptBoundObjectAccess =
@@ -900,6 +931,99 @@ type SqlScriptAnalysisResult internal (
         (edges.ToArray() |> Array.AsReadOnly)
             :> IReadOnlyList<SqlScriptStaticDependencyEdge>
 
+    // U4 reuses only the existing ordered effects, typed U2 binding edges,
+    // U3 DML reconciliation, source batches and provider TCL provenance.
+    // A recognized family or a bound table never grants a script-level policy.
+    let compositionFindings : IReadOnlyList<SqlScriptCompositionFinding> =
+        let issues = ResizeArray<SqlScriptCompositionFinding>()
+        let add kind index =
+            issues.Add(SqlScriptCompositionFinding(
+                kind, index, statements[index].Syntax.Span))
+        let hasKind kind =
+            statements |> Seq.exists (fun statement -> statement.Kind = kind)
+        let query = hasKind SqlScriptStatementKind.Query
+        let mutation = hasKind SqlScriptStatementKind.Mutation
+        let schema = hasKind SqlScriptStatementKind.Schema
+        let transaction = hasKind SqlScriptStatementKind.Transaction
+        let mixed =
+            statements
+            |> Seq.map (fun statement -> statement.Kind)
+            |> Seq.distinct
+            |> Seq.truncate 2
+            |> Seq.length > 1
+        if query && mutation then
+            add SqlScriptCompositionConcern.ReadWriteComposition
+                (statements |> Seq.findIndex (fun statement ->
+                    statement.Kind = SqlScriptStatementKind.Mutation))
+        if schema && mutation then
+            add SqlScriptCompositionConcern.SchemaMutationComposition
+                (statements |> Seq.findIndex (fun statement ->
+                    statement.Kind = SqlScriptStatementKind.Mutation))
+        if transaction && mixed then
+            add SqlScriptCompositionConcern.TransactionEnvelope
+                (statements |> Seq.findIndex (fun statement ->
+                    statement.Kind = SqlScriptStatementKind.Transaction))
+        for index = 0 to statements.Count - 1 do
+            let statement = statements[index]
+            if mixed
+               && (statement.Kind = SqlScriptStatementKind.Security
+                   || statement.Kind = SqlScriptStatementKind.Utility
+                   || statement.Kind = SqlScriptStatementKind.Procedural) then
+                add SqlScriptCompositionConcern.PrivilegedOrProcedural index
+            if mixed && statement.Kind = SqlScriptStatementKind.Session then
+                add SqlScriptCompositionConcern.SessionScope index
+            if mixed
+               && (statement.Kind = SqlScriptStatementKind.Query
+                   || statement.Kind = SqlScriptStatementKind.Mutation)
+               && statement.NameBinding <> SqlCatalogBindingStatus.Verified then
+                add SqlScriptCompositionConcern.UnverifiedVirtualBinding index
+            if statement.Status = SqlStatementAnalysisStatus.Invalid
+               || statement.Status = SqlStatementAnalysisStatus.Unsupported
+               || statement.TransactionBefore = SqlTransactionState.Unknown
+               || statement.TransactionAfter = SqlTransactionState.Unknown
+               || (statement.Effects &&& SqlEffectKind.UnknownEffects)
+                    <> SqlEffectKind.None then
+                add SqlScriptCompositionConcern.UnknownEffects index
+            if statement.TransactionProvenance.Origin =
+                    SqlTransactionEffectOrigin.PossibleImplicitCommit then
+                add SqlScriptCompositionConcern.PossibleImplicitCommit index
+            if index > 0
+               && statement.Syntax.BatchIndex <> statements[index - 1].Syntax.BatchIndex then
+                add SqlScriptCompositionConcern.BatchBoundary index
+        if transaction then
+            for item in dmlEffectReconciliations do
+                if item.Disposition = SqlDmlEffectDisposition.Unproven then
+                    add SqlScriptCompositionConcern.UnreconciledDml item.StatementIndex
+        (issues.ToArray() |> Array.AsReadOnly) :> IReadOnlyList<SqlScriptCompositionFinding>
+
+    let compositionStatus =
+        let has kind =
+            compositionFindings |> Seq.exists (fun issue -> issue.Kind = kind)
+        if has SqlScriptCompositionConcern.UnknownEffects
+           || has SqlScriptCompositionConcern.UnverifiedVirtualBinding
+           || has SqlScriptCompositionConcern.PossibleImplicitCommit
+           || has SqlScriptCompositionConcern.UnreconciledDml then
+            SqlScriptCompositionStatus.Unknown
+        elif has SqlScriptCompositionConcern.SchemaMutationComposition
+             || has SqlScriptCompositionConcern.TransactionEnvelope
+             || has SqlScriptCompositionConcern.PrivilegedOrProcedural
+             || has SqlScriptCompositionConcern.SessionScope
+             || has SqlScriptCompositionConcern.BatchBoundary then
+            SqlScriptCompositionStatus.RejectedForComposition
+        elif compositionFindings.Count > 0 then
+            SqlScriptCompositionStatus.MixedAnalyzeOnly
+        else
+            SqlScriptCompositionStatus.SingleDomainAnalysis
+
+    // This count is a diagnostic of actual U2 *virtual* bound edges, not
+    // completeness of ReadSet/WriteSet or an executable dependency proof.
+    let boundCrossDomainDependencyCount =
+        staticDependencyEdges
+        |> Seq.filter (fun edge ->
+            statements[edge.PredecessorStatementIndex].Kind
+                <> statements[edge.SuccessorStatementIndex].Kind)
+        |> Seq.length
+
     // The Symbol projection describes FINAL virtual Catalog declarations only.
     // Never reconstruct identities from lossy display names or claim unknown
     // table shapes were verified. DDL rolled back/dropped mid-script disappears.
@@ -966,6 +1090,13 @@ type SqlScriptAnalysisResult internal (
     /// Ordered Virtual Catalog dependencies with an existing static binding
     /// proof. Never physical execution or Host authorization evidence.
     member _.StaticDependencyEdges = staticDependencyEdges
+    /// Entire script assessed from existing static analysis. Rejected and
+    /// Unknown are not execution outcomes; even the single/mixed analyzed
+    /// cases carry no Host approval or script execution authority.
+    member _.CompositionStatus = compositionStatus
+    member _.CompositionFindings = compositionFindings
+    member _.BoundCrossDomainDependencyCount = boundCrossDomainDependencyCount
+    member _.IsCompositionExecutionProof = false
     /// Proven declarations of the final Virtual Catalog only: Table and Column.
     /// Never a full SQL lexical symbol table or proof of live server existence.
     member _.Symbols = symbols
