@@ -11,9 +11,10 @@ internal interface IRevocableSqlExecutionLease : IAsyncDisposable
 }
 
 /// <summary>
-/// Connects caller cancellation with Redis admission revocation for a running
-/// read-only SQL operation. Never treat a lease as a reliable execution fence
-/// for an already-started DML COMMIT with an ambiguous outcome.
+/// Connects caller cancellation with Redis admission revocation for SQL
+/// operations, including DDL preview/approval and pre-native admission.
+/// Lease revocation is not a reliable execution fence after a DML/DDL native
+/// COMMIT begins; uncertain outcomes require provider-specific classification.
 /// </summary>
 internal sealed class SqlExecutionLeaseCancellation : IDisposable
 {

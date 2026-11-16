@@ -232,6 +232,7 @@ public sealed class OracleDdlRuntime(
 
             // This command alone crosses the irreversible Oracle DDL boundary.
             // The execution connection has no ambient or explicit transaction.
+            token.ThrowIfCancellationRequested();
             beganNative = true;
             await using (var command = Command(connection, plan.Command.Sql))
                 await command.ExecuteNonQueryAsync(token);
