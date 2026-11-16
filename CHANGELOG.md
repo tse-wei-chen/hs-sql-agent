@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## Development changes after v3.1.0
+
+### U5 Host DDL lease cancellation and uncertain execution boundary (#655)
+
+- Connect the existing revocable SQL admission token to the **six provider-specific DDL Host runtimes** and reject admission revoked before entering native SQL, including each PostgreSQL batch statement. Keep caller cancellation distinct from distributed lease revocation.
+- On an unexpected Host exception after executable DDL was delegated, report and audit a non-retryable `outcome_unknown` instead of claiming the error occurred before execution. Keep each provider's transactional rollback confirmation, ambiguous COMMIT handling, and MySQL/Oracle implicit-commit evidence unchanged.
+- Add public MCP Tool tests for pre-runtime revocation and caller cancellation plus an existing-fixture SQLite physical schema test for revocation during independent approval. Do not add an executable Script tool or inherit DML approval for DDL.
+
 ## [3.1.0] - Unreleased
 
 ### Frontend authentication lifecycle consolidation (#21)
