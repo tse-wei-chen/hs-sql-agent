@@ -314,9 +314,9 @@ internal static class SqlCoreV3Baseline
             {
                 if (args[i] == "--output" && i + 1 < args.Length) output = args[++i];
                 else if (args[i] == "--iterations" && i + 1 < args.Length &&
-                         int.TryParse(args[++i], out var number)) iterations = number;
+                         int.TryParse(args[++i], out var iterationCount)) iterations = iterationCount;
                 else if (args[i] == "--warmup" && i + 1 < args.Length &&
-                         int.TryParse(args[++i], out var number)) warmup = number;
+                         int.TryParse(args[++i], out var warmupCount)) warmup = warmupCount;
                 else throw new ArgumentException("Usage: --v3-abi|--v3-inventory|--v3-perf [--output path] [--iterations N] [--warmup N]");
             }
             if (iterations is < 1 or > 100_000 || warmup is < 0 or > 100_000)
