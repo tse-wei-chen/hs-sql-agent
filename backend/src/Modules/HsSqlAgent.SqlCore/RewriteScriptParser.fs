@@ -15,77 +15,13 @@ open HsSqlAgent.SqlCore.Rewrite.Typestate
 /// The existing parser remains the single owner of recognized Query/Mutation grammar.
 module internal RewriteScriptParser =
 
-    type private StatementFamily =
-        | Query
-        | Mutation
-        | Schema
-        | Security
-        | Transaction
-        | Session
-        | Utility
-        | Procedural
-        | Unknown
-
-    let private word (tokens: Token[]) index =
-        if index >= tokens.Length then ""
-        else
-            match tokens.[index].Kind with
-            | Keyword value
-            | TokenKind.Identifier(value, false) -> value.ToUpperInvariant()
-            | _ -> ""
-
-    let private classify (tokens: Token[]) index sourceDialect =
-        let first = word tokens index
-        let second = word tokens (index + 1)
-        match first with
-        | "SELECT" | "WITH" -> Query
-        | "INSERT" | "UPDATE" | "DELETE" | "MERGE" -> Mutation
-        | "CREATE" ->
-            let keywordPosition =
-                if second = "OR"
-                   && (word tokens (index + 2) = "REPLACE"
-                       || (sourceDialect = SqlAgentToolType.MsSqlServer
-                           && word tokens (index + 2) = "ALTER")) then index + 3
-                else index + 1
-            match word tokens keywordPosition with
-            | "PROCEDURE" | "PROC" | "FUNCTION" | "TRIGGER" -> Procedural
-            | _ -> Schema
-        | "ALTER" when second = "PROCEDURE" || second = "PROC"
-                         || second = "FUNCTION" || second = "TRIGGER" -> Procedural
-        | "RECREATE" when sourceDialect = SqlAgentToolType.Firebird && second = "TABLE" -> Schema
-        | "ALTER" | "DROP" | "TRUNCATE" | "RENAME" -> Schema
-        | "GRANT" | "REVOKE" | "DENY" -> Security
-        | "BEGIN" when sourceDialect = SqlAgentToolType.MsSqlServer
-                       && second <> "TRAN" && second <> "TRANSACTION"
-                       && second <> "DISTRIBUTED" -> Procedural
-        | "BEGIN" when sourceDialect = SqlAgentToolType.Oracle
-                       || sourceDialect = SqlAgentToolType.Firebird -> Procedural
-        | "BEGIN" | "START" | "COMMIT" | "ROLLBACK" | "SAVEPOINT" | "RELEASE" -> Transaction
-        | "SAVE" when sourceDialect = SqlAgentToolType.MsSqlServer
-                      && (second = "TRAN" || second = "TRANSACTION") -> Transaction
-        | "SET" | "RESET" | "USE" | "SHOW" -> Session
-        | "EXPLAIN" | "VACUUM" | "ANALYZE" | "DESCRIBE" | "DESC" | "PRAGMA" -> Utility
-        | "CALL" | "EXEC" | "EXECUTE" | "DO" | "DECLARE" -> Procedural
-        | _ -> Unknown
-
-    let private publicKind = function
-        | Query -> SqlScriptStatementKind.Query
-        | Mutation -> SqlScriptStatementKind.Mutation
-        | Schema -> SqlScriptStatementKind.Schema
-        | Security -> SqlScriptStatementKind.Security
-        | Transaction -> SqlScriptStatementKind.Transaction
-        | Session -> SqlScriptStatementKind.Session
-        | Utility -> SqlScriptStatementKind.Utility
-        | Procedural -> SqlScriptStatementKind.Procedural
-        | Unknown -> SqlScriptStatementKind.Unknown
-
     /// Opaque procedural bodies have dialect-specific internal semicolons.
     /// Until there is a dedicated procedural parser, never split their bodies
     /// into apparent (and falsely validated) standalone SELECT/DML statements.
     let private requiresOpaqueRemainder (tokens: Token[]) start dialect =
-        match classify tokens start dialect with
-        | Procedural ->
-            let first = word tokens start
+        match RewriteStatementDispatch.candidate tokens start dialect with
+        | RewriteStatementDispatch.Recognized RewriteStatementDispatch.Procedural ->
+            let first = RewriteStatementDispatch.word tokens start
             // PostgreSQL's SQL-language string/dollar-quoted definitions
             // have their internal semicolons in a single lexical literal.
             // A normal terminating semicolon can therefore safely split
@@ -101,11 +37,11 @@ module internal RewriteScriptParser =
                         match token.Kind with
                         | StringLiteral _ -> true
                         | _ -> false))
-            ((first = "CREATE" && not quotedDefinition)
+            (((first = "CREATE" || first = "RECREATE") && not quotedDefinition)
              || first = "ALTER"
              || first = "DO" || first = "DECLARE" || first = "BEGIN"
              || (dialect = SqlAgentToolType.Firebird
-                 && first = "EXECUTE" && word tokens (start + 1) = "BLOCK"))
+                 && first = "EXECUTE" && RewriteStatementDispatch.word tokens (start + 1) = "BLOCK"))
         | _ -> false
 
     /// GO is SQL Server's client-side batch separator only when its physical
@@ -219,48 +155,52 @@ module internal RewriteScriptParser =
                     let absoluteStart = first.Start
                     let length = last.Start + last.Length - absoluteStart
                     let text = sql.Substring(absoluteStart, length)
-                    let family = classify tokens start sourceDialect
+                    let candidate = RewriteStatementDispatch.candidate tokens start sourceDialect
+                    let family = RewriteStatementDispatch.candidateFamily candidate
                     let mutable typed: ParsedSql option = None
-                    let actualFamily, status, diagnostic =
-                        match family with
-                        | Query | Mutation ->
+                    let decision =
+                        match candidate with
+                        | RewriteStatementDispatch.Parseable _
+                        | RewriteStatementDispatch.WithCandidate ->
                             try
                                 let parsed =
                                     RewriteResourceBudget.withStage "ScriptStatementParse" SqlDiagnosticStage.Parse (fun () ->
                                         RewriteFacadeAdapter.parseSourceValidated text sourceDialect sourceProfile)
-                                // WITH is a lexical prefix, not reliable Query
-                                // evidence. Only the closed, parsed F# AST
-                                // determines the public DQL/DML statement kind.
+                                // WITH cannot establish Query/Mutation from tokens.
+                                // A successful closed AST parse alone mints this proof.
                                 if captureTyped then typed <- Some parsed
-                                let parsedFamily =
-                                    match (Typestate.Parsed.value parsed).Statement with
-                                    | Statement.QueryStatement _ -> Query
-                                    | Statement.InsertStatement _
-                                    | Statement.UpdateStatement _
-                                    | Statement.DeleteStatement _
-                                    | Statement.MergeStatement _ -> Mutation
-                                parsedFamily, SqlScriptParseStatus.Parsed, None
+                                RewriteStatementDispatch.Verified
+                                    (RewriteStatementDispatch.proveParsed parsed)
                             with
                             | :? SqlParseException as ex
                                 when not (Object.ReferenceEquals(ex.Diagnostic, null))
                                      && (nonNull ex.Diagnostic).Category = SqlDiagnosticCategory.Resource ->
                                 reraise()
                             | :? SqlParseException as ex ->
-                                family, SqlScriptParseStatus.Invalid,
-                                Some(invalidDiagnostic ex absoluteStart length)
+                                RewriteStatementDispatch.InvalidCandidate(
+                                    family, invalidDiagnostic ex absoluteStart length)
                         | _ ->
-                            family, SqlScriptParseStatus.Unsupported,
-                            Some(
+                            // Preserve the public diagnostic ABI, but never
+                            // conflate an unknown token with a recognized
+                            // analyze-only family or a successfully parsed AST.
+                            let diagnostic =
                                 SqlDiagnostic(
                                     "SQL_SCRIPT_UNSUPPORTED_STATEMENT",
                                     SqlDiagnosticStage.Parse,
                                     SqlDiagnosticCategory.Capability,
                                     "Statement family recognized, but semantic analysis is not implemented.",
-                                    SqlDiagnosticSpan(absoluteStart, length)))
+                                    SqlDiagnosticSpan(absoluteStart, length))
+                            match candidate with
+                            | RewriteStatementDispatch.Unrecognized ->
+                                RewriteStatementDispatch.UnknownCandidate diagnostic
+                            | _ ->
+                                RewriteStatementDispatch.UnsupportedCandidate(family, diagnostic)
+                    let actualKind, status, diagnostic =
+                        RewriteStatementDispatch.projectScriptDecision decision
                     diagnostic |> Option.iter diagnostics.Add
                     result.Add(
                         SqlScriptStatementSyntax(
-                            publicKind actualFamily,
+                            actualKind,
                             status,
                             batch,
                             SqlDiagnosticSpan(absoluteStart, length),

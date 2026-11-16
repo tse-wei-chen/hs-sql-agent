@@ -64,6 +64,8 @@
     <Compile Include="RewriteLexer.fs" />
     <Compile Include="RewriteCastTypes.fs" />
     <Compile Include="RewriteParser.fs" />
+    <Compile Include="RewriteSchemaAnalyzer.fs" />
+    <Compile Include="RewriteStatementDispatch.fs" />
     <Compile Include="RewriteSourceValidation.fs" />
     <Compile Include="RewriteCapabilityValidation.fs" />
     <Compile Include="RewritePlanCapabilityValidation.fs" />
@@ -86,7 +88,6 @@
     <Compile Include="RewritePipeline.fs" />
     <Compile Include="RewriteFacadeAdapter.fs" />
     <Compile Include="RewriteScriptParser.fs" />
-    <Compile Include="RewriteSchemaAnalyzer.fs" />
     <Compile Include="RewriteDdlCompiler.fs" />
     <Compile Include="RewriteDdlPreview.fs" />
     <Compile Include="RewriteSchemaDependencies.fs" />

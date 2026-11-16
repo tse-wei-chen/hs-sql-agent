@@ -63,10 +63,12 @@ module internal RewriteDdlCompiler =
         let tokens =
             RewriteFacadeAdapter.tokenizeSourceValidated sqlText options.SourceDialect options.SourceProfile
             |> List.toArray
-        match RewriteSchemaAnalyzer.parseForWith options.SourceDialect options.SourceProfile tokens with
-        | Recognized operation -> ParsedDdl operation
-        | Unsupported -> sourceSyntax "DDL is outside the proven schema compilation grammar."
-        | Invalid message -> sourceSyntax message
+        match RewriteStatementDispatch.verifySchema options.SourceDialect options.SourceProfile tokens with
+        | RewriteStatementDispatch.ProvenSchema proof ->
+            ParsedDdl (RewriteStatementDispatch.schemaOperation proof)
+        | RewriteStatementDispatch.UnsupportedSchema ->
+            sourceSyntax "DDL is outside the proven schema compilation grammar."
+        | RewriteStatementDispatch.InvalidSchema message -> sourceSyntax message
 
     /// DDL binder accepts only one fully typed additive physical operation;
     /// constraints, conditionals, cascading/partial schema updates, DDL
