@@ -194,7 +194,7 @@ module internal RewriteStatementEffects =
                             Some(SqlCatalogQualifiedName(
                                 Array.AsReadOnly [|nonNull sessionBefore.CurrentDatabase; parts[0]|]))
                         else None
-                    let matches candidate =
+                    let matches (candidate: SqlCatalogTable) =
                         candidate.QualifiedName.Key = requested.Key
                         || (match scopedIdentity with
                             | Some scoped -> candidate.QualifiedName.Key = scoped.Key
