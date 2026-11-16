@@ -49,7 +49,8 @@ module internal RewriteStatementDispatch =
             let keywordPosition =
                 if second = "OR"
                    && (word tokens (index + 2) = "REPLACE"
-                       || (sourceDialect = SqlAgentToolType.MsSqlServer
+                       || ((sourceDialect = SqlAgentToolType.MsSqlServer
+                             || sourceDialect = SqlAgentToolType.Firebird)
                            && word tokens (index + 2) = "ALTER")) then index + 3
                 else index + 1
             match word tokens keywordPosition with

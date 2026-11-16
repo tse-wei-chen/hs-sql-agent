@@ -220,4 +220,26 @@ public sealed class SqlCoreTypedStatementDispatchTests
             "SELECT 1", new DdlCompilationOptions(provider, provider)));
     }
 
+
+    [Fact]
+    public void FirebirdRecreateProcedure_DoesNotSplitInternalBodySemicolons()
+    {
+        const string sql = "RECREATE PROCEDURE p AS BEGIN SELECT 1 FROM rdb$database; END; SELECT 2";
+        var statement = Assert.Single(SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Firebird,
+            TestContext.Current.CancellationToken).Statements);
+        Assert.Equal(SqlScriptStatementKind.Procedural, statement.Kind);
+        Assert.Equal(SqlScriptParseStatus.Unsupported, statement.Status);
+        Assert.Contains("SELECT 2", statement.Text);
+    }
+
+    [Fact]
+    public void FirebirdCreateOrAlterProcedure_IsNeverClassifiedAsSchema()
+    {
+        const string sql = "CREATE OR ALTER PROCEDURE p AS BEGIN SELECT 1 FROM rdb$database; END;";
+        var statement = Assert.Single(SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Firebird,
+            TestContext.Current.CancellationToken).Statements);
+        Assert.Equal(SqlScriptStatementKind.Procedural, statement.Kind);
+        Assert.Equal(SqlScriptParseStatus.Unsupported, statement.Status);
+    }
+
 }

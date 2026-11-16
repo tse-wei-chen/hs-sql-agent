@@ -37,7 +37,7 @@ module internal RewriteScriptParser =
                         match token.Kind with
                         | StringLiteral _ -> true
                         | _ -> false))
-            ((first = "CREATE" && not quotedDefinition)
+            (((first = "CREATE" || first = "RECREATE") && not quotedDefinition)
              || first = "ALTER"
              || first = "DO" || first = "DECLARE" || first = "BEGIN"
              || (dialect = SqlAgentToolType.Firebird
