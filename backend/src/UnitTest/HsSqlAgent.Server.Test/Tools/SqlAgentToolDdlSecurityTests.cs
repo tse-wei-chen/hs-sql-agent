@@ -88,6 +88,62 @@ public sealed class SqlAgentToolDdlSecurityTests
         limiter.VerifyNoOtherCalls();
     }
 
+    private sealed class RevocableDdlLease(CancellationToken token) : IRevocableSqlExecutionLease
+    {
+        public CancellationToken RevocationToken => token;
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RevokedAdmissionBeforeRuntime_DeniesBothPreviewAndExecution(
+        bool previewOnly)
+    {
+        var (tool, factory, limiter, _) = Build("execute_ddl_sql");
+        using var revoked = new CancellationTokenSource();
+        // The Redis lease was revoked after admission, independently of the
+        // client. The Host must never try the physical preview or native DDL.
+        factory.Setup(x => x.GetProvider(SqlAgentToolType.Postgres))
+            .Returns(Mock.Of<ISqlProvider>());
+        limiter.Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()))
+            .Returns(ValueTask.FromResult<IAsyncDisposable?>(
+                new RevocableDdlLease(revoked.Token)));
+        revoked.Cancel();
+
+        var result = await tool.ExecuteDdlSql(
+            "CREATE TABLE app.widgets (id INTEGER)", previewOnly,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal("rejected", result.Status);
+        Assert.False(result.CommitConfirmed);
+        Assert.Equal("ddl.lease_revoked_before_execute", result.Error?.Code);
+    }
+
+    [Fact]
+    public async Task CallerCancellationAfterAdmission_IsNotMisreportedAsLeaseRevocation()
+    {
+        var (tool, factory, limiter, _) = Build("execute_ddl_sql");
+        using var caller = new CancellationTokenSource();
+        factory.Setup(x => x.GetProvider(SqlAgentToolType.Postgres))
+            .Returns(Mock.Of<ISqlProvider>());
+        limiter.Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                caller.Cancel();
+                return ValueTask.FromResult<IAsyncDisposable?>(new RevocableDdlLease(
+                    CancellationToken.None));
+            });
+
+        var result = await tool.ExecuteDdlSql(
+            "CREATE TABLE app.widgets (id INTEGER)", previewOnly: false,
+            caller.Token);
+
+        Assert.Equal("rejected", result.Status);
+        Assert.False(result.CommitConfirmed);
+        Assert.Equal("ddl.cancelled", result.Error?.Code);
+    }
+
     [Fact]
     public void OutcomeUnknown_TransportHasNoSuccessOrAutomaticRetryAuthority()
     {
