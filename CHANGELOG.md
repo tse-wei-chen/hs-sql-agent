@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## Development changes after v3.1.0
 
+### U9 release compatibility, performance evidence and migration consolidation
+
+- Extend the existing SqlCore v3 PR ABI job with a **true published v3.1.0 NuGet binary baseline**: pin and verify the published Git tag, download and SHA-256 record the actual released SqlCore package, validate net8.0/net10.0 assets and run Microsoft ApiCompat against the exact PR-head package. Retain the independent PR base-to-head CLR/signature/semantic parity gate.
+- Publish exact base/head code delta and single-run paired p50/p95/allocated-byte observations with explicit >5% investigation warnings, not a noisy automatic performance rejection. SQL/parameter output digest parity remains hard-fail.
+- Consolidate documented Parse/Analyze/Compile/Host authorization boundaries, existing Hosting appsettings/MCP approval sample, v3.1.0-to-develop migration and failure/rollback instructions. No new public SQL API, tool, grammar, production runtime or release publication.
+
+
 ### U8 Query named-source reference consistency and restricted window policy (#650)
 
 - Carry Query-only bound named-source references through normalization and validation, rejecting newly introduced named sources before policy/render. Lexical CTE aliases are excluded; this is **not** a live physical read-set or Host authorization proof, and does not expand View/UDF bodies.

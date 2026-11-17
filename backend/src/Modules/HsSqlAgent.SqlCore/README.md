@@ -130,6 +130,15 @@ Database drivers, connections, transactions and execution belong to the consumer
 Unsupported syntax, ambiguous identities and unproven transformations are rejected.
 The package does not claim complete SQL grammar or cross-dialect equivalence.
 
+## Release compatibility
+
+The [published v3.1.0 → develop migration and ABI evidence guide](RELEASE-COMPATIBILITY.md)
+covers the four capability boundaries (Parse/Analyze/Compile/Host Execute),
+the existing ASP.NET Core Hosting sample and required approval configuration,
+the actual released NuGet API comparison for net8.0/net10.0, and same-runner
+p50/p95/allocated-byte observations. The newer typed Script analysis and
+Query source-consistency additions are **develop-only until released**.
+
 ## Documentation
 
 - [SQL syntax and capability reference](https://sql-agent.net/en/docs/sql-compiler/sql-support)
