@@ -40,12 +40,14 @@ public sealed class SqlCoreDqlDomainParityTests
         Assert.Equal(SqlStatementKind.Query, command.Command.Kind);
         Assert.Equal(new[] { "orders" }, command.Facts.ReferencedTables.OrderBy(x => x));
 
-        var script = SqlCoreFacade.ParseScript(sql + ";", provider);
+        var script = SqlCoreFacade.ParseScript(
+            sql + ";", provider, TestContext.Current.CancellationToken);
         var statement = Assert.Single(script.Statements);
         Assert.Equal(SqlScriptStatementKind.Query, statement.Kind);
         Assert.Equal(SqlScriptParseStatus.Parsed, statement.Status);
 
-        var analysis = SqlCoreFacade.AnalyzeScript(sql + ";", provider);
+        var analysis = SqlCoreFacade.AnalyzeScript(
+            sql + ";", provider, TestContext.Current.CancellationToken);
         var effect = Assert.Single(analysis.Statements);
         Assert.Equal(SqlScriptStatementKind.Query, effect.Kind);
         Assert.True(effect.Effects.HasFlag(SqlEffectKind.ReadData));
@@ -81,7 +83,8 @@ public sealed class SqlCoreDqlDomainParityTests
     {
         Assert.ThrowsAny<Exception>(() => SqlCoreFacade.CompileQuery(
             "UPDATE orders SET id = 3 WHERE id = 1",
-            provider, provider, AllowOrders(), new SqlExecutionPlanPolicy(10)));
+            provider, provider, AllowOrders(), new SqlExecutionPlanPolicy(10),
+            TestContext.Current.CancellationToken));
     }
 
     [Theory]
@@ -107,7 +110,8 @@ public sealed class SqlCoreDqlDomainParityTests
         var failure = Assert.Throws<UnauthorizedAccessException>(() =>
             SqlCoreFacade.CompileQuery(sql,
                 SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                AllowOrders(), new SqlExecutionPlanPolicy(10)));
+                AllowOrders(), new SqlExecutionPlanPolicy(10),
+                TestContext.Current.CancellationToken));
         var diagnostic = Assert.IsType<SqlDiagnostic>(
             failure.Data["HsSqlAgent.SqlCore.Diagnostic"]);
         Assert.Equal("SQL_POLICY_POSTGRES_QUERY_FUNCTION_NOT_PROVEN", diagnostic.Code);
@@ -126,7 +130,8 @@ public sealed class SqlCoreDqlDomainParityTests
         Assert.Throws<UnauthorizedAccessException>(() =>
             SqlCoreFacade.CompileQuery(sql,
                 SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
-                AllowOrders(), new SqlExecutionPlanPolicy(10)));
+                AllowOrders(), new SqlExecutionPlanPolicy(10),
+                TestContext.Current.CancellationToken));
     }
 
     [Theory]
