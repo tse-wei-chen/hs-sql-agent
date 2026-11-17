@@ -86,6 +86,19 @@ proof of success or failure. An `outcome_unknown` response is non-retryable;
 preserve the approval request ID and reconcile durable DB state before any
 new approval. Do not automatically replay.
 
+## SQL capability and release compatibility
+
+**Parsing, analysis, compilation, and Host execution are separate authorities.**
+`ParseScript` and `AnalyzeScript` do not permit SQL execution or authorize
+DML/DDL. The existing `execute_dml_sql` supports approved, Host-owned atomic
+DML-only batches; caller `BEGIN`/`COMMIT` scripts remain disallowed. DDL
+uses a separate feature gate and approval contract.
+
+For upgrades from the published **3.1.0** NuGet packages to unreleased `develop`
+changes, follow the [SqlCore ABI/migration and benchmark evidence guide](backend/src/Modules/HsSqlAgent.SqlCore/RELEASE-COMPATIBILITY.md).
+The new PR CI compares the actual published SqlCore 3.1.0 binary package,
+not just the immediately preceding commit; passing develop CI never publishes a release.
+
 ## Quick Start
 
 ```bash

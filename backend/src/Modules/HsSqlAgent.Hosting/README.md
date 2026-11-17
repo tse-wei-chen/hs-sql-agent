@@ -89,6 +89,18 @@ DmlApproval__Webhook__SigningSecret=replace-with-a-unique-secret-at-least-32-byt
 
 Unknown provider names fail at startup. Standard hosting intentionally owns this selector; if you need a custom `IDmlApprovalProvider`, use the modular `HsSqlAgent.Server` package instead.
 
+## SqlCore compiler versus Host execution
+
+`HsSqlAgent.SqlCore` is a driver-free compiler, not an authenticated SQL
+execution service. Use `ParseScript`/`AnalyzeScript` for static inspection,
+and `CompileQuery`/`CompileDml`/`CompileDdl` only within their supported
+domain policies. A parsed TCL envelope is never an approval to run a transaction;
+the standard Host owns atomic DML batches and independent DDL approval.
+
+For upgrading a published 3.1.0 consumer, refer to the
+[SqlCore release ABI and migration guide](../HsSqlAgent.SqlCore/RELEASE-COMPATIBILITY.md)
+before using any develop-only analysis fields.
+
 ## Modular alternative
 
 For an existing ASP.NET Core application that wants to keep its own authentication, authorization, frontend, exception handling, telemetry, or approval composition:
