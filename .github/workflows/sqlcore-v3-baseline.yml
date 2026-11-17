@@ -163,6 +163,61 @@ jobs:
           jq -r '.results[] | "\(.provider)|\(.case)|\(.outputDigest)"' artifacts/v3-baseline-perf.json | LC_ALL=C sort > artifacts/v3-base-perf-digests.txt
           jq -r '.results[] | "\(.provider)|\(.case)|\(.outputDigest)"' artifacts/v3-candidate-perf.json | LC_ALL=C sort > artifacts/v3-head-perf-digests.txt
           diff -u artifacts/v3-base-perf-digests.txt artifacts/v3-head-perf-digests.txt
+      - name: Publish paired p50/p95 and allocation observations (not a noisy hard threshold)
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -n --slurpfile b artifacts/v3-baseline-perf.json \
+                --slurpfile h artifacts/v3-candidate-perf.json \
+                --rawfile bs artifacts/v3-base-sha.txt \
+                --rawfile hs artifacts/v3-candidate-sha.txt '
+            ($b[0].results | map({key: (.provider + "|" + .case), value: .}) | from_entries) as $before |
+            ($h[0].results | map({key: (.provider + "|" + .case), value: .}) | from_entries) as $after |
+            ($before | keys) as $keys |
+            if $keys != ($after | keys) or ($keys | length) == 0
+            then error("Missing, added or duplicated perf case between exact revisions")
+            else {
+              schemaVersion: 1, baseSha: ($bs | rtrimstr("\n")),
+              headSha: ($hs | rtrimstr("\n")),
+              interpretation: "one paired run; investigate >5%; no automatic timing rejection on shared runners",
+              cases: [
+                $keys[] as $key |
+                $before[$key] as $left | $after[$key] as $right |
+                if ($left.p50Microseconds <= 0 or $left.p95Microseconds <= 0 or
+                    $left.meanAllocatedBytesPerOperation <= 0 or
+                    $right.p50Microseconds <= 0 or $right.p95Microseconds <= 0 or
+                    $right.meanAllocatedBytesPerOperation <= 0)
+                then error("Invalid nonpositive performance measurement: " + $key)
+                else {
+                  provider: $left.provider, case: $left.case,
+                  p50Base: $left.p50Microseconds, p50Head: $right.p50Microseconds,
+                  p95Base: $left.p95Microseconds, p95Head: $right.p95Microseconds,
+                  allocBase: $left.meanAllocatedBytesPerOperation,
+                  allocHead: $right.meanAllocatedBytesPerOperation,
+                  p50Ratio: ($right.p50Microseconds / $left.p50Microseconds),
+                  p95Ratio: ($right.p95Microseconds / $left.p95Microseconds),
+                  allocRatio: ($right.meanAllocatedBytesPerOperation / $left.meanAllocatedBytesPerOperation)
+                } end
+              ]
+            } end
+          ' > artifacts/v3-paired-perf-observations.json
+          {
+            echo "### SqlCore same-runner PR base → PR head benchmark"
+            echo "Single paired run; warmup=10, iterations=40. Observations are NOT repeatable production SLOs."
+            echo
+            echo "| Provider | Case | p50 ratio | p95 ratio | Allocation ratio |"
+            echo "| --- | --- | ---: | ---: | ---: |"
+            jq -r '.cases | sort_by(.p95Ratio) | reverse | .[:10][] |
+              "| \(.provider) | \(.case) | \((.p50Ratio * 100 | round) / 100)x | \((.p95Ratio * 100 | round) / 100)x | \((.allocRatio * 100 | round) / 100)x |"' \
+              artifacts/v3-paired-perf-observations.json
+            echo
+            echo "The table shows the 10 largest p95 ratios, not a complete variance estimate."
+          } >> "$GITHUB_STEP_SUMMARY"
+          possible="$(jq '[.cases[] | select(.p50Ratio > 1.05 or .p95Ratio > 1.05 or .allocRatio > 1.05)] | length' artifacts/v3-paired-perf-observations.json)"
+          if [ "$possible" -gt 0 ]; then
+            echo "::warning::$possible compiler benchmark cases exceed 5% on a single paired run. Review p50/p95/alloc and repeat before asserting a significant regression."
+          fi
+
       - name: Upload U0 evidence even on failure
         if: always()
         uses: actions/upload-artifact@v4
