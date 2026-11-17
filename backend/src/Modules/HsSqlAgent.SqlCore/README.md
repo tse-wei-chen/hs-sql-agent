@@ -27,6 +27,14 @@ replace a database optimizer.
 Compilation requires no human approval. Consumers receive SQL, parameters and
 plans, and choose their own execution workflow.
 
+**U6 Script Execution decision: NO-GO.** Static `AnalyzeScript` evidence,
+including typed dependencies and modeled savepoint rollback, is never an
+executable Script Plan. For supported multi-DML atomic operations use the
+existing Host-owned `execute_dml_sql` workflow and its independent approval;
+do not wrap it in caller `BEGIN`/`COMMIT`. See the
+[U6 Script Execution decision record](U6-script-execution-decision.md) for
+the proof-gap matrix and exact reopening criteria.
+
 ## Install
 
 ```bash
