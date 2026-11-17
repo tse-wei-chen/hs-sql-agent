@@ -13,14 +13,15 @@ open HsSqlAgent.SqlCore.Rewrite.Typestate
 /// Only the strict name/type validators consume this projection.
 module internal RewriteQueryAnalyzer =
 
-    /// The physical Query read-set is captured from the *bound* AST, after
-    /// lexical CTE resolution. CteTable is a scoped alias, never a physical
-    /// source. Derived/LATERAL tables, set branches and expression subqueries
-    /// are visited by the bounded, iterative Query graph traversal.
-    /// This is a compiler consistency proof, NOT a database read-only grant.
+    /// Records the named relation *references* from the bound Query AST, after
+    /// lexical CTE resolution. It neither verifies live objects nor expands
+    /// Views/UDFs into their underlying physical reads. CteTable is a scoped
+    /// alias; derived/LATERAL, set branches and expression subqueries are
+    /// visited by the existing bounded, iterative Query traversal.
+    /// This is a compiler consistency guard, NEVER a Host permission grant.
     type ReadSetProof = private ReadSetProof of Set<string>
 
-    let private physicalTables (query: Query) =
+    let private namedSourceRefs (query: Query) =
         let reads = System.Collections.Generic.HashSet<string>(StringComparer.Ordinal)
         // This existing bounded walk includes CTE definitions, derived/lateral
         // tables, set branches, scalar/correlated subqueries and window specs.
@@ -35,16 +36,16 @@ module internal RewriteQueryAnalyzer =
 
     let internal proveBoundReadSet (bound: BoundSql) =
         match (Bound.value bound).Statement with
-        | QueryStatement query -> ReadSetProof(physicalTables query)
+        | QueryStatement query -> ReadSetProof(namedSourceRefs query)
         | _ -> invalidOp "Only a bound Query can establish Query read-set evidence."
 
-    let internal verifyNoNewPhysicalReads (ReadSetProof boundReads) (document: Document) =
+    let internal verifyNoAddedNamedReads (ReadSetProof boundReads) (document: Document) =
         match document.Statement with
         | QueryStatement query ->
-            let finalReads = physicalTables query
+            let finalReads = namedSourceRefs query
             if not (Set.isSubset finalReads boundReads) then
                 let message =
-                    "Query normalization/validation introduced a physical relation that was not in its bound read-set."
+                    "Query normalization/validation introduced a named relation absent from its bound source references."
                 let span =
                     if document.Span.Start < 0 || document.Span.Length < 0 then null
                     else SqlDiagnosticSpan(document.Span.Start, document.Span.Length)

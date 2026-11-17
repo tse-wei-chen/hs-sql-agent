@@ -43,9 +43,9 @@ module internal RewriteQueryPipeline =
         let document = RewriteStages.Validated.value validated
         match document.Statement with
         | QueryStatement _ ->
-            // No domain or provider lowering may silently add new physical
-            // relations after the bound Query source proof was established.
-            RewriteQueryAnalyzer.verifyNoNewPhysicalReads readSet document
+            // No domain/provider lowering may silently add named sources to
+            // the bound Query. This does not attest view/UDF underlying reads.
+            RewriteQueryAnalyzer.verifyNoAddedNamedReads readSet document
             ValidatedQuery validated
         | _ -> invalidOp "Mutation statement cannot enter the query compiler policy."
 

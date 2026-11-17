@@ -19,6 +19,14 @@ Support depends on statement shape, provider, version, compilation policy and pr
 The six dialects do not have identical support. Cross-provider compilation requires
 proven transformations. Parsing a statement does not imply compilation support.
 
+Query compilation also checks that normalization/validation has not introduced
+additional named data-source references after binding. This **does not** expand
+views, functions, or other database-side effects, and cannot grant data-access
+permissions. PostgreSQL Query with a table whitelist admits a bounded set of
+window functions pinned to `pg_catalog`; other unproven functions remain
+policy-denied. Host read-only enforcement and least-privilege DB credentials
+remain necessary.
+
 `ParseScript` / `AnalyzeScript` also cover bounded DCL, transaction, session,
 utility and procedural models. Analysis simulates catalog/effects in statement
 order and reports uncertainty; it does not determine actual affected rows or
