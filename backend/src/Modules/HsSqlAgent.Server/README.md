@@ -347,6 +347,28 @@ The single MCP tool `execute_ddl_sql` is **disabled and hidden by default**
 and is never automatically selected or granted by DML permissions. Existing
 four metadata/Query tools remain selected; DML and DDL remain unselected.
 
+### Distributed DDL admission and uncertain results
+
+A Redis-revocable SQL admission and caller cancellation are linked throughout
+the DDL preview, independent approval and provider-specific execution call.
+A revoked lease cannot authorize a *new* native DDL statement: each provider
+rechecks the admission token immediately before its first native DDL command
+(PostgreSQL batches recheck each statement). Cancellation during approval
+requires a fresh request; preview/approval fingerprints are not transferable.
+
+After native DDL begins, cancellation does **not** prove that schema changes
+were absent. PostgreSQL, SQLite, SQL Server and Firebird retain their own
+rollback-confirmation and ambiguous COMMIT paths. MySQL and Oracle DDL can
+implicitly commit; a lost response or unverified postcondition is
+`outcome_unknown`, **never an automatic retry**. A Host exception after
+execution was delegated is conservatively unknown when the Runtime has not
+returned a trustworthy provider-specific result. The durable request audit
+precedes any execution; final audit I/O does not rewrite the physical outcome.
+
+These checks do not turn Redis leases into distributed database transaction
+fences, allow a lease to be held indefinitely without revocation, or enable
+DDL by default.
+
 ## G5 MySQL 8.4 LTS — implicit-commit CREATE TABLE Host (opt-in)
 
 MySQL InnoDB atomic DDL is **not** user-transactional DDL. Only one

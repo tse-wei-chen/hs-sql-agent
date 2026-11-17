@@ -198,6 +198,7 @@ public sealed class SqliteDdlRuntime(
             if (condition is not null)
                 return await RollbackDeny(transaction, preview, "ddl.physical_precondition", condition);
 
+            token.ThrowIfCancellationRequested();
             nativeStarted = true;
             // Absolutely no user SQL or raw input reaches DbCommand.
             await using (var cmd = Command(conn, transaction, plan.Command.Sql))

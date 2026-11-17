@@ -206,6 +206,7 @@ public sealed class FirebirdDdlRuntime(
                     "ddl.schema_drift", "Firebird physical identity, schema or policy changed.");
 
             // Only typed, native SQL emitted by SqlCore is executable.
+            token.ThrowIfCancellationRequested();
             startedNative = true;
             await using (var command = Command(connection, transaction, plan.Command.Sql))
                 await command.ExecuteNonQueryAsync(token);

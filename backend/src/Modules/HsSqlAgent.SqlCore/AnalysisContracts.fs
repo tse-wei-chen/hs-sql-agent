@@ -110,6 +110,65 @@ type SqlScriptDependencyReference internal (
     /// Syntactic dependencies never prove the server object exists.
     member _.Certainty = SqlCatalogKnowledge.Unknown
 
+/// An ordered dependency between two *static* statements on the same
+/// bound Virtual Catalog identity. Neither statement is known to have run.
+/// In particular, this edge is not a server-object, permission, row-set,
+/// transaction or approval proof.
+[<Sealed>]
+type SqlScriptStaticDependencyEdge internal (
+    predecessorStatementIndex: int,
+    successorStatementIndex: int,
+    objectIdentity: SqlCatalogQualifiedName,
+    predecessorOperation: SqlStatementEffectOperation,
+    successorOperation: SqlStatementEffectOperation,
+    span: SqlDiagnosticSpan) =
+    member _.PredecessorStatementIndex = predecessorStatementIndex
+    member _.SuccessorStatementIndex = successorStatementIndex
+    member _.ObjectIdentity = objectIdentity
+    member _.PredecessorOperation = predecessorOperation
+    member _.SuccessorOperation = successorOperation
+    member _.Span = span
+    member _.IsExecutionProof = false
+
+/// Script-wide *static* composition only. Every state is Analyze-only:
+/// none can authorize Query/DML/DDL execution or replace Host policy.
+type SqlScriptCompositionStatus =
+    | SingleDomainAnalysis = 0
+    | MixedAnalyzeOnly = 1
+    | RejectedForComposition = 2
+    | Unknown = 3
+
+/// Structured reasons for refusing to treat multiple analyzed statements as
+/// one executable SQL script. These never imply actual database behavior.
+type SqlScriptCompositionConcern =
+    | ReadWriteComposition = 0
+    | SchemaMutationComposition = 1
+    | TransactionEnvelope = 2
+    | PrivilegedOrProcedural = 3
+    | SessionScope = 4
+    | UnverifiedVirtualBinding = 5
+    | UnknownEffects = 6
+    | BatchBoundary = 7
+    | PossibleImplicitCommit = 8
+    | UnreconciledDml = 9
+    | CrossDomainComposition = 10
+
+[<Sealed>]
+type SqlScriptCompositionFinding internal (
+    kind: SqlScriptCompositionConcern,
+    statementIndex: int,
+    span: SqlDiagnosticSpan) =
+    member _.Kind = kind
+    member _.StatementIndex = statementIndex
+    member _.Span = span
+
+/// A statement-local identity from an existing verified virtual name binding.
+/// Only the Script analyzer can construct the list, never a public DTO caller.
+type internal SqlScriptBoundObjectAccess =
+    { Identity: SqlCatalogQualifiedName
+      Operation: SqlStatementEffectOperation
+      Kind: SqlEffectKind }
+
 /// Only final, statically proven declarations in the Virtual Catalog are
 /// represented as Symbols; SQL aliases and lexical references are not inferred.
 type SqlScriptSymbolKind =
@@ -441,16 +500,48 @@ type SqlTransactionEffectProvenance internal (
     effects: SqlEffectKind,
     transactionBefore: SqlTransactionState,
     transactionAfter: SqlTransactionState,
-    span: SqlDiagnosticSpan) =
+    span: SqlDiagnosticSpan,
+    savepointName: string | null) =
     member _.Origin = origin
     member _.RollbackScope = rollbackScope
     member _.ControlOperation = controlOperation
+    /// Normalized by the existing TCL grammar. Null for non-savepoint
+    /// controls or unsupported commands; no new textual parsing is performed.
+    member _.SavepointName = savepointName
     member _.PotentialEffects = effects
     member _.TransactionBefore = transactionBefore
     member _.TransactionAfter = transactionAfter
     member _.Span = span
     member _.RuntimeCertainty = SqlCatalogKnowledge.Unknown
     member _.IsServerRollbackProven = false
+
+/// The fate of a potential DML row effect under a modeled script transaction.
+/// These are hypotheses conditional on execution, not a COMMIT/ROLLBACK audit.
+type SqlDmlEffectDisposition =
+    | Unscoped = 0
+    | Pending = 1
+    | StaticRollbackExpected = 2
+    | StaticCommitBoundary = 3
+    | Unproven = 4
+
+/// Script-ordered static reconciliation for one syntactically parsed DML
+/// statement. Runtime triggers, external functions and nontransactional
+/// storage are deliberately outside this model.
+[<Sealed>]
+type SqlDmlEffectReconciliation internal (
+    statementIndex: int,
+    disposition: SqlDmlEffectDisposition,
+    boundaryStatementIndex: Nullable<int>,
+    potentialEffects: SqlEffectKind,
+    span: SqlDiagnosticSpan) =
+    member _.StatementIndex = statementIndex
+    member _.Disposition = disposition
+    member _.BoundaryStatementIndex = boundaryStatementIndex
+    member _.PotentialEffects = potentialEffects
+    member _.Span = span
+    member _.IsExecutionAttemptProven = false
+    member _.IsServerRollbackProven = false
+    member _.IsExternalSideEffectRollbackProven = false
 
 /// Immutable static session scope. A known SearchPath is a caller/script
 /// premise, never evidence from a live server or a compilation permission.
@@ -498,6 +589,7 @@ type SqlStatementAnalysis internal (
     proceduralDefinitions: IReadOnlyList<SqlProceduralDefinition>,
     transactionProvenance: SqlTransactionEffectProvenance,
     sourceMatchCardinality: SqlMutationSourceMatchCardinality,
+    boundObjectAccesses: IReadOnlyList<SqlScriptBoundObjectAccess>,
     diagnostics: IReadOnlyList<SqlDiagnostic>) =
     member _.Syntax = syntax
     member _.Kind = syntax.Kind
@@ -529,6 +621,7 @@ type SqlStatementAnalysis internal (
     member _.ProceduralIntents = proceduralIntents
     member _.ProceduralDefinitions = proceduralDefinitions
     member _.TransactionProvenance = transactionProvenance
+    member internal _.BoundObjectAccesses = boundObjectAccesses
     member _.Diagnostics = diagnostics
 
 [<Sealed>]
@@ -538,6 +631,148 @@ type SqlScriptAnalysisResult internal (
     finalCatalog: SqlCatalogState,
     finalTransaction: SqlTransactionState,
     finalSession: SqlSessionAnalysisState) =
+    // U3 is a reconciliation projection over the SAME proven TCL controls
+    // and transaction snapshots, not another parser, effect source or runtime
+    // transaction machine. The final result is a conditional SQL hypothesis.
+    let dmlEffectReconciliations : IReadOnlyList<SqlDmlEffectReconciliation> =
+        let dispositions =
+            Array.create statements.Count SqlDmlEffectDisposition.Unproven
+        let boundaries = Array.create statements.Count -1
+        let pending = ResizeArray<int>()
+        // Newest savepoint last; matches the existing TCL analyzer semantics.
+        let marks = ResizeArray<string * int>()
+        let mutable uncertain = false
+
+        let invalidate () =
+            for id in pending do
+                dispositions[id] <- SqlDmlEffectDisposition.Unproven
+                boundaries[id] <- -1
+            pending.Clear()
+            marks.Clear()
+            uncertain <- true
+
+        let finalizePending fate boundary =
+            for id in pending do
+                dispositions[id] <- fate
+                boundaries[id] <- boundary
+            pending.Clear()
+            marks.Clear()
+            uncertain <- false
+
+        let markIndex (name: string | null) =
+            let mutable index = -1
+            if not (isNull name) then
+                for i = 0 to marks.Count - 1 do
+                    let savedName, _ = marks[i]
+                    if String.Equals(savedName, name, StringComparison.Ordinal) then
+                        index <- i
+            index
+
+        for index = 0 to statements.Count - 1 do
+            let statement = statements[index]
+            let before = statement.TransactionBefore
+            let after = statement.TransactionAfter
+            let control = statement.TransactionProvenance.ControlOperation
+            let name = statement.TransactionProvenance.SavepointName
+            if before = SqlTransactionState.Unknown
+               || after = SqlTransactionState.Unknown
+               || (before = SqlTransactionState.Active
+                   && (statement.Status = SqlStatementAnalysisStatus.Invalid
+                       || statement.Status = SqlStatementAnalysisStatus.Unsupported
+                       || (statement.Effects &&& SqlEffectKind.UnknownEffects)
+                          <> SqlEffectKind.None)) then
+                invalidate()
+            elif statement.Kind = SqlScriptStatementKind.Transaction
+                 && statement.Status = SqlStatementAnalysisStatus.Analyzed then
+                match control with
+                | SqlTransactionControlOperation.Begin
+                    when before = SqlTransactionState.Outside
+                         && after = SqlTransactionState.Active ->
+                    pending.Clear()
+                    marks.Clear()
+                    uncertain <- false
+                | SqlTransactionControlOperation.Savepoint
+                    when after = SqlTransactionState.Active && not uncertain ->
+                    if isNull name then invalidate()
+                    else marks.Add((nonNull name, pending.Count))
+                | SqlTransactionControlOperation.RollbackToSavepoint
+                    when after = SqlTransactionState.Active && not uncertain ->
+                    let target = markIndex name
+                    if target < 0 then invalidate()
+                    else
+                        let _, start = marks[target]
+                        for i = start to pending.Count - 1 do
+                            let id = pending[i]
+                            dispositions[id] <- SqlDmlEffectDisposition.StaticRollbackExpected
+                            boundaries[id] <- index
+                        pending.RemoveRange(start, pending.Count - start)
+                        marks.RemoveRange(target + 1, marks.Count - target - 1)
+                | SqlTransactionControlOperation.ReleaseSavepoint
+                    when before = SqlTransactionState.Active && not uncertain ->
+                    let target = markIndex name
+                    if target < 0 then invalidate()
+                    elif after = SqlTransactionState.Outside then
+                        // SQLite's outer SAVEPOINT is also a transaction.
+                        finalizePending SqlDmlEffectDisposition.StaticCommitBoundary index
+                    else
+                        marks.RemoveRange(target, marks.Count - target)
+                | SqlTransactionControlOperation.Rollback
+                    when before = SqlTransactionState.Active
+                         && after = SqlTransactionState.Outside
+                         && not uncertain ->
+                    finalizePending SqlDmlEffectDisposition.StaticRollbackExpected index
+                | SqlTransactionControlOperation.Commit
+                    when before = SqlTransactionState.Active
+                         && after = SqlTransactionState.Outside
+                         && not uncertain ->
+                    finalizePending SqlDmlEffectDisposition.StaticCommitBoundary index
+                | _ ->
+                    // No successful tracked boundary may revive a lost proof.
+                    if before = SqlTransactionState.Active
+                       && after = SqlTransactionState.Outside then invalidate()
+            elif statement.Kind = SqlScriptStatementKind.Mutation
+                 && statement.Syntax.Status = SqlScriptParseStatus.Parsed then
+                // A bound NAME alone does not rescue an INVALID type or
+                // unsupported DML. SQLite's proven names and unproven type
+                // affinity may still describe conditional row effects.
+                let modeled =
+                    (statement.Status = SqlStatementAnalysisStatus.Analyzed
+                     || statement.Status = SqlStatementAnalysisStatus.PartiallyAnalyzed)
+                    && statement.NameBinding = SqlCatalogBindingStatus.Verified
+                    && (statement.Effects &&& SqlEffectKind.UnknownEffects) = SqlEffectKind.None
+                if modeled
+                   && before = SqlTransactionState.Active
+                   && after = SqlTransactionState.Active
+                   && not uncertain then
+                    dispositions[index] <- SqlDmlEffectDisposition.Pending
+                    pending.Add(index)
+                elif modeled
+                     && before = SqlTransactionState.Outside
+                     && after = SqlTransactionState.Outside then
+                    dispositions[index] <- SqlDmlEffectDisposition.Unscoped
+                elif before = SqlTransactionState.Active then
+                    // A potential unbound write invalidates the entire
+                    // transaction's pending row-effect reconciliation.
+                    invalidate()
+            elif before = SqlTransactionState.Active
+                 && after = SqlTransactionState.Outside then
+                invalidate()
+
+        (statements
+         |> Seq.mapi (fun index statement ->
+             if statement.Kind = SqlScriptStatementKind.Mutation
+                && statement.Syntax.Status = SqlScriptParseStatus.Parsed then
+                 let boundary =
+                     if boundaries[index] < 0 then Nullable<int>()
+                     else Nullable<int>(boundaries[index])
+                 Some(SqlDmlEffectReconciliation(
+                     index, dispositions[index], boundary,
+                     statement.Effects, statement.Syntax.Span))
+             else None)
+         |> Seq.choose id
+         |> Seq.toArray
+         |> Array.AsReadOnly) :> IReadOnlyList<SqlDmlEffectReconciliation>
+
     let detailedEffects : IReadOnlyList<SqlStatementEffect> =
         (statements
          |> Seq.collect (fun item -> item.DetailedEffects)
@@ -610,6 +845,191 @@ type SqlScriptAnalysisResult internal (
          |> Seq.toArray
          |> Array.AsReadOnly) :> IReadOnlyList<SqlScriptDependencyReference>
 
+    // U2: project an ordered graph ONLY from typed Catalog identities and
+    // statement-local AST identifiers proved by the existing name binder.
+    // Legacy diagnostic-name Dependencies are not consumed or parsed as IDs.
+    // This is static ordering, never physical execution proof.
+    let staticDependencyEdges : IReadOnlyList<SqlScriptStaticDependencyEdge> =
+        let edges = ResizeArray<SqlScriptStaticDependencyEdge>()
+        // Keep a producer and the last reader separately: two independent
+        // reads can both depend on one earlier mutation without depending
+        // upon one another.
+        let producers = Dictionary<string, int * SqlStatementEffectOperation>(
+            StringComparer.Ordinal)
+        let readers = Dictionary<string, int * SqlStatementEffectOperation>(
+            StringComparer.Ordinal)
+        let clear () =
+            producers.Clear()
+            readers.Clear()
+
+        let mutationOrSchema effects =
+            (effects &&& (SqlEffectKind.WriteData ||| SqlEffectKind.ChangeSchema))
+                <> SqlEffectKind.None
+
+        let mutable currentBatch = -1
+        statements |> Seq.iteri (fun index statement ->
+            // SQL Server GO creates a distinct physical batch. TCL, Session,
+            // Security, Utility and Procedural composition belongs to U3/U4:
+            // never assert an object dependency across those unproven barriers.
+            if statement.Syntax.BatchIndex <> currentBatch then
+                clear ()
+                currentBatch <- statement.Syntax.BatchIndex
+            if (statement.Kind <> SqlScriptStatementKind.Query
+                && statement.Kind <> SqlScriptStatementKind.Mutation
+                && statement.Kind <> SqlScriptStatementKind.Schema)
+               || statement.Status = SqlStatementAnalysisStatus.Invalid
+               || statement.Status = SqlStatementAnalysisStatus.Unsupported
+               || statement.TransactionBefore = SqlTransactionState.Unknown
+               || statement.TransactionAfter = SqlTransactionState.Unknown
+               || (statement.Effects &&& SqlEffectKind.UnknownEffects)
+                      <> SqlEffectKind.None then
+                clear ()
+            else
+                // Only one access per object and statement; mutation/schema
+                // dominates a read. Do not invent a dependency from self.
+                let accesses =
+                    seq {
+                        // Query/DML references are formed from exact AST
+                        // Identifier.parts only after the existing verifier.
+                        for item in statement.BoundObjectAccesses do
+                            yield item.Identity, item.Operation, item.Kind
+                        // DDL Catalog deltas already carry their structured
+                        // identity. Never infer it from ObjectName.
+                        if statement.Kind = SqlScriptStatementKind.Schema then
+                            for item in statement.DetailedEffects do
+                                if item.Certainty = SqlCatalogKnowledge.Known
+                                   && not (isNull item.ObjectIdentity) then
+                                    yield nonNull item.ObjectIdentity, item.Operation, item.Kind
+                    }
+                    |> Seq.groupBy (fun (identity, _, _) -> identity.Key)
+                    |> Seq.map (fun (_, group) ->
+                        group
+                        |> Seq.maxBy (fun (_, _, kind) ->
+                            if mutationOrSchema kind then 1 else 0))
+                for identity, operation, effects in accesses do
+                    let key = identity.Key
+                    let add (previousIndex, previousOperation) =
+                        if previousIndex <> index then
+                            edges.Add(SqlScriptStaticDependencyEdge(
+                                previousIndex, index, identity,
+                                previousOperation, operation,
+                                statement.Syntax.Span))
+                    // Reads and writes depend on the latest prior schema/data
+                    // mutation. Two reads do not depend on each other.
+                    match producers.TryGetValue(key) with
+                    | true, predecessor -> add predecessor
+                    | _ -> ()
+                    if mutationOrSchema effects then
+                        // A write additionally depends on any read since
+                        // the last producer (write-after-read ordering).
+                        match readers.TryGetValue(key) with
+                        | true, reader -> add reader
+                        | _ -> ()
+                        producers[key] <- (index, operation)
+                        readers.Remove(key) |> ignore
+                    else
+                        readers[key] <- (index, operation))
+        (edges.ToArray() |> Array.AsReadOnly)
+            :> IReadOnlyList<SqlScriptStaticDependencyEdge>
+
+    // U4 reuses only the existing ordered effects, typed U2 binding edges,
+    // U3 DML reconciliation, source batches and provider TCL provenance.
+    // A recognized family or a bound table never grants a script-level policy.
+    let compositionFindings : IReadOnlyList<SqlScriptCompositionFinding> =
+        let issues = ResizeArray<SqlScriptCompositionFinding>()
+        let add kind index =
+            issues.Add(SqlScriptCompositionFinding(
+                kind, index, statements[index].Syntax.Span))
+        let hasKind kind =
+            statements |> Seq.exists (fun statement -> statement.Kind = kind)
+        let query = hasKind SqlScriptStatementKind.Query
+        let mutation = hasKind SqlScriptStatementKind.Mutation
+        let schema = hasKind SqlScriptStatementKind.Schema
+        let transaction = hasKind SqlScriptStatementKind.Transaction
+        let mixed =
+            statements
+            |> Seq.map (fun statement -> statement.Kind)
+            |> Seq.distinct
+            |> Seq.truncate 2
+            |> Seq.length > 1
+        if mixed then
+            // Every distinct-family pair must be identifiable even when it
+            // has no specific DML/TCL/privileged-domain risk.
+            add SqlScriptCompositionConcern.CrossDomainComposition
+                (statements |> Seq.findIndex (fun statement ->
+                    statement.Kind <> statements[0].Kind))
+        if query && mutation then
+            add SqlScriptCompositionConcern.ReadWriteComposition
+                (statements |> Seq.findIndex (fun statement ->
+                    statement.Kind = SqlScriptStatementKind.Mutation))
+        if schema && mutation then
+            add SqlScriptCompositionConcern.SchemaMutationComposition
+                (statements |> Seq.findIndex (fun statement ->
+                    statement.Kind = SqlScriptStatementKind.Mutation))
+        if transaction && mixed then
+            add SqlScriptCompositionConcern.TransactionEnvelope
+                (statements |> Seq.findIndex (fun statement ->
+                    statement.Kind = SqlScriptStatementKind.Transaction))
+        for index = 0 to statements.Count - 1 do
+            let statement = statements[index]
+            if mixed
+               && (statement.Kind = SqlScriptStatementKind.Security
+                   || statement.Kind = SqlScriptStatementKind.Utility
+                   || statement.Kind = SqlScriptStatementKind.Procedural) then
+                add SqlScriptCompositionConcern.PrivilegedOrProcedural index
+            if mixed && statement.Kind = SqlScriptStatementKind.Session then
+                add SqlScriptCompositionConcern.SessionScope index
+            if (statement.Kind = SqlScriptStatementKind.Query
+                || statement.Kind = SqlScriptStatementKind.Mutation)
+               && statement.NameBinding <> SqlCatalogBindingStatus.Verified then
+                add SqlScriptCompositionConcern.UnverifiedVirtualBinding index
+            if statement.Status = SqlStatementAnalysisStatus.Invalid
+               || statement.Status = SqlStatementAnalysisStatus.Unsupported
+               || statement.TransactionBefore = SqlTransactionState.Unknown
+               || statement.TransactionAfter = SqlTransactionState.Unknown
+               || (statement.Effects &&& SqlEffectKind.UnknownEffects)
+                    <> SqlEffectKind.None then
+                add SqlScriptCompositionConcern.UnknownEffects index
+            if statement.TransactionProvenance.Origin =
+                    SqlTransactionEffectOrigin.PossibleImplicitCommit then
+                add SqlScriptCompositionConcern.PossibleImplicitCommit index
+            if index > 0
+               && statement.Syntax.BatchIndex <> statements[index - 1].Syntax.BatchIndex then
+                add SqlScriptCompositionConcern.BatchBoundary index
+        if transaction then
+            for item in dmlEffectReconciliations do
+                if item.Disposition = SqlDmlEffectDisposition.Unproven then
+                    add SqlScriptCompositionConcern.UnreconciledDml item.StatementIndex
+        (issues.ToArray() |> Array.AsReadOnly) :> IReadOnlyList<SqlScriptCompositionFinding>
+
+    let compositionStatus =
+        let has kind =
+            compositionFindings |> Seq.exists (fun issue -> issue.Kind = kind)
+        if has SqlScriptCompositionConcern.UnknownEffects
+           || has SqlScriptCompositionConcern.UnverifiedVirtualBinding
+           || has SqlScriptCompositionConcern.PossibleImplicitCommit
+           || has SqlScriptCompositionConcern.UnreconciledDml then
+            SqlScriptCompositionStatus.Unknown
+        elif has SqlScriptCompositionConcern.SchemaMutationComposition
+             || has SqlScriptCompositionConcern.TransactionEnvelope
+             || has SqlScriptCompositionConcern.PrivilegedOrProcedural
+             || has SqlScriptCompositionConcern.SessionScope
+             || has SqlScriptCompositionConcern.BatchBoundary then
+            SqlScriptCompositionStatus.RejectedForComposition
+        elif compositionFindings.Count > 0 then
+            SqlScriptCompositionStatus.MixedAnalyzeOnly
+        else
+            SqlScriptCompositionStatus.SingleDomainAnalysis
+
+    // This count is a diagnostic of actual U2 *virtual* bound edges, not
+    // completeness of ReadSet/WriteSet or an executable dependency proof.
+    let boundCrossDomainDependencyCount =
+        staticDependencyEdges
+        |> Seq.filter (fun edge ->
+            statements[edge.PredecessorStatementIndex].Kind
+                <> statements[edge.SuccessorStatementIndex].Kind)
+        |> Seq.length
+
     // The Symbol projection describes FINAL virtual Catalog declarations only.
     // Never reconstruct identities from lossy display names or claim unknown
     // table shapes were verified. DDL rolled back/dropped mid-script disappears.
@@ -673,6 +1093,16 @@ type SqlScriptAnalysisResult internal (
     /// Unverified object references from typed effects, never effective permissions
     /// or physical-object identity proofs. Does not include DDL declarations.
     member _.Dependencies = dependencies
+    /// Ordered Virtual Catalog dependencies with an existing static binding
+    /// proof. Never physical execution or Host authorization evidence.
+    member _.StaticDependencyEdges = staticDependencyEdges
+    /// Entire script assessed from existing static analysis. Rejected and
+    /// Unknown are not execution outcomes; even the single/mixed analyzed
+    /// cases carry no Host approval or script execution authority.
+    member _.CompositionStatus = compositionStatus
+    member _.CompositionFindings = compositionFindings
+    member _.BoundCrossDomainDependencyCount = boundCrossDomainDependencyCount
+    member _.IsCompositionExecutionProof = false
     /// Proven declarations of the final Virtual Catalog only: Table and Column.
     /// Never a full SQL lexical symbol table or proof of live server existence.
     member _.Symbols = symbols
@@ -682,6 +1112,9 @@ type SqlScriptAnalysisResult internal (
     member _.ProceduralDefinitions = proceduralDefinitions
     member _.ProceduralIntents = proceduralIntents
     member _.TransactionProvenance = transactionProvenance
+    /// Potential DML life cycles in the script's static transaction model,
+    /// never evidence that any SQL was attempted, committed or rolled back.
+    member _.DmlEffectReconciliations = dmlEffectReconciliations
     member _.UtilityIntents = utilityIntents
     member _.SecurityIntents = securityIntents
     member _.SecurityDependencies = securityDependencies

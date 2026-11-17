@@ -2677,6 +2677,7 @@ module internal RewriteScriptAnalyzer =
                     let syntax = parsed.Statements.[statementIndex]
                     let typed = parsedDocuments.[statementIndex]
                     let mutable boundForEffects : Typestate.BoundSql option = None
+                    let mutable boundPhysicalIdentifiers : CoreModel.Identifier list = []
                     let before = current
                     let transactionBefore = RewriteTransactionAnalyzer.status transaction
                     let sessionBefore = RewriteSessionAnalyzer.snapshot session
@@ -2687,6 +2688,7 @@ module internal RewriteScriptAnalyzer =
                     let mutable proceduralDefinitions : SqlProceduralDefinition list = []
                     let mutable sessionOperation = SqlStatementEffectOperation.Unknown
                     let mutable controlOperation = SqlTransactionControlOperation.None
+                    let mutable controlSavepointName : string | null = null
                     let mutable sourceMatchCardinality =
                         if syntax.Kind = SqlScriptStatementKind.Mutation then
                             SqlMutationSourceMatchCardinality.Unverified
@@ -2699,10 +2701,11 @@ module internal RewriteScriptAnalyzer =
                             (if Object.ReferenceEquals(syntax.Diagnostic, null) then []
                              else [nonNull syntax.Diagnostic])
                         elif syntax.Kind = SqlScriptStatementKind.Transaction then
-                            let status, certainty, next, nextSession, newTransaction, changes, diagnostics, parsedControl =
+                            let status, certainty, next, nextSession, newTransaction, changes, diagnostics, parsedControl, parsedSavepoint =
                                 RewriteTransactionAnalyzer.analyze
                                     sourceDialect sourceProfile current session transaction syntax
                             controlOperation <- parsedControl
+                            controlSavepointName <- parsedSavepoint
                             // A transaction boundary or savepoint rollback is
                             // responsible for BOTH catalog and session state.
                             // No separate coordinator-side rollback heuristic.
@@ -2855,7 +2858,9 @@ module internal RewriteScriptAnalyzer =
                                     let binding, names, types, state, certainty, diagnostics, matchProof =
                                         RewriteCatalogBinding.verify sourceDialect sourceProfile
                                             (RewriteSessionAnalyzer.scope session) current syntax document
-                                            (fun bound -> boundForEffects <- Some bound)
+                                            (fun bound identifiers ->
+                                                boundForEffects <- Some bound
+                                                boundPhysicalIdentifiers <- identifiers)
                                     sourceMatchCardinality <- matchProof
                                     binding, names, types, state, certainty, diagnostics
                                 else
@@ -2956,7 +2961,8 @@ module internal RewriteScriptAnalyzer =
                             RewriteTransactionProvenance.describe
                                 sourceDialect syntax status runtimeCertainty effects
                                 transactionBefore (RewriteTransactionAnalyzer.status transaction)
-                                controlOperation (readOnly allDiagnostics))
+                                controlOperation controlSavepointName
+                                (readOnly allDiagnostics))
                     current <- after
                     for item in allDiagnostics do errors.Add item
                     let detailedEffects, effectCoverage =
@@ -2967,6 +2973,12 @@ module internal RewriteScriptAnalyzer =
                                 (readOnly utilityIntents) (readOnly proceduralIntents)
                                 (readOnly proceduralDefinitions) sessionOperation provenance
                                 typed boundForEffects)
+                    let boundObjectAccesses =
+                        RewriteResourceBudget.withStage "ScriptDependencyBinding"
+                            SqlDiagnosticStage.Binding (fun () ->
+                                RewriteStatementEffects.boundObjectAccesses
+                                    syntax nameStatus before sessionBefore
+                                    boundForEffects boundPhysicalIdentifiers)
                     results.Add(
                         SqlStatementAnalysis(
                             syntax, status, effects,
@@ -2978,7 +2990,8 @@ module internal RewriteScriptAnalyzer =
                             readOnly securityIntents, readOnly securityDependencies,
                             readOnly utilityIntents, readOnly proceduralIntents,
                             readOnly proceduralDefinitions,
-                            provenance, sourceMatchCardinality, readOnly allDiagnostics)))
+                            provenance, sourceMatchCardinality,
+                            readOnly boundObjectAccesses, readOnly allDiagnostics)))
             SqlScriptAnalysisResult(
                 readOnly results, readOnly errors, current,
                 RewriteTransactionAnalyzer.status transaction,

@@ -58,7 +58,7 @@ module internal RewriteInspection =
         | VisitJoin of int * Join
         | VisitExpr of Expr
 
-    let inspectDocument (document: Document) =
+    let private inspectDocumentWith (capturePhysical: Identifier -> unit) (document: Document) =
         let state = newState ()
         let pending = ResizeArray<InspectionFrame>()
         let pushExpr value = pending.Add(VisitExpr value)
@@ -75,6 +75,7 @@ module internal RewriteInspection =
             pending.Add(VisitQuery query)
         | Statement.InsertStatement insert ->
             state.Tables.Add(identifierText insert.Target) |> ignore
+            capturePhysical insert.Target
             pushReturning insert.Returning
             match insert.Input with
             | InsertInput.QuerySource query ->
@@ -86,6 +87,7 @@ module internal RewriteInspection =
             | InsertInput.DefaultValues -> ()
         | Statement.UpdateStatement update ->
             state.Tables.Add(identifierText update.Target) |> ignore
+            capturePhysical update.Target
             let scope = scopeId state
             pushReturning update.Returning
             update.Where |> Option.iter pushExpr
@@ -100,6 +102,7 @@ module internal RewriteInspection =
                 pending.Add(VisitQuery cte.Query)
         | Statement.DeleteStatement delete ->
             state.Tables.Add(identifierText delete.Target) |> ignore
+            capturePhysical delete.Target
             let scope = scopeId state
             pushReturning delete.Returning
             delete.Where |> Option.iter pushExpr
@@ -112,6 +115,7 @@ module internal RewriteInspection =
                 pending.Add(VisitQuery cte.Query)
         | Statement.MergeStatement merge ->
             state.Tables.Add(identifierText merge.Target) |> ignore
+            capturePhysical merge.Target
             merge.NotMatched |> Option.iter (fun value ->
                 pushExprs (NonEmpty.toList value.InsertValues))
             merge.Matched |> Option.iter (function
@@ -158,6 +162,7 @@ module internal RewriteInspection =
                 | NamedTable(name, alias) ->
                     let target = identifierText name
                     state.Tables.Add(target) |> ignore
+                    capturePhysical name
                     registerAlias state scope target alias
                 | CteTable(name, alias) ->
                     registerAlias state scope (identifierText name) alias
@@ -238,7 +243,16 @@ module internal RewriteInspection =
             state.ContainsSubquery,
             state.ContainsCte)
 
+    let inspectDocument document =
+        inspectDocumentWith ignore document
+
     let inspectBound bound =
-        bound
-        |> Bound.value
-        |> inspectDocument
+        bound |> Bound.value |> inspectDocument
+
+    /// Reuse the same iterative AST inspection, but retain each exact typed
+    /// identifier part. A quoted "a.b" is one part; a.b has two. Never
+    /// reconstruct a physical identity from a lossy display string.
+    let inspectBoundWithPhysicalIdentifiers bound =
+        let identifiers = ResizeArray<Identifier>()
+        let facts = inspectDocumentWith identifiers.Add (Bound.value bound)
+        facts, identifiers |> Seq.toList

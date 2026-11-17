@@ -206,6 +206,7 @@ public sealed class MySqlDdlRuntime(
                 return Deny("ddl.schema_drift",
                     "MySQL physical metadata, identity, approval or policy changed.", preview);
 
+            cancellationToken.ThrowIfCancellationRequested();
             beganNative = true;
             await using (var command = Command(connection, plan.Command.Sql))
                 await command.ExecuteNonQueryAsync(cancellationToken);

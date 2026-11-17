@@ -381,6 +381,7 @@ public sealed partial class PostgresDdlRuntime
                     actualBefore = approved[i];
 
                 // Native SQL originates only from typed F# compiled command.
+                execToken.ThrowIfCancellationRequested();
                 startedNative = true;
                 await ExecuteHostSqlAsync(connection, transaction,
                     plan.Command.Sql, execToken);

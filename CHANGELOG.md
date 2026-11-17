@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## Development changes after v3.1.0
+
+### U6 Selective Script Execution decision gate (NO-GO)
+
+- Review U2 typed Virtual Catalog dependencies, U3 static DML/savepoint reconciliation, U4 mixed-script Unknown propagation, U5 DDL Host admission and the existing `execute_dml_sql` Host-controlled atomic batch.
+- **Do not add** an arbitrary TCL+DML `execute_script` tool or user-transaction execution API: static Script analysis cannot provide live row-set/payload approval, comprehensive rollback-effect proof or Host transaction authorization. The existing bounded Host DML-only batch already serves the ordinary two-step delete/update use case.
+- Add three public black-box contract tests preserving DML-only batch parsing and rejecting otherwise-analyzable caller TCL/savepoints at the executable DML parser. Record exact evidence gaps and scope to reconsider a future narrow U7 only when independently proven.
+
+
+### U5 Host DDL lease cancellation and uncertain execution boundary (#655)
+
+- Connect the existing revocable SQL admission token to the **six provider-specific DDL Host runtimes** and reject admission revoked before entering native SQL, including each PostgreSQL batch statement. Keep caller cancellation distinct from distributed lease revocation.
+- On an unexpected Host exception after executable DDL was delegated, report and audit a non-retryable `outcome_unknown` instead of claiming the error occurred before execution. Keep each provider's transactional rollback confirmation, ambiguous COMMIT handling, and MySQL/Oracle implicit-commit evidence unchanged.
+- Add public MCP Tool tests for pre-runtime revocation and caller cancellation plus an existing-fixture SQLite physical schema test for revocation during independent approval. Do not add an executable Script tool or inherit DML approval for DDL.
+
 ## [3.1.0] - Unreleased
 
 ### Frontend authentication lifecycle consolidation (#21)

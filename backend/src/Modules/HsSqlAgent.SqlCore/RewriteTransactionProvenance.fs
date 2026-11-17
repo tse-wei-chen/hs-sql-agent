@@ -19,6 +19,7 @@ module internal RewriteTransactionProvenance =
                  (before: SqlTransactionState)
                  (after: SqlTransactionState)
                  (control: SqlTransactionControlOperation)
+                 (savepointName: string | null)
                  (diagnostics: IReadOnlyList<SqlDiagnostic>) =
         let active = before = SqlTransactionState.Active
         let supported = status = SqlStatementAnalysisStatus.Analyzed
@@ -90,4 +91,5 @@ module internal RewriteTransactionProvenance =
                 SqlTransactionRollbackScope.Unproven
 
         SqlTransactionEffectProvenance(
-            origin, rollbackScope, control, effects, before, after, syntax.Span)
+            origin, rollbackScope, control, effects, before, after, syntax.Span,
+            savepointName)
