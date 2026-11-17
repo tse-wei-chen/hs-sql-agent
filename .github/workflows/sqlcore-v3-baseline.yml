@@ -34,6 +34,12 @@ jobs:
           path: baseline
           ref: ${{ github.event.pull_request.base.sha || 'develop' }}
           submodules: recursive
+      - name: Checkout immutable released v3.1.0 tag
+        uses: actions/checkout@v4
+        with:
+          path: released
+          ref: v3.1.0
+          fetch-depth: 1
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: |
@@ -46,6 +52,11 @@ jobs:
           mkdir -p artifacts
           git -C candidate rev-parse HEAD | tee artifacts/v3-candidate-sha.txt
           git -C baseline rev-parse HEAD | tee artifacts/v3-base-sha.txt
+          git -C released rev-parse HEAD | tee artifacts/v3-published-tag-sha.txt
+          if [ "$(cat artifacts/v3-published-tag-sha.txt)" != "c077f5703f2c0c8e6446a6e6017f3d375523976b" ]; then
+            echo "::error::The immutable published v3.1.0 tag moved or does not resolve to its audited SHA"
+            exit 1
+          fi
           cp candidate/backend/tools/HsSqlAgent.SqlCore.Benchmarks/Program.cs baseline/backend/tools/HsSqlAgent.SqlCore.Benchmarks/Program.cs
           cp candidate/backend/tools/HsSqlAgent.SqlCore.Benchmarks/SqlCoreV3Baseline.cs baseline/backend/tools/HsSqlAgent.SqlCore.Benchmarks/SqlCoreV3Baseline.cs
       - name: Capture baseline and candidate .NET 10 public ABI + parse/compile inventory
@@ -89,6 +100,57 @@ jobs:
           for side in baseline candidate; do
             (cd "$side" && dotnet pack -c Release backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.fsproj               --output "$GITHUB_WORKSPACE/artifacts/v3-$side-packages")
           done
+      - name: Verify published v3.1.0 NuGet CLR compatibility (net8.0 and net10.0)
+        shell: bash
+        run: |
+          set -euo pipefail
+          published="$GITHUB_WORKSPACE/artifacts/HsSqlAgent.SqlCore.3.1.0.published.nupkg"
+          curl --fail --location --silent --show-error --retry 3 --retry-all-errors \
+            "https://api.nuget.org/v3-flatcontainer/hssqlagent.sqlcore/3.1.0/hssqlagent.sqlcore.3.1.0.nupkg" \
+            --output "$published"
+          sha256sum "$published" | tee artifacts/v3-published-package-sha256.txt
+          candidate="$(find artifacts/v3-candidate-packages -maxdepth 1 -type f -name 'HsSqlAgent.SqlCore.*.nupkg' -print -quit)"
+          count="$(find artifacts/v3-candidate-packages -maxdepth 1 -type f -name 'HsSqlAgent.SqlCore.*.nupkg' | wc -l)"
+          if [ "$count" -ne 1 ]; then
+            echo "::error::Expected exactly one PR-head SqlCore nupkg, found $count"
+            exit 1
+          fi
+          for package in "$published" "$candidate"; do
+            for framework in net8.0 net10.0; do
+              if ! unzip -Z1 "$package" | grep -Fx "lib/$framework/HsSqlAgent.SqlCore.dll" >/dev/null; then
+                echo "::error::Missing $framework CLR assembly in $package"
+                exit 1
+              fi
+            done
+          done
+          dotnet tool install Microsoft.DotNet.ApiCompat.Tool --version 10.0.100 \
+            --tool-path "$RUNNER_TEMP/sqlcore-api-tools"
+          "$RUNNER_TEMP/sqlcore-api-tools/apicompat" package "$candidate" \
+            --baseline-package "$published" --enable-rule-cannot-change-parameter-name \
+            2>&1 | tee artifacts/v3-published-vs-head-apicompat.txt
+          {
+            echo "### Published NuGet v3.1.0 → PR head API compatibility"
+            echo "Immutable release tag: $(cat artifacts/v3-published-tag-sha.txt)"
+            echo "Published NuGet SHA-256: $(cut -d' ' -f1 artifacts/v3-published-package-sha256.txt)"
+            echo "Both net8.0 and net10.0 assemblies present; ApiCompat passed."
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record exact PR base/head code delta by category
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="$(cat artifacts/v3-base-sha.txt)"
+          head="$(cat artifacts/v3-candidate-sha.txt)"
+          git -C candidate fetch --quiet --no-tags --depth=1 origin "$base"
+          (cd candidate && dotnet run --framework net10.0 \
+            --project backend/tools/HsSqlAgent.TestGovernance -- code-delta \
+            --repo . --base "$base" --head "$head" \
+            --output "$GITHUB_WORKSPACE/artifacts/v3-code-delta.json") \
+            | tee artifacts/v3-code-delta.md
+          cat artifacts/v3-code-delta.md >> "$GITHUB_STEP_SUMMARY"
+
       - name: Measure both compilers using fixed identical corpus on one runner
         shell: bash
         env:
