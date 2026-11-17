@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## Development changes after v3.1.0
 
+### U8 Query named-source reference consistency and restricted window policy (#650)
+
+- Carry Query-only bound named-source references through normalization and validation, rejecting newly introduced named sources before policy/render. Lexical CTE aliases are excluded; this is **not** a live physical read-set or Host authorization proof, and does not expand View/UDF bodies.
+- Permit narrowly reviewed, explicitly `pg_catalog`-resolved PostgreSQL window functions for whitelisted Query, preserving denial of unproven native routines.
+- Verify compiler/Script domain parity across six dialects, negative whitelist cases including correlated subqueries, set branches and CTE shadowing, MySQL CTE version gates, and SQLite real in-memory differential with a strict row cap. Existing Host Query read-only/fence and MCP default tool selection remain unchanged.
+
 ### U6 Selective Script Execution decision gate (NO-GO)
 
 - Review U2 typed Virtual Catalog dependencies, U3 static DML/savepoint reconciliation, U4 mixed-script Unknown propagation, U5 DDL Host admission and the existing `execute_dml_sql` Host-controlled atomic batch.

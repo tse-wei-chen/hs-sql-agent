@@ -76,6 +76,11 @@ module internal RewriteQueryPolicy =
             "MD5"; "ENCODE"; "DECODE"
             "DATE_TRUNC"; "DATE_PART"; "MAKE_DATE"; "MAKE_TIME"
             "TO_CHAR"; "TO_DATE"; "TO_TIMESTAMP"; "NOW"
+            // These built-in window functions have argument-local effects;
+            // anchor their resolution to pg_catalog, never to search_path UDFs.
+            "ROW_NUMBER"; "RANK"; "DENSE_RANK"; "PERCENT_RANK"
+            "CUME_DIST"; "NTILE"; "LAG"; "LEAD"
+            "FIRST_VALUE"; "LAST_VALUE"; "NTH_VALUE"
             "COUNT"; "SUM"; "AVG"; "MIN"; "MAX"; "ARRAY_AGG"
             "STRING_AGG"; "BOOL_AND"; "BOOL_OR"; "EVERY"
             "STDDEV"; "STDDEV_POP"; "STDDEV_SAMP"
