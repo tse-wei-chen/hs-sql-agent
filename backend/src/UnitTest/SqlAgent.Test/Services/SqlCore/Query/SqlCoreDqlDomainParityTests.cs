@@ -114,10 +114,15 @@ public sealed class SqlCoreDqlDomainParityTests
         Assert.Equal(SqlDiagnosticStage.Policy, diagnostic.Stage);
     }
 
-    [Fact]
-    public void NestedReadSet_DisallowsUndeclaredPhysicalRelation()
+    [Theory]
+    [InlineData("WITH scoped AS (SELECT id FROM secret_data) SELECT id FROM scoped")]
+    [InlineData("SELECT id FROM orders WHERE EXISTS (SELECT 1 FROM secret_data WHERE secret_data.id = orders.id)")]
+    [InlineData("SELECT id FROM orders UNION SELECT id FROM secret_data")]
+    [InlineData("WITH orders AS (SELECT id FROM secret_data) SELECT id FROM orders")]
+    public void NestedReadSet_DisallowsUndeclaredPhysicalRelation(string sql)
     {
-        const string sql = "WITH scoped AS (SELECT id FROM secret_data) SELECT id FROM scoped";
+        // CTEs (including names that shadow a physical table), correlated
+        // subqueries and set branches cannot hide an unauthorized source.
         Assert.Throws<UnauthorizedAccessException>(() =>
             SqlCoreFacade.CompileQuery(sql,
                 SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
