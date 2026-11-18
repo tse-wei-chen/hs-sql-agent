@@ -53,6 +53,16 @@ public sealed class SqlCoreFirebirdIsoWeekWeekdayTests
 
     [Theory]
     [InlineData("ISODOW")]
+    [InlineData("ISOYEAR")]
+    public void FirebirdSource_RejectsPostgresOnlyExtractPartsBeforeTargetValidation(string part)
+    {
+        Assert.Throws<SqlParseException>(() => Compile(
+            "EXTRACT(" + part + " FROM DATE '2021-01-03')",
+            SqlAgentToolType.Firebird, SqlAgentToolType.Postgres));
+    }
+
+    [Theory]
+    [InlineData("ISODOW")]
     [InlineData("DOY")]
     public void FirebirdTarget_StillRejectsUnprovenDatePartMappings(string part)
     {
