@@ -1575,8 +1575,17 @@ module internal RewriteParser =
         let fieldText =
             match cursor.Dialect, sourceField with
             | SourceDialect.Firebird, "WEEKDAY" -> "DOW"
-            | SourceDialect.Firebird, "DOW" ->
-                fail fieldToken "Firebird EXTRACT uses WEEKDAY rather than the PostgreSQL DOW spelling."
+            // Do not confuse PostgreSQL-specific source spellings (ISODOW,
+            // ISOYEAR, DOY, EPOCH, ...) with Firebird-native EXTRACT syntax.
+            // Only native fields represented by the existing Core model enter
+            // this branch. YEARDAY and MILLISECOND need separate semantic proof.
+            | SourceDialect.Firebird,
+                ("YEAR" | "MONTH" | "QUARTER" | "WEEK" | "DAY" | "HOUR"
+                | "MINUTE" | "SECOND" | "TIMEZONE_HOUR" | "TIMEZONE_MINUTE") ->
+                sourceField
+            | SourceDialect.Firebird, _ ->
+                fail fieldToken ("EXTRACT date part '" + sourceField
+                                 + "' is not supported by the Firebird Core source grammar.")
             | _ -> sourceField
         if not (SqlDatePartCapabilityRules.IsRepresentedPart(fieldText)) then
             fail cursor.Current (
