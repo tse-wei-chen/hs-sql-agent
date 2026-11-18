@@ -1395,6 +1395,9 @@ module internal SqlDatePartCapabilityRules =
             || (Set.contains part (set [ "HOUR"; "MINUTE"; "SECOND" ])
                 && Set.contains provider clockPartTargets)
             || (provider = SqlAgentToolType.Postgres && Set.contains part postgresNativeParts)
+            // Both providers use ISO-8601 week numbering. Firebird calls
+            // PostgreSQL's Sunday-zero DOW field WEEKDAY.
+            || (provider = SqlAgentToolType.Firebird && (part = "WEEK" || part = "DOW"))
         if supported then null
         elif not (IsRepresentedPart part) then
             "Date part " + part + " is outside the declared Core date-part family. SQL capability 'temporal.date_part."

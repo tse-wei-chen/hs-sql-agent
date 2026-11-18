@@ -1570,7 +1570,14 @@ module internal RewriteParser =
     and private parseExtract cursor =
         expectKeyword "EXTRACT" cursor
         expectSymbol '(' cursor
-        let fieldText = keywordOrIdentifierText cursor |> fun value -> value.Trim().ToUpperInvariant()
+        let fieldToken = cursor.Current
+        let sourceField = keywordOrIdentifierText cursor |> fun value -> value.Trim().ToUpperInvariant()
+        let fieldText =
+            match cursor.Dialect, sourceField with
+            | SourceDialect.Firebird, "WEEKDAY" -> "DOW"
+            | SourceDialect.Firebird, "DOW" ->
+                fail fieldToken "Firebird EXTRACT uses WEEKDAY rather than the PostgreSQL DOW spelling."
+            | _ -> sourceField
         if not (SqlDatePartCapabilityRules.IsRepresentedPart(fieldText)) then
             fail cursor.Current (
                 "EXTRACT date part '" + fieldText

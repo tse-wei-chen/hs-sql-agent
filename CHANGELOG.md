@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Development changes after v3.1.0
 
+### Firebird ISO week / weekday Query parity (#658)
+
+- Extend the existing typed `EXTRACT` compiler path with PostgreSQL↔Firebird ISO `WEEK` and Sunday-zero weekday equivalence (`DOW` / Firebird `WEEKDAY`). Source dialect spellings remain validated; unproven date parts remain fail-closed.
+- Add public Query compile contract coverage and a Firebird 5 database parity readback at the ISO year boundary. No Script execution, runtime authorization or CLR API change.
+
 ### U9 release compatibility, performance evidence and migration consolidation
 
 - Extend the existing SqlCore v3 PR ABI job with a **true published v3.1.0 NuGet binary baseline**: pin and verify the published Git tag, download and SHA-256 record the actual released SqlCore package, validate net8.0/net10.0 assets and run Microsoft ApiCompat against the exact PR-head package. Retain the independent PR base-to-head CLR/signature/semantic parity gate.

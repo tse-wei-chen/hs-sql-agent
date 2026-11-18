@@ -1245,7 +1245,8 @@ module internal RewriteRenderer =
                     | PostgreSql | Oracle ->
                         wrap ("EXTRACT(" + part + " FROM ") ")" value
                     | Firebird ->
-                        wrap ("EXTRACT(" + part + " FROM CAST(") " AS DATE))" value
+                        let nativePart = if part = "DOW" then "WEEKDAY" else part
+                        wrap ("EXTRACT(" + nativePart + " FROM CAST(") " AS DATE))" value
                     | SQLite ->
                         let fmt =
                             match part with
