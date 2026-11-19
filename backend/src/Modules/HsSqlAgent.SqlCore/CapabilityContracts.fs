@@ -1363,6 +1363,8 @@ module internal SqlDatePartCapabilityRules =
             SqlAgentToolType.MySQL
             SqlAgentToolType.MsSqlServer
             SqlAgentToolType.Sqlite
+            // Lower via EXTRACT(MONTH) and integer arithmetic, not FB5-only QUARTER.
+            SqlAgentToolType.Firebird
         ]
 
     let private clockPartTargets =

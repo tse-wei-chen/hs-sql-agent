@@ -1244,6 +1244,11 @@ module internal RewriteRenderer =
                         wrap (part + "(") ")" value
                     | PostgreSql | Oracle ->
                         wrap ("EXTRACT(" + part + " FROM ") ")" value
+                    | Firebird when part = "QUARTER" ->
+                        // Firebird 5 added native QUARTER. The MONTH form also
+                        // works on older Firebird versions: month is 1..12,
+                        // so positive integer division yields quarter 1..4.
+                        wrap "((EXTRACT(MONTH FROM CAST(" " AS DATE)) + 2) / 3)" value
                     | Firebird ->
                         let nativePart = if part = "DOW" then "WEEKDAY" else part
                         // Calendar fields need a DATE; clock fields must keep
