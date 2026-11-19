@@ -1248,7 +1248,10 @@ module internal RewriteRenderer =
                         // Firebird 5 added native QUARTER. The MONTH form also
                         // works on older Firebird versions: month is 1..12,
                         // so positive integer division yields quarter 1..4.
-                        wrap "((EXTRACT(MONTH FROM CAST(" " AS DATE)) + 2) / 3)" value
+                        // Native QUARTER returns SMALLINT. Explicitly preserve
+                        // that result type: Firebird integer arithmetic can
+                        // otherwise infer INT128 and change the CLR contract.
+                        wrap "CAST(((EXTRACT(MONTH FROM CAST(" " AS DATE)) + 2) / 3) AS SMALLINT)" value
                     | Firebird ->
                         let nativePart = if part = "DOW" then "WEEKDAY" else part
                         // Calendar fields need a DATE; clock fields must keep

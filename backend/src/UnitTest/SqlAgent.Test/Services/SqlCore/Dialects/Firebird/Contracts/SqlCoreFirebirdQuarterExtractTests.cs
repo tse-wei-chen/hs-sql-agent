@@ -25,7 +25,7 @@ public sealed class SqlCoreFirebirdQuarterExtractTests
         var compiled = Compile("EXTRACT(QUARTER FROM DATE '2021-12-31')");
 
         Assert.Contains("EXTRACT(MONTH FROM CAST(", compiled.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("+ 2) / 3", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("+ 2) / 3) AS SMALLINT)", compiled.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("EXTRACT(QUARTER FROM", compiled.Sql, StringComparison.OrdinalIgnoreCase);
     }
 

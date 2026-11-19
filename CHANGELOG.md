@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Portable Firebird QUARTER Query lowering (#661)
 
-- Add the existing typed `EXTRACT(QUARTER)` target capability for Firebird using native `EXTRACT(MONTH)` and integer arithmetic (quarter 1–4); unlike Firebird 5 native QUARTER, this lowering avoids requiring Firebird 5.
+- Add the existing typed `EXTRACT(QUARTER)` target capability for Firebird using native `EXTRACT(MONTH)` and integer arithmetic (quarter 1–4), cast to `SMALLINT` for native-compatible result metadata; unlike Firebird 5 native QUARTER, this lowering avoids requiring Firebird 5.
 - Cover the public Query compile contract, unchanged calendar MONTH and negative EPOCH, plus one live Firebird 5 differential comparison at first/last quarters. Firebird 4 runtime was not independently tested. No new AST, Host execution path or public API.
 
 ### Firebird native clock EXTRACT (HOUR / MINUTE / SECOND) (#660)

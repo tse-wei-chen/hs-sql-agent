@@ -25,7 +25,8 @@ a `TIME` cast, without truncating clock values to `DATE`. Fractional seconds
 follow Firebird's native `TIME` precision (up to four decimal places);
 this is not a guarantee of arbitrary PostgreSQL microsecond precision.
 Firebird target `QUARTER` uses `(EXTRACT(MONTH) + 2) / 3` with integer
-division; it does not require Firebird 5's native `EXTRACT(QUARTER)`.
+division and an outer `SMALLINT` cast to match native result metadata;
+it does not require Firebird 5's native `EXTRACT(QUARTER)`.
 Physical differential parity is exercised against Firebird 5. The source-side
 acceptance of native Firebird `QUARTER` still depends on the server version.
 Other date-part mappings remain provider-specific and fail-closed.

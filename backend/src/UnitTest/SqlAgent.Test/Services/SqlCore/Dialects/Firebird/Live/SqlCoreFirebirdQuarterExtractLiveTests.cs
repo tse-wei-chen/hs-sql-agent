@@ -43,8 +43,12 @@ public sealed class SqlCoreFirebirdQuarterExtractLiveTests
                 command.Parameters.AddWithValue(parameter.Name, parameter.Value ?? DBNull.Value);
             await using var reader = await command.ExecuteReaderAsync(token);
             Assert.True(await reader.ReadAsync(token));
-            q1 = Convert.ToInt32(reader.GetValue(0));
-            q4 = Convert.ToInt32(reader.GetValue(1));
+            // Native Firebird EXTRACT(QUARTER) returns SMALLINT. The
+            // portable lowering must preserve the same CLR result type.
+            Assert.IsType<short>(reader.GetValue(0));
+            Assert.IsType<short>(reader.GetValue(1));
+            q1 = reader.GetInt16(0);
+            q4 = reader.GetInt16(1);
             Assert.False(await reader.ReadAsync(token));
         }
 
