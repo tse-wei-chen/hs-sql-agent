@@ -11,6 +11,8 @@ type SqlQuarterDatePartCapabilityRules private () =
         || provider = SqlAgentToolType.MySQL
         || provider = SqlAgentToolType.MsSqlServer
         || provider = SqlAgentToolType.Sqlite
+        // Firebird uses the portable MONTH-derived SMALLINT expression.
+        || provider = SqlAgentToolType.Firebird
     static member TargetValidationError(provider: SqlAgentToolType) =
         SqlDatePartCapabilityRules.TargetValidationError("QUARTER", provider)
 
@@ -598,7 +600,7 @@ type SqlCapabilityMatrix private () =
                 yield cap("temporal.offset_timestamp","temporal",offsetStatus,offsetDetail)
                 yield cap("temporal.current_keywords","temporal",currentTemporal,"CURRENT_DATE/TIME/TIMESTAMP use provider translation where required.")
                 yield cap("temporal.date_part.quarter","temporal",sharedQuarterDatePart,
-                    "QUARTER is represented canonically. PostgreSQL emits native EXTRACT, MySQL and SQL Server use native quarter/datepart semantics, and SQLite derives the quarter from the numeric month. Oracle and Firebird remain fail-closed until operand-type and provider-specific extraction semantics are proven.")
+                    "QUARTER is represented canonically. PostgreSQL emits native EXTRACT; MySQL and SQL Server use native quarter/datepart semantics; SQLite derives it from the numeric month; Firebird derives it from EXTRACT(MONTH) with integer arithmetic and a SMALLINT cast (no Firebird 5 dependency). Oracle remains fail-closed.")
                 yield cap("temporal.date_part.clock","temporal",sharedClockDateParts,
                     "HOUR, MINUTE, and SECOND are represented canonically for PostgreSQL, MySQL, SQL Server, and SQLite. Oracle and Firebird remain target-gated because the Core expression model does not yet prove the operand temporal type needed for their EXTRACT restrictions.")
                 yield cap("temporal.date_part.postgres_extended","temporal",postgresNativeDateParts,
