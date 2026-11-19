@@ -10,7 +10,7 @@ public sealed class CoreDatePartCapabilityContractTests
     [InlineData(SqlAgentToolType.Sqlite, true)]
     [InlineData(SqlAgentToolType.MsSqlServer, true)]
     [InlineData(SqlAgentToolType.Oracle, false)]
-    [InlineData(SqlAgentToolType.Firebird, false)]
+    [InlineData(SqlAgentToolType.Firebird, true)]
     public void QuarterFacade_StaysAlignedWithCapabilityMatrix(
         SqlAgentToolType provider,
         bool supported)
