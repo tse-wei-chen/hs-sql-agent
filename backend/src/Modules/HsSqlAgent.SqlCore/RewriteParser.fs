@@ -1570,7 +1570,23 @@ module internal RewriteParser =
     and private parseExtract cursor =
         expectKeyword "EXTRACT" cursor
         expectSymbol '(' cursor
-        let fieldText = keywordOrIdentifierText cursor |> fun value -> value.Trim().ToUpperInvariant()
+        let fieldToken = cursor.Current
+        let sourceField = keywordOrIdentifierText cursor |> fun value -> value.Trim().ToUpperInvariant()
+        let fieldText =
+            match cursor.Dialect, sourceField with
+            | SourceDialect.Firebird, "WEEKDAY" -> "DOW"
+            // Do not confuse PostgreSQL-specific source spellings (ISODOW,
+            // ISOYEAR, DOY, EPOCH, ...) with Firebird-native EXTRACT syntax.
+            // Only native fields represented by the existing Core model enter
+            // this branch. YEARDAY and MILLISECOND need separate semantic proof.
+            | SourceDialect.Firebird,
+                ("YEAR" | "MONTH" | "QUARTER" | "WEEK" | "DAY" | "HOUR"
+                | "MINUTE" | "SECOND" | "TIMEZONE_HOUR" | "TIMEZONE_MINUTE") ->
+                sourceField
+            | SourceDialect.Firebird, _ ->
+                fail fieldToken ("EXTRACT date part '" + sourceField
+                                 + "' is not supported by the Firebird Core source grammar.")
+            | _ -> sourceField
         if not (SqlDatePartCapabilityRules.IsRepresentedPart(fieldText)) then
             fail cursor.Current (
                 "EXTRACT date part '" + fieldText

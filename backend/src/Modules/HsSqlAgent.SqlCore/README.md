@@ -18,6 +18,9 @@ Support depends on statement shape, provider, version, compilation policy and pr
 
 The six dialects do not have identical support. Cross-provider compilation requires
 proven transformations. Parsing a statement does not imply compilation support.
+The Query `EXTRACT` model supports a proven PostgreSQL↔Firebird mapping for
+ISO-8601 `WEEK` and Sunday-zero `DOW` (Firebird spells it `WEEKDAY`).
+Other date-part mappings remain provider-specific and fail-closed.
 
 Query compilation also checks that normalization/validation has not introduced
 additional named data-source references after binding. This **does not** expand
