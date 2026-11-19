@@ -1246,7 +1246,13 @@ module internal RewriteRenderer =
                         wrap ("EXTRACT(" + part + " FROM ") ")" value
                     | Firebird ->
                         let nativePart = if part = "DOW" then "WEEKDAY" else part
-                        wrap ("EXTRACT(" + nativePart + " FROM CAST(") " AS DATE))" value
+                        // Calendar fields need a DATE; clock fields must keep
+                        // the time-of-day (including fractional seconds).
+                        let castType =
+                            match part with
+                            | "HOUR" | "MINUTE" | "SECOND" -> "TIME"
+                            | _ -> "DATE"
+                        wrap ("EXTRACT(" + nativePart + " FROM CAST(") (" AS " + castType + "))") value
                     | SQLite ->
                         let fmt =
                             match part with

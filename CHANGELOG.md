@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Development changes after v3.1.0
 
+### Firebird native clock EXTRACT (HOUR / MINUTE / SECOND) (#660)
+
+- Extend typed `EXTRACT` target capability for Firebird's native clock parts and preserve time-of-day through `CAST(... AS TIME)`; keep calendar fields on `DATE` and other unsupported parts fail-closed.
+- Public compiler contract coverage plus a single Firebird 5 physical parity readback proving HOUR, MINUTE and fractional SECOND at native four-decimal precision. No new public API, domain parser or Host execution path.
+
 ### Firebird ISO week / weekday Query parity (#658)
 
 - Extend the existing typed `EXTRACT` compiler path with PostgreSQL↔Firebird ISO `WEEK` and Sunday-zero weekday equivalence (`DOW` / Firebird `WEEKDAY`). Source dialect spellings remain validated; unproven date parts remain fail-closed.
