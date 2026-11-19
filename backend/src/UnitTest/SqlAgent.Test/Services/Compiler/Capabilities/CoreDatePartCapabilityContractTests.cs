@@ -29,6 +29,21 @@ public sealed class CoreDatePartCapabilityContractTests
     }
 
     [Theory]
+    [InlineData(SqlAgentToolType.Firebird, SqlCapabilityStatus.Supported)]
+    [InlineData(SqlAgentToolType.Postgres, SqlCapabilityStatus.Supported)]
+    [InlineData(SqlAgentToolType.Oracle, SqlCapabilityStatus.Rejected)]
+    public void ClockFacade_ExposesActualProviderCapability(
+        SqlAgentToolType provider,
+        SqlCapabilityStatus expected)
+    {
+        var capability = Assert.Single(
+            SqlCapabilityMatrix.ForProvider(provider).Capabilities,
+            item => item.Id == "temporal.date_part.clock");
+
+        Assert.Equal(expected, capability.Status);
+    }
+
+    [Theory]
     [InlineData("YEAR")]
     [InlineData("MONTH")]
     [InlineData("DAY")]
