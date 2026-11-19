@@ -1371,6 +1371,7 @@ module internal SqlDatePartCapabilityRules =
             SqlAgentToolType.MySQL
             SqlAgentToolType.MsSqlServer
             SqlAgentToolType.Sqlite
+            SqlAgentToolType.Firebird
         ]
 
     let private postgresNativeParts =

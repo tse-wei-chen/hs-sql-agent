@@ -20,6 +20,10 @@ The six dialects do not have identical support. Cross-provider compilation requi
 proven transformations. Parsing a statement does not imply compilation support.
 The Query `EXTRACT` model supports a proven PostgreSQL↔Firebird mapping for
 ISO-8601 `WEEK` and Sunday-zero `DOW` (Firebird spells it `WEEKDAY`).
+Firebird target also supports native `HOUR`, `MINUTE`, and `SECOND` using
+a `TIME` cast, without truncating clock values to `DATE`. Fractional seconds
+follow Firebird's native `TIME` precision (up to four decimal places);
+this is not a guarantee of arbitrary PostgreSQL microsecond precision.
 Other date-part mappings remain provider-specific and fail-closed.
 
 Query compilation also checks that normalization/validation has not introduced
