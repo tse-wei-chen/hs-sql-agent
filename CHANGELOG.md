@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Development changes after v3.1.0
 
+### Firebird clock capability public matrix consistency (#662)
+
+- Derive the public `temporal.date_part.clock` provider status from the already-validated HOUR/MINUTE/SECOND target capability rules; Firebird is now correctly advertised as supported after #660, while Oracle remains rejected. Update capability evidence text without changing SQL renderer, AST, Host, CLR signatures or security policy.
+- Public matrix black-box tests cover Firebird, PostgreSQL and Oracle. No additional live database tests; reuse the Firebird physical evidence and complete required CI.
+
 ### Portable Firebird QUARTER Query lowering (#661)
 
 - Add the existing typed `EXTRACT(QUARTER)` target capability for Firebird using native `EXTRACT(MONTH)` and integer arithmetic (quarter 1–4), cast to `SMALLINT` for native-compatible result metadata; unlike Firebird 5 native QUARTER, this lowering avoids requiring Firebird 5.

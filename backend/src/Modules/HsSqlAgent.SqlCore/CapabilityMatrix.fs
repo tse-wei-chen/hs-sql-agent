@@ -312,11 +312,13 @@ type SqlCapabilityMatrix private () =
         let postgresNativeDateParts = if provider = SqlAgentToolType.Postgres then supported else rejected
         let sharedQuarterDatePart =
             if SqlQuarterDatePartCapabilityRules.SupportsTarget(provider) then supported else rejected
+        // Derive the public aggregate from the actual compiler target
+        // rules; an additional provider must not stay falsely rejected here.
         let sharedClockDateParts =
-            if provider = SqlAgentToolType.Postgres
-               || provider = SqlAgentToolType.MySQL
-               || provider = SqlAgentToolType.MsSqlServer
-               || provider = SqlAgentToolType.Sqlite then supported
+            if isNull (SqlDatePartCapabilityRules.TargetValidationError("HOUR", provider))
+               && isNull (SqlDatePartCapabilityRules.TargetValidationError("MINUTE", provider))
+               && isNull (SqlDatePartCapabilityRules.TargetValidationError("SECOND", provider))
+            then supported
             else rejected
         let modulo = if provider = SqlAgentToolType.Oracle || provider = SqlAgentToolType.Firebird then translated else supported
         let nullOrdering = if provider = SqlAgentToolType.MySQL || provider = SqlAgentToolType.MsSqlServer then translated else supported
@@ -602,7 +604,7 @@ type SqlCapabilityMatrix private () =
                 yield cap("temporal.date_part.quarter","temporal",sharedQuarterDatePart,
                     "QUARTER is represented canonically. PostgreSQL emits native EXTRACT; MySQL and SQL Server use native quarter/datepart semantics; SQLite derives it from the numeric month; Firebird derives it from EXTRACT(MONTH) with integer arithmetic and a SMALLINT cast (no Firebird 5 dependency). Oracle remains fail-closed.")
                 yield cap("temporal.date_part.clock","temporal",sharedClockDateParts,
-                    "HOUR, MINUTE, and SECOND are represented canonically for PostgreSQL, MySQL, SQL Server, and SQLite. Oracle and Firebird remain target-gated because the Core expression model does not yet prove the operand temporal type needed for their EXTRACT restrictions.")
+                    "HOUR, MINUTE, and SECOND are represented canonically. PostgreSQL, MySQL, SQL Server, SQLite, and Firebird have declared target lowering; Firebird uses native EXTRACT with a TIME cast to preserve clock values up to native fractional-second precision. Oracle remains target-gated until operand temporal-type semantics are proven.")
                 yield cap("temporal.date_part.postgres_extended","temporal",postgresNativeDateParts,
                     "PostgreSQL-native EXTRACT fields DOW, DOY, ISODOW, ISOYEAR, WEEK, EPOCH, CENTURY, DECADE, MILLENNIUM, JULIAN, MILLISECONDS, MICROSECONDS, TIMEZONE, TIMEZONE_HOUR, and TIMEZONE_MINUTE remain represented structurally and native-only for PostgreSQL targets.")
                 yield cap("temporal.date_arithmetic","temporal",translated,
