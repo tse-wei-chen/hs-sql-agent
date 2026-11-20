@@ -20,6 +20,11 @@ The six dialects do not have identical support. Cross-provider compilation requi
 proven transformations. Parsing a statement does not imply compilation support.
 The Query `EXTRACT` model supports a proven PostgreSQL↔Firebird mapping for
 ISO-8601 `WEEK` and Sunday-zero `DOW` (Firebird spells it `WEEKDAY`).
+PostgreSQL `ISODOW` numbers Monday=1 through Sunday=7; the Firebird
+translation applies `MOD(WEEKDAY + 6, 7) + 1` with an explicit `SMALLINT`
+result. Source Firebird `ISODOW` is still invalid, and Firebird native
+`WEEKDAY` remains Sunday-zero. One Firebird 5 physical readback covers
+Sunday/Monday/Saturday values and the native return type.
 Firebird target also supports native `HOUR`, `MINUTE`, and `SECOND` using
 a `TIME` cast, without truncating clock values to `DATE`. Fractional seconds
 follow Firebird's native `TIME` precision (up to four decimal places);
@@ -35,7 +40,7 @@ The compiler lowers PostgreSQL DOY to Firebird `YEARDAY + 1`
 and Firebird YEARDAY to PostgreSQL `DOY - 1` with a SMALLINT
 result; wrong dialect source spellings fail during parsing.
 Leap-year boundary parity is verified against a real Firebird 5 database.
-Other date-part mappings remain provider-specific and fail-closed.
+Other date-part mappings, including `ISOYEAR`, remain provider-specific and fail-closed.
 
 Query compilation also checks that normalization/validation has not introduced
 additional named data-source references after binding. This **does not** expand

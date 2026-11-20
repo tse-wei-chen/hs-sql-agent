@@ -1248,6 +1248,11 @@ module internal RewriteRenderer =
                         wrap "CAST((EXTRACT(DOY FROM " ") - 1) AS SMALLINT)" value
                     | PostgreSql | Oracle ->
                         wrap ("EXTRACT(" + part + " FROM ") ")" value
+                    | Firebird when part = "ISODOW" ->
+                        // Firebird WEEKDAY is Sunday=0..Saturday=6, while
+                        // PostgreSQL ISODOW is Monday=1..Sunday=7. Both the
+                        // range and the result metadata are bounded.
+                        wrap "CAST((MOD(EXTRACT(WEEKDAY FROM CAST(" " AS DATE)) + 6, 7) + 1) AS SMALLINT)" value
                     | Firebird when part = "DOY" ->
                         // Firebird YEARDAY is zero-based; PostgreSQL DOY is not.
                         // Explicit cast avoids Firebird INT128 result inference.

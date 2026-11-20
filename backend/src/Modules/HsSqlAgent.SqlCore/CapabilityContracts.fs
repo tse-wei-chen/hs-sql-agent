@@ -1399,10 +1399,11 @@ module internal SqlDatePartCapabilityRules =
                 && Set.contains provider clockPartTargets)
             || (provider = SqlAgentToolType.Postgres
                 && (Set.contains part postgresNativeParts || part = "YEARDAY"))
-            // WEEK/DOW share numbering; DOY is one-based in PostgreSQL,
-            // whereas native Firebird YEARDAY is zero-based.
+            // WEEK/DOW share Sunday-zero numbering; ISODOW is Monday-one,
+            // so Firebird needs a bounded modular conversion. DOY is
+            // one-based in PostgreSQL, unlike native Firebird YEARDAY.
             || (provider = SqlAgentToolType.Firebird
-                && Set.contains part (set [ "WEEK"; "DOW"; "DOY"; "YEARDAY" ]))
+                && Set.contains part (set [ "WEEK"; "DOW"; "ISODOW"; "DOY"; "YEARDAY" ]))
         if supported then null
         elif not (IsRepresentedPart part) then
             "Date part " + part + " is outside the declared Core date-part family. SQL capability 'temporal.date_part."
