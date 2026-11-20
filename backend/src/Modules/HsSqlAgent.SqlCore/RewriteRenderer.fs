@@ -1242,8 +1242,16 @@ module internal RewriteRenderer =
                         wrap ("DATEPART(" + part + ", ") ")" value
                     | MySql ->
                         wrap (part + "(") ")" value
+                    | PostgreSql when part = "YEARDAY" ->
+                        // Preserve Firebird's zero-based indexing and SMALLINT
+                        // result when targeting PostgreSQL's one-based DOY.
+                        wrap "CAST((EXTRACT(DOY FROM " ") - 1) AS SMALLINT)" value
                     | PostgreSql | Oracle ->
                         wrap ("EXTRACT(" + part + " FROM ") ")" value
+                    | Firebird when part = "DOY" ->
+                        // Firebird YEARDAY is zero-based; PostgreSQL DOY is not.
+                        // Explicit cast avoids Firebird INT128 result inference.
+                        wrap "CAST((EXTRACT(YEARDAY FROM CAST(" " AS DATE)) + 1) AS SMALLINT)" value
                     | Firebird when part = "QUARTER" ->
                         // Firebird 5 added native QUARTER. The MONTH form also
                         // works on older Firebird versions: month is 1..12,

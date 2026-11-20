@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Development changes after v3.1.0
 
+### PostgreSQL DOY ↔ Firebird YEARDAY bidirectional semantics (#663)
+
+- Model the distinct day-of-year source fields without conflating their numbering: PostgreSQL DOY starts at 1; Firebird YEARDAY starts at 0. Compile either target with the exact +1/-1 offset, native YEARDAY for Firebird source, and SMALLINT results; wrong dialect spellings remain rejected.
+- Add public compiler and capability-matrix contracts plus one pinned Firebird 5 differential check at Jan 1, Feb 29 and Dec 31 of a leap year. Other extended fields remain fail-closed. No new Host tool, execution API or public CLR signature.
+
 ### Firebird clock capability public matrix consistency (#662)
 
 - Derive the public `temporal.date_part.clock` provider status from the already-validated HOUR/MINUTE/SECOND target capability rules; Firebird is now correctly advertised as supported after #660, while Oracle remains rejected. Update capability evidence text without changing SQL renderer, AST, Host, CLR signatures or security policy.
