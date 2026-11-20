@@ -1388,7 +1388,7 @@ module internal SqlDatePartCapabilityRules =
 
     let IsRepresentedPart(rawPart: string) =
         let part = normalize rawPart
-        Set.contains part portableParts || Set.contains part postgresNativeParts
+        Set.contains part portableParts || Set.contains part postgresNativeParts || part = "YEARDAY"
 
     let TargetValidationError(rawPart: string, provider: SqlAgentToolType) : string | null =
         let part = normalize rawPart
@@ -1397,10 +1397,12 @@ module internal SqlDatePartCapabilityRules =
             || (part = "QUARTER" && Set.contains provider quarterTargets)
             || (Set.contains part (set [ "HOUR"; "MINUTE"; "SECOND" ])
                 && Set.contains provider clockPartTargets)
-            || (provider = SqlAgentToolType.Postgres && Set.contains part postgresNativeParts)
-            // Both providers use ISO-8601 week numbering. Firebird calls
-            // PostgreSQL's Sunday-zero DOW field WEEKDAY.
-            || (provider = SqlAgentToolType.Firebird && (part = "WEEK" || part = "DOW"))
+            || (provider = SqlAgentToolType.Postgres
+                && (Set.contains part postgresNativeParts || part = "YEARDAY"))
+            // WEEK/DOW share numbering; DOY is one-based in PostgreSQL,
+            // whereas native Firebird YEARDAY is zero-based.
+            || (provider = SqlAgentToolType.Firebird
+                && Set.contains part (set [ "WEEK"; "DOW"; "DOY"; "YEARDAY" ]))
         if supported then null
         elif not (IsRepresentedPart part) then
             "Date part " + part + " is outside the declared Core date-part family. SQL capability 'temporal.date_part."

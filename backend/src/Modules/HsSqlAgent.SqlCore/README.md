@@ -29,6 +29,12 @@ division and an outer `SMALLINT` cast to match native result metadata;
 it does not require Firebird 5's native `EXTRACT(QUARTER)`.
 Physical differential parity is exercised against Firebird 5. The source-side
 acceptance of native Firebird `QUARTER` still depends on the server version.
+PostgreSQL `EXTRACT(DOY)` (January 1 = 1) and Firebird
+`EXTRACT(YEARDAY)` (January 1 = 0) are distinct source fields.
+The compiler lowers PostgreSQL DOY to Firebird `YEARDAY + 1`
+and Firebird YEARDAY to PostgreSQL `DOY - 1` with a SMALLINT
+result; wrong dialect source spellings fail during parsing.
+Leap-year boundary parity is verified against a real Firebird 5 database.
 Other date-part mappings remain provider-specific and fail-closed.
 
 Query compilation also checks that normalization/validation has not introduced

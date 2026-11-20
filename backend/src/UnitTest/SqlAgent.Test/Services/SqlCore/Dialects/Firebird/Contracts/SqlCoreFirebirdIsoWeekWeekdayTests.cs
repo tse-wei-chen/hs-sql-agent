@@ -63,7 +63,7 @@ public sealed class SqlCoreFirebirdIsoWeekWeekdayTests
 
     [Theory]
     [InlineData("ISODOW")]
-    [InlineData("DOY")]
+    [InlineData("ISOYEAR")]
     public void FirebirdTarget_StillRejectsUnprovenDatePartMappings(string part)
     {
         var error = Assert.Throws<SqlCompilationException>(() => Compile(

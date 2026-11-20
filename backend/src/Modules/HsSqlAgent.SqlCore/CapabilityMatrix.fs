@@ -312,6 +312,11 @@ type SqlCapabilityMatrix private () =
         let postgresNativeDateParts = if provider = SqlAgentToolType.Postgres then supported else rejected
         let sharedQuarterDatePart =
             if SqlQuarterDatePartCapabilityRules.SupportsTarget(provider) then supported else rejected
+        let sharedYearDayDatePart =
+            if isNull (SqlDatePartCapabilityRules.TargetValidationError("DOY", provider))
+               && isNull (SqlDatePartCapabilityRules.TargetValidationError("YEARDAY", provider))
+            then supported
+            else rejected
         // Derive the public aggregate from the actual compiler target
         // rules; an additional provider must not stay falsely rejected here.
         let sharedClockDateParts =
@@ -605,8 +610,10 @@ type SqlCapabilityMatrix private () =
                     "QUARTER is represented canonically. PostgreSQL emits native EXTRACT; MySQL and SQL Server use native quarter/datepart semantics; SQLite derives it from the numeric month; Firebird derives it from EXTRACT(MONTH) with integer arithmetic and a SMALLINT cast (no Firebird 5 dependency). Oracle remains fail-closed.")
                 yield cap("temporal.date_part.clock","temporal",sharedClockDateParts,
                     "HOUR, MINUTE, and SECOND are represented canonically. PostgreSQL, MySQL, SQL Server, SQLite, and Firebird have declared target lowering; Firebird uses native EXTRACT with a TIME cast to preserve clock values up to native fractional-second precision. Oracle remains target-gated until operand temporal-type semantics are proven.")
+                yield cap("temporal.date_part.day_of_year","temporal",sharedYearDayDatePart,
+                    "PostgreSQL DOY is one-based; Firebird YEARDAY is zero-based. The distinct source spellings lower with a proven +1/-1 offset and bounded SMALLINT result. Other providers remain rejected.")
                 yield cap("temporal.date_part.postgres_extended","temporal",postgresNativeDateParts,
-                    "PostgreSQL-native EXTRACT fields DOW, DOY, ISODOW, ISOYEAR, WEEK, EPOCH, CENTURY, DECADE, MILLENNIUM, JULIAN, MILLISECONDS, MICROSECONDS, TIMEZONE, TIMEZONE_HOUR, and TIMEZONE_MINUTE remain represented structurally and native-only for PostgreSQL targets.")
+                    "PostgreSQL-native EXTRACT includes DOW, DOY, ISODOW, ISOYEAR, WEEK, EPOCH, CENTURY, DECADE, MILLENNIUM, JULIAN, MILLISECONDS, MICROSECONDS, TIMEZONE, TIMEZONE_HOUR, and TIMEZONE_MINUTE. Firebird has separately proven WEEK, DOW and DOY mappings; this aggregate stays rejected outside PostgreSQL because other extended fields have no proven lowering.")
                 yield cap("temporal.date_arithmetic","temporal",translated,
                     "Date-add units DAY, WEEK, MONTH, QUARTER, YEAR, HOUR, MINUTE, and SECOND are typed in the closed F# AST. PostgreSQL, MySQL, SQL Server, and Firebird have declared lowering for all eight units. Oracle and SQLite currently admit DAY, WEEK, HOUR, MINUTE, and SECOND only; MONTH, QUARTER, and YEAR remain fail-closed because Oracle YEAR-TO-MONTH interval arithmetic can reject invalid rollover dates while SQLite defaults to ceiling rollover and its semantics-preserving floor modifier requires a separately proven SQLite 3.46+ target profile. Raw source grammar includes SQL Server/Firebird DATEADD, MySQL TIMESTAMPADD, SQL Server DATEPART, PostgreSQL DATE_PART, and the existing DATEDIFF families. Cross-provider non-DAY date difference remains fail-closed because provider boundary-counting semantics are not proven equivalent.")
                 yield cap("temporal.date_only","temporal",(if provider=SqlAgentToolType.MySQL then supported else rejected),

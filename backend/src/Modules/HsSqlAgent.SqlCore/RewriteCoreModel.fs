@@ -533,7 +533,7 @@ module internal CoreModel =
             set [
                 "YEAR"; "MONTH"; "DAY"; "QUARTER"
                 "HOUR"; "MINUTE"; "SECOND"
-                "DOW"; "DOY"; "ISODOW"; "ISOYEAR"; "WEEK"
+                "DOW"; "DOY"; "YEARDAY"; "ISODOW"; "ISOYEAR"; "WEEK"
                 "EPOCH"; "CENTURY"; "DECADE"; "MILLENNIUM"; "JULIAN"
                 "MILLISECONDS"; "MICROSECONDS"
                 "TIMEZONE"; "TIMEZONE_HOUR"; "TIMEZONE_MINUTE"

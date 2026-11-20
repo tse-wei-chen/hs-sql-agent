@@ -1575,10 +1575,14 @@ module internal RewriteParser =
         let fieldText =
             match cursor.Dialect, sourceField with
             | SourceDialect.Firebird, "WEEKDAY" -> "DOW"
+            // Preserve distinct day-of-year numbering across source dialects.
+            | SourceDialect.Firebird, "YEARDAY" -> "YEARDAY"
+            | _, "YEARDAY" ->
+                fail fieldToken "YEARDAY is Firebird-only source syntax; use DOY in PostgreSQL."
             // Do not confuse PostgreSQL-specific source spellings (ISODOW,
             // ISOYEAR, DOY, EPOCH, ...) with Firebird-native EXTRACT syntax.
             // Only native fields represented by the existing Core model enter
-            // this branch. YEARDAY and MILLISECOND need separate semantic proof.
+            // this branch. MILLISECOND needs separate semantic proof.
             | SourceDialect.Firebird,
                 ("YEAR" | "MONTH" | "QUARTER" | "WEEK" | "DAY" | "HOUR"
                 | "MINUTE" | "SECOND" | "TIMEZONE_HOUR" | "TIMEZONE_MINUTE") ->

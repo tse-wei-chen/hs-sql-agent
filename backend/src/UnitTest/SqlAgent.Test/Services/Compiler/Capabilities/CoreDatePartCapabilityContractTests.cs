@@ -44,6 +44,21 @@ public sealed class CoreDatePartCapabilityContractTests
     }
 
     [Theory]
+    [InlineData(SqlAgentToolType.Postgres, SqlCapabilityStatus.Supported)]
+    [InlineData(SqlAgentToolType.Firebird, SqlCapabilityStatus.Supported)]
+    [InlineData(SqlAgentToolType.Oracle, SqlCapabilityStatus.Rejected)]
+    public void DayOfYearFacade_ReportsProvenProviderCapability(
+        SqlAgentToolType provider,
+        SqlCapabilityStatus expected)
+    {
+        var capability = Assert.Single(
+            SqlCapabilityMatrix.ForProvider(provider).Capabilities,
+            item => item.Id == "temporal.date_part.day_of_year");
+
+        Assert.Equal(expected, capability.Status);
+    }
+
+    [Theory]
     [InlineData("YEAR")]
     [InlineData("MONTH")]
     [InlineData("DAY")]
