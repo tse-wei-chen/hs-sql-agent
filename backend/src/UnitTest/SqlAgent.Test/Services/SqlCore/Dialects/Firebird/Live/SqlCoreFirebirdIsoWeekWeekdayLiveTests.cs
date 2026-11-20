@@ -7,7 +7,8 @@ using Xunit;
 namespace SqlAgent.Test.Services;
 
 /// <summary>
-/// One physical Firebird 5 readback: ISO week-year transition and Sunday=0.
+/// One physical Firebird 5 readback: ISO week-year transition,
+/// native Sunday=0, and portable ISO weekdays Monday=1..Sunday=7.
 /// Runs only in the existing dedicated Firebird CI service, not the unit shard.
 /// </summary>
 public sealed class SqlCoreFirebirdIsoWeekWeekdayLiveTests
@@ -29,7 +30,10 @@ public sealed class SqlCoreFirebirdIsoWeekWeekdayLiveTests
         await connection.OpenAsync(token);
         var compiled = SqlCoreFacade.CompileQuery(
             "SELECT EXTRACT(WEEK FROM DATE '2021-01-01') AS week_no, " +
-            "EXTRACT(DOW FROM DATE '2021-01-03') AS weekday_no FROM RDB$DATABASE",
+            "EXTRACT(DOW FROM DATE '2021-01-03') AS weekday_no, " +
+            "EXTRACT(ISODOW FROM DATE '2021-01-03') AS iso_sunday, " +
+            "EXTRACT(ISODOW FROM DATE '2021-01-04') AS iso_monday, " +
+            "EXTRACT(ISODOW FROM DATE '2021-01-09') AS iso_saturday FROM RDB$DATABASE",
             SqlAgentToolType.Postgres, SqlAgentToolType.Firebird,
             new SqlPlanValidationContext("firebird-date-part-live-v1"),
             new SqlExecutionPlanPolicy(), token);
@@ -41,6 +45,11 @@ public sealed class SqlCoreFirebirdIsoWeekWeekdayLiveTests
         Assert.True(await reader.ReadAsync(token));
         Assert.Equal(53, Convert.ToInt32(reader.GetValue(0)));
         Assert.Equal(0, Convert.ToInt32(reader.GetValue(1)));
+        // Firebird's native WEEKDAY is Sunday=0; the PostgreSQL ISODOW
+        // lowering must preserve both weekday numbering and SMALLINT metadata.
+        Assert.Equal((short)7, reader.GetInt16(2));
+        Assert.Equal((short)1, reader.GetInt16(3));
+        Assert.Equal((short)6, reader.GetInt16(4));
         Assert.False(await reader.ReadAsync(token));
     }
 }

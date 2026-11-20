@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Development changes after v3.1.0
 
+### Portable PostgreSQL ISODOW → Firebird weekday semantics (#664)
+
+- Lower PostgreSQL Monday-one `ISODOW` to Firebird Sunday-zero `WEEKDAY` with bounded `MOD(WEEKDAY+6,7)+1` and explicit `SMALLINT` metadata. Native `DOW` / `WEEKDAY` remain Sunday-zero; Firebird source `ISODOW` and unproven `ISOYEAR` still fail-closed.
+- Public compiler/target capability evidence and one existing pinned Firebird 5 physical readback validate Sunday, Monday and Saturday. No new parser, AST, public CLR API, Host execution, approval or MCP tool; no Firebird 4 runtime-parity claim.
+
 ### PostgreSQL DOY ↔ Firebird YEARDAY bidirectional semantics (#663)
 
 - Model the distinct day-of-year source fields without conflating their numbering: PostgreSQL DOY starts at 1; Firebird YEARDAY starts at 0. Compile either target with the exact +1/-1 offset, native YEARDAY for Firebird source, and SMALLINT results; wrong dialect spellings remain rejected.

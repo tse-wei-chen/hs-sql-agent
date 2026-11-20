@@ -7,8 +7,8 @@ using Xunit;
 namespace SqlAgent.Test.Services;
 
 /// <summary>
-/// ISO week numbers and Sunday-zero weekday numbers are the only temporal
-/// EXTRACT shapes proven portable between PostgreSQL and Firebird in this slice.
+/// Source-specific ISO week and weekday semantics must not be conflated:
+/// Firebird WEEKDAY is Sunday-zero, PostgreSQL ISODOW is Monday-one.
 /// </summary>
 public sealed class SqlCoreFirebirdIsoWeekWeekdayTests
 {
@@ -31,6 +31,18 @@ public sealed class SqlCoreFirebirdIsoWeekWeekdayTests
         var compiled = Compile(expression, source, SqlAgentToolType.Firebird);
         Assert.Contains(nativePart, compiled.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("EXTRACT(DOW ", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PostgresIsoDow_LowersToFirebirdWithMondayOneSundaySeven()
+    {
+        var compiled = Compile(
+            "EXTRACT(ISODOW FROM DATE '2021-01-03')",
+            SqlAgentToolType.Postgres, SqlAgentToolType.Firebird);
+        Assert.Contains("MOD(EXTRACT(WEEKDAY FROM CAST(", compiled.Sql,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(" + 6, 7) + 1) AS SMALLINT)", compiled.Sql,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -62,7 +74,6 @@ public sealed class SqlCoreFirebirdIsoWeekWeekdayTests
     }
 
     [Theory]
-    [InlineData("ISODOW")]
     [InlineData("ISOYEAR")]
     public void FirebirdTarget_StillRejectsUnprovenDatePartMappings(string part)
     {
