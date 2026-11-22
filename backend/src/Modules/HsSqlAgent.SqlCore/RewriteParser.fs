@@ -1579,6 +1579,10 @@ module internal RewriteParser =
             | SourceDialect.Firebird, "YEARDAY" -> "YEARDAY"
             | source, "ISODOW" when source <> SourceDialect.PostgreSql ->
                 fail fieldToken "ISODOW is PostgreSQL-only source syntax."
+            // Firebird source WEEKDAY has already canonicalized to DOW above.
+            // Other source dialects must not borrow PostgreSQL DOW grammar.
+            | source, "DOW" when source <> SourceDialect.PostgreSql ->
+                fail fieldToken "DOW is PostgreSQL-only EXTRACT source syntax; Firebird uses WEEKDAY."
             | source, "DOY" when source <> SourceDialect.PostgreSql ->
                 fail fieldToken "DOY is PostgreSQL-only EXTRACT source syntax; Firebird uses YEARDAY."
             | _, "YEARDAY" ->

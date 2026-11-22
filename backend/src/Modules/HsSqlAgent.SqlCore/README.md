@@ -27,6 +27,11 @@ result. Source Firebird `ISODOW` is still invalid, and Firebird native
 Sunday/Monday/Saturday values and the native return type.
 PostgreSQL `ISODOW` also targets MySQL (`WEEKDAY(date) + 1`)
 and SQLite (`STRFTIME('%w', date)` converted through integer modulo).
+PostgreSQL Sunday-zero `DOW` and native Firebird `WEEKDAY` also target
+MySQL using `DAYOFWEEK(CAST(date AS DATE)) - 1`, and SQLite using
+`CAST(STRFTIME('%w', date) AS INTEGER)`; `EXTRACT(DOW ...)` remains
+PostgreSQL-only source syntax. This mapping is for date-valued operands,
+not a guarantee of timezone-aware timestamp coercion parity.
 Their native numbering is not ISO and the compiler retains the
 source meaning; non-PostgreSQL `ISODOW` source spelling is rejected.
 The MySQL 8.4 and in-memory SQLite physical differential paths

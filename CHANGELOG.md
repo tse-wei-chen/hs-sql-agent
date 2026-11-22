@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Development changes after v3.1.0
 
+### Sunday-zero DOW on MySQL and SQLite (#668)
+
+- Add typed PostgreSQL DOW / native Firebird WEEKDAY target semantics for MySQL (DAYOFWEEK(date) - 1) and SQLite (integer-cast STRFTIME('%w')), preserving Sunday=0 through Saturday=6 and NULL. Keep target capability matrix aligned to actual compiler rules.
+- Reject MySQL/Oracle source EXTRACT(DOW ...) as non-native PostgreSQL spelling. Validate public compilation/source grammar/matrix plus one existing-service MySQL 8.4 and one in-memory SQLite physical readback; no AST, tool, public API or Host policy change.
+
 ### PostgreSQL DOY and Firebird YEARDAY on MySQL / SQLite (#667)
 
 - Add closed F# target lowering for both one-based PostgreSQL DOY and zero-based Firebird YEARDAY: MySQL native DAYOFYEAR and SQLite integer-cast STRFTIME('%j'), with -1 only when preserving YEARDAY. The public date-part matrix derives status from both semantic capabilities; Oracle and ISOYEAR remain denied.

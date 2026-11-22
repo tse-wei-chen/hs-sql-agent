@@ -315,6 +315,9 @@ type SqlCapabilityMatrix private () =
         let sharedIsoWeekdayDatePart =
             if isNull (SqlDatePartCapabilityRules.TargetValidationError("ISODOW", provider))
             then supported else rejected
+        let sharedSundayZeroWeekday =
+            if isNull (SqlDatePartCapabilityRules.TargetValidationError("DOW", provider))
+            then supported else rejected
         let sharedYearDayDatePart =
             if isNull (SqlDatePartCapabilityRules.TargetValidationError("DOY", provider))
                && isNull (SqlDatePartCapabilityRules.TargetValidationError("YEARDAY", provider))
@@ -615,6 +618,8 @@ type SqlCapabilityMatrix private () =
                     "HOUR, MINUTE, and SECOND are represented canonically. PostgreSQL, MySQL, SQL Server, SQLite, and Firebird have declared target lowering; Firebird uses native EXTRACT with a TIME cast to preserve clock values up to native fractional-second precision. Oracle remains target-gated until operand temporal-type semantics are proven.")
                 yield cap("temporal.date_part.iso_weekday","temporal",sharedIsoWeekdayDatePart,
                     "PostgreSQL ISODOW counts Monday=1 through Sunday=7. MySQL WEEKDAY is Monday=0 and lowers with +1; SQLite STRFTIME('%w') is Sunday=0 and lowers with integer modulo +1; Firebird WEEKDAY is Sunday=0 and lowers with MOD(WEEKDAY+6,7)+1 as SMALLINT. Non-PostgreSQL ISODOW source syntax is rejected; SQL Server/Oracle targets remain rejected.")
+                yield cap("temporal.date_part.sunday_zero_weekday","temporal",sharedSundayZeroWeekday,
+                    "PostgreSQL DOW and Firebird native WEEKDAY number Sunday=0 through Saturday=6. MySQL DAYOFWEEK is Sunday=1 and lowers with -1; SQLite STRFTIME('%w') is Sunday=0 but needs an INTEGER cast. MySQL/Oracle source EXTRACT(DOW ...) is invalid; unproven target providers remain rejected.")
                 yield cap("temporal.date_part.day_of_year","temporal",sharedYearDayDatePart,
                     "PostgreSQL DOY is one-based (1..366); Firebird YEARDAY is zero-based (0..365). Firebird/PostgreSQL cross-targets use bounded SMALLINT +1/-1, while MySQL DAYOFYEAR and SQLite integer-cast STRFTIME('%j') preserve the source meaning (subtracting one for YEARDAY). Other providers remain rejected.")
                 yield cap("temporal.date_part.postgres_extended","temporal",postgresNativeDateParts,
