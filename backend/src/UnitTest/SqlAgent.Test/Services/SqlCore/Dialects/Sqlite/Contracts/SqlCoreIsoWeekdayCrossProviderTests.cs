@@ -42,12 +42,12 @@ public sealed class SqlCoreIsoWeekdayCrossProviderTests
     [Theory]
     [InlineData(SqlAgentToolType.MySQL)]
     [InlineData(SqlAgentToolType.Sqlite)]
-    public void UnprovenIsoYear_IsStillTargetDenied(SqlAgentToolType target)
+    public void UnprovenEpoch_IsStillTargetDenied(SqlAgentToolType target)
     {
         var exception = Assert.Throws<SqlCompilationException>(() =>
-            Compile("EXTRACT(ISOYEAR FROM DATE '2021-01-03')",
+            Compile("EXTRACT(EPOCH FROM DATE '2021-01-03')",
                 SqlAgentToolType.Postgres, target));
-        Assert.Contains("temporal.date_part.isoyear", exception.Message,
+        Assert.Contains("temporal.date_part.epoch", exception.Message,
             StringComparison.OrdinalIgnoreCase);
     }
 }

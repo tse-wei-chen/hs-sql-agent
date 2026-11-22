@@ -48,15 +48,15 @@ public sealed class SqlCoreDayOfYearCrossProviderTests
     [Theory]
     [InlineData(SqlAgentToolType.MySQL)]
     [InlineData(SqlAgentToolType.Sqlite)]
-    public void UnprovenIsoYear_RemainsTargetDenied(SqlAgentToolType target)
+    public void UnprovenEpoch_RemainsTargetDenied(SqlAgentToolType target)
     {
         var error = Assert.Throws<SqlCompilationException>(() =>
             SqlCoreFacade.CompileQuery(
-                "SELECT EXTRACT(ISOYEAR FROM DATE '2024-02-29')",
+                "SELECT EXTRACT(EPOCH FROM DATE '2024-02-29')",
                 SqlAgentToolType.Postgres, target,
                 new SqlPlanValidationContext("portable-doy-isoyear-negative"),
                 new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
-        Assert.Contains("temporal.date_part.isoyear", error.Message,
+        Assert.Contains("temporal.date_part.epoch", error.Message,
             StringComparison.OrdinalIgnoreCase);
     }
 }
