@@ -61,6 +61,8 @@ public sealed class CoreDatePartCapabilityContractTests
     [Theory]
     [InlineData(SqlAgentToolType.Postgres, SqlCapabilityStatus.Supported)]
     [InlineData(SqlAgentToolType.Firebird, SqlCapabilityStatus.Supported)]
+    [InlineData(SqlAgentToolType.MySQL, SqlCapabilityStatus.Supported)]
+    [InlineData(SqlAgentToolType.Sqlite, SqlCapabilityStatus.Supported)]
     [InlineData(SqlAgentToolType.Oracle, SqlCapabilityStatus.Rejected)]
     public void IsoWeekdayFacade_OnlyAdvertisesProvenTargets(
         SqlAgentToolType provider, SqlCapabilityStatus expected)

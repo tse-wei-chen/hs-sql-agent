@@ -25,6 +25,13 @@ translation applies `MOD(WEEKDAY + 6, 7) + 1` with an explicit `SMALLINT`
 result. Source Firebird `ISODOW` is still invalid, and Firebird native
 `WEEKDAY` remains Sunday-zero. One Firebird 5 physical readback covers
 Sunday/Monday/Saturday values and the native return type.
+PostgreSQL `ISODOW` also targets MySQL (`WEEKDAY(date) + 1`)
+and SQLite (`STRFTIME('%w', date)` converted through integer modulo).
+Their native numbering is not ISO and the compiler retains the
+source meaning; non-PostgreSQL `ISODOW` source spelling is rejected.
+The MySQL 8.4 and in-memory SQLite physical differential paths
+verify Sunday=7, Monday=1, Saturday=6. SQL Server and Oracle
+remain target-gated for ISO weekday.
 Firebird target also supports native `HOUR`, `MINUTE`, and `SECOND` using
 a `TIME` cast, without truncating clock values to `DATE`. Fractional seconds
 follow Firebird's native `TIME` precision (up to four decimal places);

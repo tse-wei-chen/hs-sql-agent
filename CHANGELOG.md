@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Development changes after v3.1.0
 
+### PostgreSQL ISODOW to MySQL and SQLite target semantics (#665)
+
+- Extend typed PostgreSQL `EXTRACT(ISODOW)` to MySQL using native Monday-zero `WEEKDAY(date)+1`, and SQLite using Sunday-zero `STRFTIME('%w')` plus integer modulo to preserve Monday=1..Sunday=7; keep SQL Server/Oracle target fail-closed.
+- Reject non-PostgreSQL `ISODOW` source spelling at parse rather than treating target capabilities as source grammar. Public capability matrix is derived from the same F# target rules. One MySQL 8.4 and one in-memory SQLite physical readback verify Sunday/Monday/Saturday; no new AST, CLR API, Host execution, MCP tool or release.
+
 ### Portable PostgreSQL ISODOW → Firebird weekday semantics (#664)
 
 - Lower PostgreSQL Monday-one `ISODOW` to Firebird Sunday-zero `WEEKDAY` with bounded `MOD(WEEKDAY+6,7)+1` and explicit `SMALLINT` metadata. Native `DOW` / `WEEKDAY` remain Sunday-zero; Firebird source `ISODOW` and unproven `ISOYEAR` still fail-closed.

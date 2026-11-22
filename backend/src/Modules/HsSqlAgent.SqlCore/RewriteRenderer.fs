@@ -1240,6 +1240,9 @@ module internal RewriteRenderer =
                     match ctx.Provider with
                     | SqlServer ->
                         wrap ("DATEPART(" + part + ", ") ")" value
+                    | MySql when part = "ISODOW" ->
+                        // WEEKDAY is Monday=0..Sunday=6; ISO is 1..7.
+                        wrap "(WEEKDAY(" ") + 1)" value
                     | MySql ->
                         wrap (part + "(") ")" value
                     | PostgreSql when part = "YEARDAY" ->
@@ -1274,6 +1277,10 @@ module internal RewriteRenderer =
                             | "HOUR" | "MINUTE" | "SECOND" -> "TIME"
                             | _ -> "DATE"
                         wrap ("EXTRACT(" + nativePart + " FROM CAST(") (" AS " + castType + "))") value
+                    | SQLite when part = "ISODOW" ->
+                        // STRFTIME('%w') is Sunday=0..Saturday=6 and text.
+                        // Preserve Monday=1..Sunday=7 with integer metadata.
+                        wrap "CAST(((CAST(STRFTIME('%w', " ") AS INTEGER) + 6) % 7) + 1 AS INTEGER)" value
                     | SQLite ->
                         let fmt =
                             match part with
