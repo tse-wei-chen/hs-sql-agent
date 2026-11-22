@@ -1243,6 +1243,12 @@ module internal RewriteRenderer =
                     | MySql when part = "ISODOW" ->
                         // WEEKDAY is Monday=0..Sunday=6; ISO is 1..7.
                         wrap "(WEEKDAY(" ") + 1)" value
+                    | MySql when part = "DOY" ->
+                        // MySQL's DAYOFYEAR is one-based, like PostgreSQL DOY.
+                        wrap "DAYOFYEAR(CAST(" " AS DATE))" value
+                    | MySql when part = "YEARDAY" ->
+                        // Firebird YEARDAY is zero-based, unlike DAYOFYEAR.
+                        wrap "(DAYOFYEAR(CAST(" " AS DATE)) - 1)" value
                     | MySql ->
                         wrap (part + "(") ")" value
                     | PostgreSql when part = "YEARDAY" ->
@@ -1281,6 +1287,12 @@ module internal RewriteRenderer =
                         // STRFTIME('%w') is Sunday=0..Saturday=6 and text.
                         // Preserve Monday=1..Sunday=7 with integer metadata.
                         wrap "CAST(((CAST(STRFTIME('%w', " ") AS INTEGER) + 6) % 7) + 1 AS INTEGER)" value
+                    | SQLite when part = "DOY" ->
+                        // STRFTIME('%j') returns text "001".."366", not an integer.
+                        wrap "CAST(STRFTIME('%j', " ") AS INTEGER)" value
+                    | SQLite when part = "YEARDAY" ->
+                        // Retain Firebird's zero-based 0..365 range.
+                        wrap "(CAST(STRFTIME('%j', " ") AS INTEGER) - 1)" value
                     | SQLite ->
                         let fmt =
                             match part with
