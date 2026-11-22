@@ -22,7 +22,10 @@ The Query `EXTRACT` model supports a proven PostgreSQL↔Firebird mapping for
 ISO-8601 `WEEK` and Sunday-zero `DOW` (Firebird spells it `WEEKDAY`).
 PostgreSQL `ISODOW` numbers Monday=1 through Sunday=7; the Firebird
 translation applies `MOD(WEEKDAY + 6, 7) + 1` with an explicit `SMALLINT`
-result. Source Firebird `ISODOW` is still invalid, and Firebird native
+result. MySQL target translates date-valued `ISODOW` through native
+`WEEKDAY(CAST(date AS DATE)) + 1`: MySQL counts Monday=0 through Sunday=6.
+MySQL source `EXTRACT(ISODOW ...)` remains invalid; this does not prove
+time-zone-sensitive or invalid-date coercion semantics. Source Firebird `ISODOW` is still invalid, and Firebird native
 `WEEKDAY` remains Sunday-zero. One Firebird 5 physical readback covers
 Sunday/Monday/Saturday values and the native return type.
 Firebird target also supports native `HOUR`, `MINUTE`, and `SECOND` using

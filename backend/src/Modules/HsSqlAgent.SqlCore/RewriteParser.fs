@@ -1579,6 +1579,8 @@ module internal RewriteParser =
             | SourceDialect.Firebird, "YEARDAY" -> "YEARDAY"
             | _, "YEARDAY" ->
                 fail fieldToken "YEARDAY is Firebird-only source syntax; use DOY in PostgreSQL."
+            | SourceDialect.MySql, "ISODOW" ->
+                fail fieldToken "ISODOW is PostgreSQL-only EXTRACT source syntax; MySQL uses native WEEKDAY(date)."
             // Do not confuse PostgreSQL-specific source spellings (ISODOW,
             // ISOYEAR, DOY, EPOCH, ...) with Firebird-native EXTRACT syntax.
             // Only native fields represented by the existing Core model enter

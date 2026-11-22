@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Development changes after v3.1.0
 
+### PostgreSQL ISODOW → MySQL native weekday semantics (#666)
+
+- Compile PostgreSQL-source `EXTRACT(ISODOW FROM date)` to MySQL `WEEKDAY(CAST(date AS DATE)) + 1` (Monday=1 through Sunday=7); preserve NULL, and reject MySQL source `EXTRACT(ISODOW ...)` rather than borrowing PostgreSQL grammar.
+- Add minimal public CompileQuery/ParseQuery/capability contracts and one real MySQL 8.4 weekday-boundary parity test using the existing SQL service job. Unproven ISOYEAR and other target capabilities remain fail-closed. No new AST/parser, public API, Host SQL executor or MCP tool.
+
 ### Portable PostgreSQL ISODOW → Firebird weekday semantics (#664)
 
 - Lower PostgreSQL Monday-one `ISODOW` to Firebird Sunday-zero `WEEKDAY` with bounded `MOD(WEEKDAY+6,7)+1` and explicit `SMALLINT` metadata. Native `DOW` / `WEEKDAY` remain Sunday-zero; Firebird source `ISODOW` and unproven `ISOYEAR` still fail-closed.

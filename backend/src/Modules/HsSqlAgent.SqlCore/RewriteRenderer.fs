@@ -1240,6 +1240,11 @@ module internal RewriteRenderer =
                     match ctx.Provider with
                     | SqlServer ->
                         wrap ("DATEPART(" + part + ", ") ")" value
+                    | MySql when part = "ISODOW" ->
+                        // PostgreSQL ISO weekday starts at Monday=1; native
+                        // MySQL WEEKDAY starts at Monday=0. The one-based
+                        // offset preserves NULL and the 1..7 range.
+                        wrap "(WEEKDAY(CAST(" " AS DATE)) + 1)" value
                     | MySql ->
                         wrap (part + "(") ")" value
                     | PostgreSql when part = "YEARDAY" ->

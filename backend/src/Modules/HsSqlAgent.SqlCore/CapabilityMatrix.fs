@@ -614,7 +614,7 @@ type SqlCapabilityMatrix private () =
                 yield cap("temporal.date_part.clock","temporal",sharedClockDateParts,
                     "HOUR, MINUTE, and SECOND are represented canonically. PostgreSQL, MySQL, SQL Server, SQLite, and Firebird have declared target lowering; Firebird uses native EXTRACT with a TIME cast to preserve clock values up to native fractional-second precision. Oracle remains target-gated until operand temporal-type semantics are proven.")
                 yield cap("temporal.date_part.iso_weekday","temporal",sharedIsoWeekdayDatePart,
-                    "PostgreSQL ISODOW counts Monday=1 through Sunday=7. Firebird WEEKDAY counts Sunday=0; target lowering uses MOD(WEEKDAY+6,7)+1 with SMALLINT metadata. Firebird source ISODOW remains invalid; other target providers are rejected.")
+                    "PostgreSQL ISODOW counts Monday=1 through Sunday=7. Firebird WEEKDAY counts Sunday=0 and uses MOD(WEEKDAY+6,7)+1 with SMALLINT metadata; MySQL WEEKDAY counts Monday=0 and uses WEEKDAY(date)+1. Neither Firebird nor MySQL admits PostgreSQL-only ISODOW source syntax; unproven target providers remain rejected.")
                 yield cap("temporal.date_part.day_of_year","temporal",sharedYearDayDatePart,
                     "PostgreSQL DOY is one-based; Firebird YEARDAY is zero-based. The distinct source spellings lower with a proven +1/-1 offset and bounded SMALLINT result. Other providers remain rejected.")
                 yield cap("temporal.date_part.postgres_extended","temporal",postgresNativeDateParts,
