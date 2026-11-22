@@ -1404,6 +1404,11 @@ module internal SqlDatePartCapabilityRules =
             // one-based in PostgreSQL, unlike native Firebird YEARDAY.
             || (provider = SqlAgentToolType.Firebird
                 && Set.contains part (set [ "WEEK"; "DOW"; "ISODOW"; "DOY"; "YEARDAY" ]))
+            // MySQL WEEKDAY is Monday=0; SQLite STRFTIME('%w') is Sunday=0.
+            // Both need a defined integer conversion to ISO Monday=1..Sunday=7.
+            || (part = "ISODOW"
+                && (provider = SqlAgentToolType.MySQL
+                    || provider = SqlAgentToolType.Sqlite))
         if supported then null
         elif not (IsRepresentedPart part) then
             "Date part " + part + " is outside the declared Core date-part family. SQL capability 'temporal.date_part."
