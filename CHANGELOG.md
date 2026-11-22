@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Development changes after v3.1.0
 
+### PostgreSQL ISOYEAR week-year on MySQL / SQLite (#669)
+
+- Extend closed F# EXTRACT ISOYEAR target semantics on MySQL via YEARWEEK(date, 3) DIV 100 and SQLite via the Gregorian year of the same ISO week's Thursday; preserve cross-year cases, NULL and integer results without requiring SQLite 3.46+.
+- Reject non-PostgreSQL EXTRACT(ISOYEAR ...) at Parse. Derive a dedicated public ISO-year capability status from the same compiler rules, with Firebird/SQL Server/Oracle fail-closed. Add public contracts and real MySQL 8.4 plus in-memory SQLite date-boundary readbacks; no new AST, SQL tool, Host policy, public API or package release.
+
 ### Sunday-zero DOW on MySQL and SQLite (#668)
 
 - Add typed PostgreSQL DOW / native Firebird WEEKDAY target semantics for MySQL (DAYOFWEEK(date) - 1) and SQLite (integer-cast STRFTIME('%w')), preserving Sunday=0 through Saturday=6 and NULL. Keep target capability matrix aligned to actual compiler rules.

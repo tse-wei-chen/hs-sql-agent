@@ -318,6 +318,9 @@ type SqlCapabilityMatrix private () =
         let sharedSundayZeroWeekday =
             if isNull (SqlDatePartCapabilityRules.TargetValidationError("DOW", provider))
             then supported else rejected
+        let sharedIsoYearDatePart =
+            if isNull (SqlDatePartCapabilityRules.TargetValidationError("ISOYEAR", provider))
+            then supported else rejected
         let sharedYearDayDatePart =
             if isNull (SqlDatePartCapabilityRules.TargetValidationError("DOY", provider))
                && isNull (SqlDatePartCapabilityRules.TargetValidationError("YEARDAY", provider))
@@ -620,10 +623,12 @@ type SqlCapabilityMatrix private () =
                     "PostgreSQL ISODOW counts Monday=1 through Sunday=7. MySQL WEEKDAY is Monday=0 and lowers with +1; SQLite STRFTIME('%w') is Sunday=0 and lowers with integer modulo +1; Firebird WEEKDAY is Sunday=0 and lowers with MOD(WEEKDAY+6,7)+1 as SMALLINT. Non-PostgreSQL ISODOW source syntax is rejected; SQL Server/Oracle targets remain rejected.")
                 yield cap("temporal.date_part.sunday_zero_weekday","temporal",sharedSundayZeroWeekday,
                     "PostgreSQL DOW and Firebird native WEEKDAY number Sunday=0 through Saturday=6. MySQL DAYOFWEEK is Sunday=1 and lowers with -1; SQLite STRFTIME('%w') is Sunday=0 but needs an INTEGER cast. MySQL/Oracle source EXTRACT(DOW ...) is invalid; unproven target providers remain rejected.")
+                yield cap("temporal.date_part.iso_year","temporal",sharedIsoYearDatePart,
+                    "PostgreSQL ISOYEAR is the ISO-8601 week-year, which can differ from calendar YEAR near New Year. MySQL uses YEARWEEK(date,3) DIV 100; SQLite derives the year from the week's Thursday with DATE(...,'-3 days','weekday 4') and casts STRFTIME('%Y') to integer without requiring SQLite 3.46. Non-PostgreSQL ISOYEAR source syntax and unproven Firebird, SQL Server and Oracle targets remain rejected.")
                 yield cap("temporal.date_part.day_of_year","temporal",sharedYearDayDatePart,
                     "PostgreSQL DOY is one-based (1..366); Firebird YEARDAY is zero-based (0..365). Firebird/PostgreSQL cross-targets use bounded SMALLINT +1/-1, while MySQL DAYOFYEAR and SQLite integer-cast STRFTIME('%j') preserve the source meaning (subtracting one for YEARDAY). Other providers remain rejected.")
                 yield cap("temporal.date_part.postgres_extended","temporal",postgresNativeDateParts,
-                    "PostgreSQL-native EXTRACT includes DOW, DOY, ISODOW, ISOYEAR, WEEK, EPOCH, CENTURY, DECADE, MILLENNIUM, JULIAN, MILLISECONDS, MICROSECONDS, TIMEZONE, TIMEZONE_HOUR, and TIMEZONE_MINUTE. Firebird has separately proven WEEK, DOW, ISODOW and DOY mappings; MySQL/SQLite have separate ISODOW target mappings; this aggregate stays rejected outside PostgreSQL because other extended fields have no proven lowering.")
+                    "PostgreSQL-native EXTRACT includes DOW, DOY, ISODOW, ISOYEAR, WEEK, EPOCH, CENTURY, DECADE, MILLENNIUM, JULIAN, MILLISECONDS, MICROSECONDS, TIMEZONE, TIMEZONE_HOUR, and TIMEZONE_MINUTE. Firebird has separately proven WEEK, DOW, ISODOW and DOY mappings; MySQL/SQLite have separate ISODOW and ISOYEAR target mappings; this aggregate stays rejected outside PostgreSQL because other extended fields have no proven lowering.")
                 yield cap("temporal.date_arithmetic","temporal",translated,
                     "Date-add units DAY, WEEK, MONTH, QUARTER, YEAR, HOUR, MINUTE, and SECOND are typed in the closed F# AST. PostgreSQL, MySQL, SQL Server, and Firebird have declared lowering for all eight units. Oracle and SQLite currently admit DAY, WEEK, HOUR, MINUTE, and SECOND only; MONTH, QUARTER, and YEAR remain fail-closed because Oracle YEAR-TO-MONTH interval arithmetic can reject invalid rollover dates while SQLite defaults to ceiling rollover and its semantics-preserving floor modifier requires a separately proven SQLite 3.46+ target profile. Raw source grammar includes SQL Server/Firebird DATEADD, MySQL TIMESTAMPADD, SQL Server DATEPART, PostgreSQL DATE_PART, and the existing DATEDIFF families. Cross-provider non-DAY date difference remains fail-closed because provider boundary-counting semantics are not proven equivalent.")
                 yield cap("temporal.date_only","temporal",(if provider=SqlAgentToolType.MySQL then supported else rejected),

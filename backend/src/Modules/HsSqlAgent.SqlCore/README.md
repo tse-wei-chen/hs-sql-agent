@@ -57,7 +57,15 @@ For Firebird-source YEARDAY, each target subtracts 1 to retain 0..365.
 PostgreSQL-only `DOY` source spelling is rejected for other dialects.
 Leap-year boundaries are verified against Firebird 5, MySQL 8.4 and
 in-memory SQLite; no cross-provider timezone coercion is claimed.
-Other date-part mappings, including `ISOYEAR`, remain provider-specific and fail-closed.
+PostgreSQL `EXTRACT(ISOYEAR)` returns the ISO week-year, not necessarily the
+calendar year: 2018-12-31 belongs to ISO year 2019, while 2021-01-01
+belongs to ISO year 2020. MySQL 8.4 targets use
+`YEARWEEK(CAST(date AS DATE), 3) DIV 100`; SQLite targets compute the year
+of the week's Thursday with `DATE(date, '-3 days', 'weekday 4')` and
+`STRFTIME('%Y')` converted to `INTEGER`. This avoids requiring SQLite
+3.46+ `%G` support. Only PostgreSQL `ISOYEAR` source syntax is admitted;
+Firebird, SQL Server and Oracle ISOYEAR targets remain fail-closed.
+Other unproven date-part mappings remain provider-specific and fail-closed.
 
 Query compilation also checks that normalization/validation has not introduced
 additional named data-source references after binding. This **does not** expand
