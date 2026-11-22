@@ -30,11 +30,13 @@ public sealed class SqlCorePortableIsoWeekdayLiveTests
         command.CommandText = compiled.Sql;
         foreach (var parameter in compiled.Parameters)
             command.Parameters.AddWithValue(parameter.Name, parameter.Value ?? DBNull.Value);
-        await using var reader = await command.ExecuteReaderAsync(token);
-        Assert.True(await reader.ReadAsync(token));
-        Assert.Equal(new[] { 7, 1, 6 }, Enumerable.Range(0, 3)
-            .Select(i => Convert.ToInt32(reader.GetValue(i))).ToArray());
-        Assert.False(await reader.ReadAsync(token));
+        await using (var reader = await command.ExecuteReaderAsync(token))
+        {
+            Assert.True(await reader.ReadAsync(token));
+            Assert.Equal(new[] { 7, 1, 6 }, Enumerable.Range(0, 3)
+                .Select(i => Convert.ToInt32(reader.GetValue(i))).ToArray());
+            Assert.False(await reader.ReadAsync(token));
+        }
 
         // Independent native SQLite source numbering uses Sunday=0.
         await using var native = db.CreateCommand();
@@ -69,11 +71,13 @@ public sealed class SqlCorePortableIsoWeekdayLiveTests
         await using var command = new MySqlCommand(compiled.Sql, db);
         foreach (var parameter in compiled.Parameters)
             command.Parameters.AddWithValue(parameter.Name, parameter.Value ?? DBNull.Value);
-        await using var reader = await command.ExecuteReaderAsync(token);
-        Assert.True(await reader.ReadAsync(token));
-        Assert.Equal(new[] { 7, 1, 6 }, Enumerable.Range(0, 3)
-            .Select(i => Convert.ToInt32(reader.GetValue(i))).ToArray());
-        Assert.False(await reader.ReadAsync(token));
+        await using (var reader = await command.ExecuteReaderAsync(token))
+        {
+            Assert.True(await reader.ReadAsync(token));
+            Assert.Equal(new[] { 7, 1, 6 }, Enumerable.Range(0, 3)
+                .Select(i => Convert.ToInt32(reader.GetValue(i))).ToArray());
+            Assert.False(await reader.ReadAsync(token));
+        }
 
         await using var native = new MySqlCommand(
             "SELECT WEEKDAY('2021-01-03'), WEEKDAY('2021-01-04'), WEEKDAY('2021-01-09')", db);
