@@ -1397,6 +1397,10 @@ module internal SqlDatePartCapabilityRules =
             || (part = "QUARTER" && Set.contains provider quarterTargets)
             || (Set.contains part (set [ "HOUR"; "MINUTE"; "SECOND" ])
                 && Set.contains provider clockPartTargets)
+            // Both source date-part meanings can be expressed through native
+            // one-based day-of-year functions. YEARDAY subtracts exactly one.
+            || (Set.contains part (set [ "DOY"; "YEARDAY" ])
+                && (provider = SqlAgentToolType.MySQL || provider = SqlAgentToolType.Sqlite))
             || (provider = SqlAgentToolType.Postgres
                 && (Set.contains part postgresNativeParts || part = "YEARDAY"))
             // WEEK/DOW share Sunday-zero numbering; ISODOW is Monday-one,

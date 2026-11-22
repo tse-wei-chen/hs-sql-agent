@@ -46,7 +46,12 @@ PostgreSQL `EXTRACT(DOY)` (January 1 = 1) and Firebird
 The compiler lowers PostgreSQL DOY to Firebird `YEARDAY + 1`
 and Firebird YEARDAY to PostgreSQL `DOY - 1` with a SMALLINT
 result; wrong dialect source spellings fail during parsing.
-Leap-year boundary parity is verified against a real Firebird 5 database.
+MySQL target now uses native `DAYOFYEAR(CAST(value AS DATE))`;
+SQLite uses `CAST(STRFTIME('%j', value) AS INTEGER)`.
+For Firebird-source YEARDAY, each target subtracts 1 to retain 0..365.
+PostgreSQL-only `DOY` source spelling is rejected for other dialects.
+Leap-year boundaries are verified against Firebird 5, MySQL 8.4 and
+in-memory SQLite; no cross-provider timezone coercion is claimed.
 Other date-part mappings, including `ISOYEAR`, remain provider-specific and fail-closed.
 
 Query compilation also checks that normalization/validation has not introduced

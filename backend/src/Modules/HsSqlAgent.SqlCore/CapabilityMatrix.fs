@@ -616,7 +616,7 @@ type SqlCapabilityMatrix private () =
                 yield cap("temporal.date_part.iso_weekday","temporal",sharedIsoWeekdayDatePart,
                     "PostgreSQL ISODOW counts Monday=1 through Sunday=7. MySQL WEEKDAY is Monday=0 and lowers with +1; SQLite STRFTIME('%w') is Sunday=0 and lowers with integer modulo +1; Firebird WEEKDAY is Sunday=0 and lowers with MOD(WEEKDAY+6,7)+1 as SMALLINT. Non-PostgreSQL ISODOW source syntax is rejected; SQL Server/Oracle targets remain rejected.")
                 yield cap("temporal.date_part.day_of_year","temporal",sharedYearDayDatePart,
-                    "PostgreSQL DOY is one-based; Firebird YEARDAY is zero-based. The distinct source spellings lower with a proven +1/-1 offset and bounded SMALLINT result. Other providers remain rejected.")
+                    "PostgreSQL DOY is one-based (1..366); Firebird YEARDAY is zero-based (0..365). Firebird/PostgreSQL cross-targets use bounded SMALLINT +1/-1, while MySQL DAYOFYEAR and SQLite integer-cast STRFTIME('%j') preserve the source meaning (subtracting one for YEARDAY). Other providers remain rejected.")
                 yield cap("temporal.date_part.postgres_extended","temporal",postgresNativeDateParts,
                     "PostgreSQL-native EXTRACT includes DOW, DOY, ISODOW, ISOYEAR, WEEK, EPOCH, CENTURY, DECADE, MILLENNIUM, JULIAN, MILLISECONDS, MICROSECONDS, TIMEZONE, TIMEZONE_HOUR, and TIMEZONE_MINUTE. Firebird has separately proven WEEK, DOW, ISODOW and DOY mappings; MySQL/SQLite have separate ISODOW target mappings; this aggregate stays rejected outside PostgreSQL because other extended fields have no proven lowering.")
                 yield cap("temporal.date_arithmetic","temporal",translated,

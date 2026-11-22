@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Development changes after v3.1.0
 
+### PostgreSQL DOY and Firebird YEARDAY on MySQL / SQLite (#667)
+
+- Add closed F# target lowering for both one-based PostgreSQL DOY and zero-based Firebird YEARDAY: MySQL native DAYOFYEAR and SQLite integer-cast STRFTIME('%j'), with -1 only when preserving YEARDAY. The public date-part matrix derives status from both semantic capabilities; Oracle and ISOYEAR remain denied.
+- Reject non-PostgreSQL source EXTRACT(DOY ...) at parse. Add public target/source/matrix contract tests and one actual MySQL 8.4 plus one in-memory SQLite differential for Jan 1, leap day, Dec 31, and NULL. No new SQL tool, parser framework, AST, public signature or Host execution; develop-only until released.
+
 ### PostgreSQL ISODOW to MySQL and SQLite target semantics (#665)
 
 - Extend typed PostgreSQL `EXTRACT(ISODOW)` to MySQL using native Monday-zero `WEEKDAY(date)+1`, and SQLite using Sunday-zero `STRFTIME('%w')` plus integer modulo to preserve Monday=1..Sunday=7; keep SQL Server/Oracle target fail-closed.
