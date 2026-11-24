@@ -18,6 +18,14 @@ Support depends on statement shape, provider, version, compilation policy and pr
 
 The six dialects do not have identical support. Cross-provider compilation requires
 proven transformations. Parsing a statement does not imply compilation support.
+Raw `EXTRACT(field FROM value)` source grammar is dialect-gated: PostgreSQL
+accepts its modeled native fields; Firebird retains native `WEEKDAY`/`YEARDAY`;
+MySQL admits proven simple calendar/clock fields but rejects session-dependent
+`EXTRACT(WEEK ...)` until `default_week_format` is proven; Oracle admits its
+bounded native calendar/clock/timezone fields. SQL Server and SQLite reject
+non-native source `EXTRACT` at Parse (previously these could reach
+compile-stage source validation). Target rendering capabilities are separate,
+and do not make unsupported source spellings valid.
 The Query `EXTRACT` model supports a proven PostgreSQL↔Firebird mapping for
 ISO-8601 `WEEK` and Sunday-zero `DOW` (Firebird spells it `WEEKDAY`).
 PostgreSQL `ISODOW` numbers Monday=1 through Sunday=7; the Firebird

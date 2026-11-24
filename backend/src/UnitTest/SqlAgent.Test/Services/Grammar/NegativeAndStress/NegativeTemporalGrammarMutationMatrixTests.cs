@@ -55,20 +55,16 @@ public sealed class NegativeTemporalGrammarMutationMatrixTests
     [Theory]
     [InlineData(SqlAgentToolType.Sqlite)]
     [InlineData(SqlAgentToolType.MsSqlServer)]
-    public void Extract_WrongSourceDialect_FailsClosedAtSourceValidation(
-        SqlAgentToolType sourceDialect)
+    public void Extract_WrongSourceDialect_FailsClosedAtParse(SqlAgentToolType sourceDialect)
     {
-        var ex = Assert.Throws<SqlCompilationException>(() =>
-            CoreSqlCompiler.CreateDefault().Compile(
-                CoreSqlTextParser.ParseQuery(
-                    "SELECT EXTRACT(HOUR FROM created_at) FROM events",
-                    sourceDialect),
-                SqlAgentToolType.Postgres,
-                new SqlPlanValidationContext("negative-temporal-source-v1"),
-                new SqlExecutionPlanPolicy()));
+        // Native source grammar now rejects before a target compiler is selected.
+        var ex = Assert.Throws<SqlParseException>(() =>
+            CoreSqlTextParser.ParseQuery(
+                "SELECT EXTRACT(HOUR FROM created_at) FROM events",
+                sourceDialect));
 
         Assert.Contains("EXTRACT", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("source dialect", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("source syntax", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
