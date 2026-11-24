@@ -23,7 +23,8 @@ accepts its modeled native fields; Firebird retains native `WEEKDAY`/`YEARDAY`;
 MySQL admits proven simple calendar/clock fields but rejects session-dependent
 `EXTRACT(WEEK ...)` until `default_week_format` is proven; Oracle admits its
 bounded native calendar/clock/timezone fields. SQL Server and SQLite reject
-non-native source `EXTRACT` at Parse. Target rendering capabilities are separate,
+non-native source `EXTRACT` at Parse (previously these could reach
+compile-stage source validation). Target rendering capabilities are separate,
 and do not make unsupported source spellings valid.
 The Query `EXTRACT` model supports a proven PostgreSQL↔Firebird mapping for
 ISO-8601 `WEEK` and Sunday-zero `DOW` (Firebird spells it `WEEKDAY`).
