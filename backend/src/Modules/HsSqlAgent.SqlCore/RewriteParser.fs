@@ -1600,7 +1600,29 @@ module internal RewriteParser =
             | SourceDialect.Firebird, _ ->
                 fail fieldToken ("EXTRACT date part '" + sourceField
                                  + "' is not supported by the Firebird Core source grammar.")
-            | _ -> sourceField
+            // Native MySQL WEEK numbering depends on default_week_format.
+            // Without source-session proof it cannot become canonical ISO WEEK.
+            | SourceDialect.MySql, "WEEK" ->
+                fail fieldToken "MySQL EXTRACT(WEEK ...) depends on default_week_format; canonical ISO WEEK is not proven for this source session."
+            | SourceDialect.MySql,
+                ("YEAR" | "MONTH" | "DAY" | "QUARTER" | "HOUR" | "MINUTE" | "SECOND") ->
+                sourceField
+            | SourceDialect.MySql, _ ->
+                fail fieldToken ("EXTRACT date part '" + sourceField
+                                 + "' is not supported by the MySQL Core source grammar.")
+            // Oracle supports a bounded native EXTRACT field family.
+            | SourceDialect.Oracle,
+                ("YEAR" | "MONTH" | "DAY" | "HOUR" | "MINUTE" | "SECOND"
+                | "TIMEZONE_HOUR" | "TIMEZONE_MINUTE") ->
+                sourceField
+            | SourceDialect.Oracle, _ ->
+                fail fieldToken ("EXTRACT date part '" + sourceField
+                                 + "' is not supported by the Oracle Core source grammar.")
+            // SQL Server uses DATEPART; SQLite uses STRFTIME.
+            | SourceDialect.SqlServer, _
+            | SourceDialect.SQLite, _ ->
+                fail fieldToken "EXTRACT(field FROM value) is not native SQL Server or SQLite source syntax."
+            | SourceDialect.PostgreSql, _ -> sourceField
         if not (SqlDatePartCapabilityRules.IsRepresentedPart(fieldText)) then
             fail cursor.Current (
                 "EXTRACT date part '" + fieldText
