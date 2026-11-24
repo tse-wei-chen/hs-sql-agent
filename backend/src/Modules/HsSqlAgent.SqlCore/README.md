@@ -18,15 +18,23 @@ Support depends on statement shape, provider, version, compilation policy and pr
 
 The six dialects do not have identical support. Cross-provider compilation requires
 proven transformations. Parsing a statement does not imply compilation support.
+Raw `EXTRACT(field FROM value)` source grammar is dialect-gated: PostgreSQL
+accepts its modeled native fields; Firebird retains native `WEEKDAY`/`YEARDAY`;
+MySQL admits proven simple calendar/clock fields but rejects session-dependent
+`EXTRACT(WEEK ...)` until `default_week_format` is proven; Oracle admits its
+bounded native calendar/clock/timezone fields. SQL Server and SQLite reject
+non-native source `EXTRACT` at Parse (previously these could reach
+compile-stage source validation). Target rendering capabilities are separate,
+and do not make unsupported source spellings valid.
 The Query `EXTRACT` model supports a proven PostgreSQL↔Firebird mapping for
 ISO-8601 `WEEK` and Sunday-zero `DOW` (Firebird spells it `WEEKDAY`).
-The ISO `WEEK` source semantic is also supported by MySQL and SQLite
-targets: MySQL uses explicit `WEEK(date, 3)` rather than the session-default
-week mode; SQLite derives the integer week 1–53 from the day-of-year of the
-week's Thursday, which does not require SQLite 3.46's `%V` format.
-Only PostgreSQL/Firebird `EXTRACT(WEEK ...)` source grammar is admitted;
-SQL Server/Oracle remain target-gated. Real MySQL 8.4 and in-memory
-SQLite tests check ISO year boundaries, including week 53 and NULL.
+The same ISO `WEEK` source semantic is now supported by MySQL and SQLite
+targets: MySQL uses explicit `WEEK(date, 3)`, not the session-default week
+mode; SQLite derives integer ISO week 1–53 from the ordinal day of the week's
+Thursday, without requiring SQLite 3.46 `%V` support. Existing #670
+source-grammar fences ensure only PostgreSQL/Firebird `EXTRACT(WEEK ...)`
+are admitted; SQL Server/Oracle targets remain denied. Real MySQL 8.4
+and in-memory SQLite tests compare cross-year week 1/53 and NULL.
 PostgreSQL `ISODOW` numbers Monday=1 through Sunday=7; the Firebird
 translation applies `MOD(WEEKDAY + 6, 7) + 1` with an explicit `SMALLINT`
 result. Source Firebird `ISODOW` is still invalid, and Firebird native

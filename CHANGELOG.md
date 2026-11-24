@@ -7,7 +7,12 @@ All notable changes to this project will be documented in this file.
 ### ISO-8601 WEEK target parity for MySQL and SQLite (#671)
 
 - Admit PostgreSQL/Firebird ISO `EXTRACT(WEEK)` on MySQL using explicit `WEEK(CAST(date AS DATE),3)` (never session-default format) and SQLite using the ISO week's Thursday ordinal day with integer division/cast, retaining week 1–53 even on SQLite before 3.46 `%V`.
-- Add a public `temporal.date_part.iso_week` capability entry derived from the existing F# target rules; deny non-ISO MySQL/SQLite/SQL Server/Oracle EXTRACT(WEEK) source at Parsing and reject unproven targets. Real MySQL 8.4 and in-memory SQLite boundary/NULL readback; no new parser, AST, host runtime, MCP tool, public signature or release.
+- Add a public `temporal.date_part.iso_week` capability entry derived from existing F# target rules. Reuse the already-merged #670 non-native source Parse fence, keeping SQL Server/Oracle targets rejected. Real MySQL 8.4 and in-memory SQLite boundary/NULL readback; no new parser, AST, Host runtime, MCP tool, public signature or release.
+
+### EXTRACT source grammar and session-dependent WEEK safety (#670)
+
+- Reject non-native EXTRACT source grammar for SQL Server and SQLite at Parse, plus borrowed PostgreSQL extended date parts on MySQL and Oracle; preserve native MySQL YEAR/MONTH/DAY/QUARTER/HOUR/MINUTE/SECOND and Oracle calendar/clock/timezone field syntax alongside existing PostgreSQL/Firebird source mappings.
+- Fail closed on MySQL EXTRACT(WEEK ...) until default_week_format has a proven session contract: the canonical WEEK model is ISO-based and cannot silently inherit MySQL's session-dependent week numbering. Public ParseQuery RED/GREEN cases cover wrong dialects, ambiguous WEEK, wrong fields and valid native source controls. The prior wrong-source temporal negative matrix is retained, with its expected rejection stage updated from Compile/SourceValidation to Parse. No target renderer, AST, CLR API, Host execution, permissions, or SQL tools changed.
 
 ### PostgreSQL ISOYEAR week-year on MySQL / SQLite (#669)
 
