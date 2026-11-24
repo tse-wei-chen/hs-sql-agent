@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Development changes after v3.1.0
 
+### ISO-8601 WEEK target parity for MySQL and SQLite (#671)
+
+- Admit PostgreSQL/Firebird ISO `EXTRACT(WEEK)` on MySQL using explicit `WEEK(CAST(date AS DATE),3)` (never session-default format) and SQLite using the ISO week's Thursday ordinal day with integer division/cast, retaining week 1–53 even on SQLite before 3.46 `%V`.
+- Add a public `temporal.date_part.iso_week` capability entry derived from the existing F# target rules; deny non-ISO MySQL/SQLite/SQL Server/Oracle EXTRACT(WEEK) source at Parsing and reject unproven targets. Real MySQL 8.4 and in-memory SQLite boundary/NULL readback; no new parser, AST, host runtime, MCP tool, public signature or release.
+
 ### PostgreSQL ISOYEAR week-year on MySQL / SQLite (#669)
 
 - Extend closed F# EXTRACT ISOYEAR target semantics on MySQL via YEARWEEK(date, 3) DIV 100 and SQLite via the Gregorian year of the same ISO week's Thursday; preserve cross-year cases, NULL and integer results without requiring SQLite 3.46+.

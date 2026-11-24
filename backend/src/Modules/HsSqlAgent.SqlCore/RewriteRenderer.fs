@@ -1246,6 +1246,10 @@ module internal RewriteRenderer =
                     | MySql when part = "DOW" ->
                         // DAYOFWEEK is Sunday=1..Saturday=7, DOW is 0..6.
                         wrap "(DAYOFWEEK(CAST(" " AS DATE)) - 1)" value
+                    | MySql when part = "WEEK" ->
+                        // MySQL session default_week_format is not ISO.
+                        // Mode 3 is Monday-first, week 1 with >=4 days.
+                        wrap "WEEK(CAST(" " AS DATE), 3)" value
                     | MySql when part = "ISOYEAR" ->
                         // Mode 3 is ISO Monday-first, week 1 has >=4 days.
                         // YEARWEEK contains the week-year as its leading digits.
@@ -1297,6 +1301,11 @@ module internal RewriteRenderer =
                     | SQLite when part = "DOW" ->
                         // Sunday-zero numbering is already native; cast text to integer.
                         wrap "CAST(STRFTIME('%w', " ") AS INTEGER)" value
+                    | SQLite when part = "WEEK" ->
+                        // The ISO week belongs to the week's Thursday.
+                        // Its 1-based ordinal maps to week 1..53 by integer division.
+                        // Compatible with SQLite before 3.46 (%V support).
+                        wrap "CAST((((CAST(STRFTIME('%j', DATE(" ", '-3 days', 'weekday 4')) AS INTEGER) - 1) / 7) + 1) AS INTEGER)" value
                     | SQLite when part = "ISOYEAR" ->
                         // ISO week-year = Gregorian year of its Thursday.
                         // Portable to SQLite versions older than %G support.

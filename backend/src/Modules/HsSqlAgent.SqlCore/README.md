@@ -20,6 +20,13 @@ The six dialects do not have identical support. Cross-provider compilation requi
 proven transformations. Parsing a statement does not imply compilation support.
 The Query `EXTRACT` model supports a proven PostgreSQL↔Firebird mapping for
 ISO-8601 `WEEK` and Sunday-zero `DOW` (Firebird spells it `WEEKDAY`).
+The ISO `WEEK` source semantic is also supported by MySQL and SQLite
+targets: MySQL uses explicit `WEEK(date, 3)` rather than the session-default
+week mode; SQLite derives the integer week 1–53 from the day-of-year of the
+week's Thursday, which does not require SQLite 3.46's `%V` format.
+Only PostgreSQL/Firebird `EXTRACT(WEEK ...)` source grammar is admitted;
+SQL Server/Oracle remain target-gated. Real MySQL 8.4 and in-memory
+SQLite tests check ISO year boundaries, including week 53 and NULL.
 PostgreSQL `ISODOW` numbers Monday=1 through Sunday=7; the Firebird
 translation applies `MOD(WEEKDAY + 6, 7) + 1` with an explicit `SMALLINT`
 result. Source Firebird `ISODOW` is still invalid, and Firebird native

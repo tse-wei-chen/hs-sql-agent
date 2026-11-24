@@ -1403,6 +1403,11 @@ module internal SqlDatePartCapabilityRules =
                 && (provider = SqlAgentToolType.MySQL || provider = SqlAgentToolType.Sqlite))
             || (provider = SqlAgentToolType.Postgres
                 && (Set.contains part postgresNativeParts || part = "YEARDAY"))
+            // PostgreSQL and Firebird WEEK are ISO Monday-first week 1..53.
+            // Other sources have different or unsupported WEEK grammar.
+            || (part = "WEEK"
+                && (provider = SqlAgentToolType.MySQL
+                    || provider = SqlAgentToolType.Sqlite))
             // WEEK/DOW share Sunday-zero numbering; ISODOW is Monday-one,
             // so Firebird needs a bounded modular conversion. DOY is
             // one-based in PostgreSQL, unlike native Firebird YEARDAY.
