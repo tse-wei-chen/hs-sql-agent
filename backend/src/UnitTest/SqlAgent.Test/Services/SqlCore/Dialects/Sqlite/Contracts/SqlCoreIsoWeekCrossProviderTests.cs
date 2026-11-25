@@ -36,16 +36,17 @@ public sealed class SqlCoreIsoWeekCrossProviderTests
     }
 
     [Theory]
-    [InlineData(SqlAgentToolType.MySQL)]
-    [InlineData(SqlAgentToolType.Sqlite)]
-    [InlineData(SqlAgentToolType.MsSqlServer)]
-    [InlineData(SqlAgentToolType.Oracle)]
-    public void NonIsoSourceExtractWeek_RejectsAtParsing(SqlAgentToolType source)
+    [InlineData(SqlAgentToolType.MySQL, "default_week_format")]
+    [InlineData(SqlAgentToolType.Sqlite, "not native SQL Server or SQLite source syntax")]
+    [InlineData(SqlAgentToolType.MsSqlServer, "not native SQL Server or SQLite source syntax")]
+    [InlineData(SqlAgentToolType.Oracle, "date part 'WEEK'")]
+    public void NonIsoSourceExtractWeek_RejectsAtParsing(
+        SqlAgentToolType source, string expectedDiagnostic)
     {
         var error = Assert.Throws<SqlParseException>(() =>
             CoreSqlTextParser.ParseQuery(
                 "SELECT EXTRACT(WEEK FROM order_date) FROM orders", source));
-        Assert.Contains("WEEK", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(expectedDiagnostic, error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
