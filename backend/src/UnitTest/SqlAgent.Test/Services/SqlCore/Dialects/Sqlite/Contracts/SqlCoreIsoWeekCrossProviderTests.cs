@@ -89,10 +89,12 @@ public sealed class SqlCoreIsoWeekCrossProviderTests
     [InlineData(SqlAgentToolType.MySQL, "WEEK(order_date)")]
     public void SessionDependentNativeWeek_CannotBecomeIsoWeek(SqlAgentToolType source, string expression)
     {
-        Assert.Throws<SqlCompilationException>(() => SqlCoreFacade.CompileQuery(
+        var error = Assert.Throws<SqlCompilationException>(() => SqlCoreFacade.CompileQuery(
             "SELECT " + expression + " FROM orders", source, SqlAgentToolType.Postgres,
             new SqlPlanValidationContext("iso-week-source-functions"),
             new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
+        Assert.Contains(source == SqlAgentToolType.MsSqlServer ? "DATEFIRST" : "default_week_format",
+            error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]

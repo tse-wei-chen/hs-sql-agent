@@ -35,6 +35,11 @@ Thursday, without requiring SQLite 3.46 `%V` support. Existing #670
 source-grammar fences ensure only PostgreSQL/Firebird `EXTRACT(WEEK ...)`
 are admitted; SQL Server/Oracle targets remain denied. Real MySQL 8.4
 and in-memory SQLite tests compare cross-year week 1/53 and NULL.
+SQL Server source DATEPART(ISO_WEEK/ISOWK/ISOWW, value) and PostgreSQL
+DATE_PART('week', value) normalize to the same ISO semantic field. SQL Server
+DATEPART(WEEK/WK/WW, value) depends on DATEFIRST; unproven WEEK(...) source
+functions (including MySQL's session-default WEEK) fail closed instead of
+silently becoming ISO weeks. SQL Server target support is still separate.
 PostgreSQL `ISODOW` numbers Monday=1 through Sunday=7; the Firebird
 translation applies `MOD(WEEKDAY + 6, 7) + 1` with an explicit `SMALLINT`
 result. Source Firebird `ISODOW` is still invalid, and Firebird native

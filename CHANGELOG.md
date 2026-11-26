@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Development changes after v3.1.0
 
+### Native week function source semantics (#672)
+
+- Reject session-dependent SQL Server DATEPART(WEEK/WK/WW) and unproven WEEK(...) source functions before target lowering; normalize SQL Server native ISO_WEEK/ISOWK/ISOWW and preserve PostgreSQL DATE_PART('week', value) in the existing ISO WEEK model. No new parser, AST, API, target capability, or runtime execution path.
+
 ### ISO-8601 WEEK target parity for MySQL and SQLite (#671)
 
 - Admit PostgreSQL/Firebird ISO `EXTRACT(WEEK)` on MySQL using explicit `WEEK(CAST(date AS DATE),3)` (never session-default format) and SQLite using the ISO week's Thursday ordinal day with integer division/cast, retaining week 1–53 even on SQLite before 3.46 `%V`.
