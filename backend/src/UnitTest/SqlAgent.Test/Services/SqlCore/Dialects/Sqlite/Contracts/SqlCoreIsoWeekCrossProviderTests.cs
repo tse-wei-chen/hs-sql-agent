@@ -1,0 +1,82 @@
+using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.Core.Compilation;
+using HsSqlAgent.SqlCore.Core.Pipeline;
+using HsSqlAgent.SqlCore.Enums;
+using Xunit;
+
+namespace SqlAgent.Test.Services;
+
+/// <summary>ISO-8601 week 1..53 is not MySQL's session-default WEEK mode
+/// or SQLite's non-ISO %W calendar week.</summary>
+public sealed class SqlCoreIsoWeekCrossProviderTests
+{
+    private static CompiledSqlCommand Compile(SqlAgentToolType source, SqlAgentToolType target) =>
+        SqlCoreFacade.CompileQuery(
+            "SELECT EXTRACT(WEEK FROM DATE '2021-01-01') AS iso_week",
+            source, target, new SqlPlanValidationContext("iso-week-cross-provider"),
+            new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres, SqlAgentToolType.MySQL, "WEEK(CAST(", ", 3)")]
+    [InlineData(SqlAgentToolType.Firebird, SqlAgentToolType.MySQL, "WEEK(CAST(", ", 3)")]
+    [InlineData(SqlAgentToolType.Postgres, SqlAgentToolType.Sqlite, "STRFTIME('%j', DATE(", "'weekday 4'")]
+    [InlineData(SqlAgentToolType.Firebird, SqlAgentToolType.Sqlite, "STRFTIME('%j', DATE(", "'weekday 4'")]
+    public void ProvenIsoWeekSources_UseSemanticTargetLowering(
+        SqlAgentToolType source, SqlAgentToolType target,
+        string nativeFunction, string isoAdjustment)
+    {
+        var command = Compile(source, target);
+        Assert.Contains(nativeFunction, command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(isoAdjustment, command.Sql, StringComparison.OrdinalIgnoreCase);
+        if (target == SqlAgentToolType.Sqlite)
+        {
+            Assert.Contains("/ 7) + 1", command.Sql, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("AS INTEGER)", command.Sql, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MySQL, "default_week_format")]
+    [InlineData(SqlAgentToolType.Sqlite, "not native SQL Server or SQLite source syntax")]
+    [InlineData(SqlAgentToolType.MsSqlServer, "not native SQL Server or SQLite source syntax")]
+    [InlineData(SqlAgentToolType.Oracle, "date part 'WEEK'")]
+    public void NonIsoSourceExtractWeek_RejectsAtParsing(
+        SqlAgentToolType source, string expectedDiagnostic)
+    {
+        var error = Assert.Throws<SqlParseException>(() =>
+            CoreSqlTextParser.ParseQuery(
+                "SELECT EXTRACT(WEEK FROM order_date) FROM orders", source));
+        Assert.Contains(expectedDiagnostic, error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    public void UnprovenIsoWeekTargets_StayCapabilityDenied(SqlAgentToolType target)
+    {
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            Compile(SqlAgentToolType.Postgres, target));
+        Assert.Contains("temporal.date_part.week", error.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PublicIsoWeekMatrix_AgreesWithTargetProof()
+    {
+        var expectations = new (SqlAgentToolType Provider, SqlCapabilityStatus Status)[]
+        {
+            (SqlAgentToolType.Postgres, SqlCapabilityStatus.Supported),
+            (SqlAgentToolType.Firebird, SqlCapabilityStatus.Supported),
+            (SqlAgentToolType.MySQL, SqlCapabilityStatus.Supported),
+            (SqlAgentToolType.Sqlite, SqlCapabilityStatus.Supported),
+            (SqlAgentToolType.MsSqlServer, SqlCapabilityStatus.Rejected),
+            (SqlAgentToolType.Oracle, SqlCapabilityStatus.Rejected)
+        };
+        foreach (var (provider, expected) in expectations)
+        {
+            var cap = Assert.Single(SqlCapabilityMatrix.ForProvider(provider).Capabilities,
+                c => c.Id == "temporal.date_part.iso_week");
+            Assert.Equal(expected, cap.Status);
+        }
+    }
+}
