@@ -1651,6 +1651,8 @@ module internal RewriteStages =
                 if not arguments.IsEmpty then
                     compilationError (sourceName + " does not accept arguments.")
                 canonicalCall call canonical []
+            | None when sourceName = "WEEK" ->
+                compilationError "WEEK(...) has no proven ISO week source contract; MySQL WEEK depends on default_week_format unless a mode is explicit and proven."
             | None when SqlDatePartCapabilityRules.IsRepresentedPart(sourceName) ->
                 if arguments.Length <> 1 then
                     compilationError (sourceName + " requires exactly 1 argument.")
@@ -1725,7 +1727,12 @@ module internal RewriteStages =
                             textLiteral "DATE_PART field" arguments[0]
                         else
                             keywordValue "DATEPART field" arguments[0]
-                    let part = rawPart.Trim().ToUpperInvariant()
+                    let part =
+                        match sourceTool, sourceName, rawPart.Trim().ToUpperInvariant() with
+                        | SqlAgentToolType.MsSqlServer, "DATEPART", ("ISO_WEEK" | "ISOWK" | "ISOWW") -> "WEEK"
+                        | SqlAgentToolType.MsSqlServer, "DATEPART", ("WEEK" | "WK" | "WW") ->
+                            compilationError "SQL Server DATEPART(WEEK/WK/WW) depends on DATEFIRST and is not ISO week; use ISO_WEEK for ISO semantics."
+                        | _, _, part -> part
                     if not (SqlDatePartCapabilityRules.IsRepresentedPart(part)) then
                         compilationError (
                             "Date part " + part
