@@ -79,4 +79,46 @@ public sealed class SqlCoreIsoWeekCrossProviderTests
             Assert.Equal(expected, cap.Status);
         }
     }
+
+    // DATEPART(WEEK) and WEEK(date) are native but session-dependent, not ISO.
+    // The already-proven ISO target must not make these source semantics valid.
+    [Theory]
+    [InlineData(SqlAgentToolType.MsSqlServer, "DATEPART(WEEK, order_date)")]
+    [InlineData(SqlAgentToolType.MsSqlServer, "DATEPART(WK, order_date)")]
+    [InlineData(SqlAgentToolType.MsSqlServer, "DATEPART(WW, order_date)")]
+    [InlineData(SqlAgentToolType.MySQL, "WEEK(order_date)")]
+    public void SessionDependentNativeWeek_CannotBecomeIsoWeek(SqlAgentToolType source, string expression)
+    {
+        Assert.Throws<SqlCompilationException>(() => SqlCoreFacade.CompileQuery(
+            "SELECT " + expression + " FROM orders", source, SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("iso-week-source-functions"),
+            new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken));
+    }
+
+    [Theory]
+    [InlineData("ISO_WEEK")]
+    [InlineData("ISOWK")]
+    [InlineData("ISOWW")]
+    public void SqlServerNativeIsoWeekAliases_PreserveIsoSourceMeaning(string part)
+    {
+        var command = SqlCoreFacade.CompileQuery(
+            "SELECT DATEPART(" + part + ", order_date) FROM orders",
+            SqlAgentToolType.MsSqlServer, SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("iso-week-source-functions"),
+            new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
+        Assert.Contains("EXTRACT(WEEK FROM", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PostgresNativeDatePartWeek_RemainsIso()
+    {
+        var command = SqlCoreFacade.CompileQuery(
+            "SELECT DATE_PART('week', order_date) FROM orders",
+            SqlAgentToolType.Postgres, SqlAgentToolType.MySQL,
+            new SqlPlanValidationContext("iso-week-source-functions"),
+            new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
+        Assert.Contains("WEEK(CAST(", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(", 3)", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
 }
