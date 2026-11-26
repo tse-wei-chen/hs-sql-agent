@@ -50,14 +50,18 @@ public sealed class SqlCoreIsoWeekCrossProviderTests
     }
 
     [Theory]
-    [InlineData(SqlAgentToolType.MsSqlServer)]
-    [InlineData(SqlAgentToolType.Oracle)]
-    public void UnprovenIsoWeekTargets_StayCapabilityDenied(SqlAgentToolType target)
+    [InlineData(SqlAgentToolType.Postgres, SqlAgentToolType.MsSqlServer, "DATEPART(ISO_WEEK,")]
+    [InlineData(SqlAgentToolType.Firebird, SqlAgentToolType.MsSqlServer, "DATEPART(ISO_WEEK,")]
+    [InlineData(SqlAgentToolType.Postgres, SqlAgentToolType.Oracle, "TO_NUMBER(TO_CHAR(")]
+    [InlineData(SqlAgentToolType.Firebird, SqlAgentToolType.Oracle, "TO_NUMBER(TO_CHAR(")]
+    public void SqlServerAndOracleTargets_UseNativeIsoWeek(
+        SqlAgentToolType source, SqlAgentToolType target, string nativeSql)
     {
-        var error = Assert.Throws<SqlCompilationException>(() =>
-            Compile(SqlAgentToolType.Postgres, target));
-        Assert.Contains("temporal.date_part.week", error.Message,
-            StringComparison.OrdinalIgnoreCase);
+        var command = Compile(source, target);
+        Assert.Contains(nativeSql, command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("DATEPART(WEEK,", command.Sql, StringComparison.OrdinalIgnoreCase);
+        if (target == SqlAgentToolType.Oracle)
+            Assert.Contains("'IW'", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -69,8 +73,8 @@ public sealed class SqlCoreIsoWeekCrossProviderTests
             (SqlAgentToolType.Firebird, SqlCapabilityStatus.Supported),
             (SqlAgentToolType.MySQL, SqlCapabilityStatus.Supported),
             (SqlAgentToolType.Sqlite, SqlCapabilityStatus.Supported),
-            (SqlAgentToolType.MsSqlServer, SqlCapabilityStatus.Rejected),
-            (SqlAgentToolType.Oracle, SqlCapabilityStatus.Rejected)
+            (SqlAgentToolType.MsSqlServer, SqlCapabilityStatus.Supported),
+            (SqlAgentToolType.Oracle, SqlCapabilityStatus.Supported)
         };
         foreach (var (provider, expected) in expectations)
         {
